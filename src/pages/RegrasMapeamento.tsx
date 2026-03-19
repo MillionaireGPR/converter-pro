@@ -1,14 +1,58 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, useEffect } from "react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { regrasMapeamento, fornecedores } from "@/data/mockData";
-import { ArrowRight, Plus, Workflow } from "lucide-react";
+import { useApp } from "@/context/AppContext";
+import { ArrowRight, Plus, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { useState } from "react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { toast } from "sonner";
+import { useSearchParams } from "react-router-dom";
 
 export default function RegrasMapeamento() {
-  const [filtro, setFiltro] = useState("todos");
-  const regras = filtro === "todos" ? regrasMapeamento : regrasMapeamento.filter(r => r.fornecedor === filtro);
+  const { regras, fornecedores, addRegra, updateRegra, removeRegra } = useApp();
+  const [searchParams] = useSearchParams();
+  const [filtro, setFiltro] = useState(searchParams.get('fornecedor') || "todos");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [form, setForm] = useState({ fornecedor: '', colunaOrigem: '', colunaDestino: '', tipo: 'direto' as 'direto' | 'formula' | 'fixo', valor: '' });
+
+  useEffect(() => {
+    const f = searchParams.get('fornecedor');
+    if (f) setFiltro(f);
+  }, [searchParams]);
+
+  const regrasFiltradas = filtro === "todos" ? regras : regras.filter(r => r.fornecedor === filtro);
+
+  const openNew = () => {
+    setEditId(null);
+    setForm({ fornecedor: filtro !== 'todos' ? filtro : '', colunaOrigem: '', colunaDestino: '', tipo: 'direto', valor: '' });
+    setDialogOpen(true);
+  };
+
+  const openEdit = (r: typeof regras[0]) => {
+    setEditId(r.id);
+    setForm({ fornecedor: r.fornecedor, colunaOrigem: r.colunaOrigem, colunaDestino: r.colunaDestino, tipo: r.tipo, valor: r.valor || '' });
+    setDialogOpen(true);
+  };
+
+  const handleSave = () => {
+    if (!form.fornecedor || !form.colunaOrigem || !form.colunaDestino) { toast.error("Preencha todos os campos"); return; }
+    if (editId) {
+      updateRegra(editId, form);
+      toast.success("Regra atualizada!");
+    } else {
+      addRegra(form);
+      toast.success("Regra criada!");
+    }
+    setDialogOpen(false);
+  };
+
+  const handleRemove = (id: string) => {
+    removeRegra(id);
+    toast.success("Regra removida!");
+  };
 
   return (
     <div className="space-y-6">
@@ -25,29 +69,79 @@ export default function RegrasMapeamento() {
               {fornecedores.map(f => <SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Button className="gradient-primary text-primary-foreground"><Plus className="h-4 w-4 mr-1" /> Nova Regra</Button>
+          <Button className="gradient-primary text-primary-foreground" onClick={openNew}><Plus className="h-4 w-4 mr-1" /> Nova Regra</Button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {regras.map(r => (
+        {regrasFiltradas.map(r => (
           <Card key={r.id} className="shadow-card hover:shadow-card-hover transition-shadow">
             <CardContent className="p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-muted-foreground">{r.fornecedor}</span>
-                <Badge variant="outline" className="text-[10px]">
-                  {r.tipo === 'direto' ? 'Direto' : r.tipo === 'formula' ? 'Fórmula' : 'Fixo'}
-                </Badge>
+                <div className="flex items-center gap-1">
+                  <Badge variant="outline" className="text-[10px]">
+                    {r.tipo === 'direto' ? 'Direto' : r.tipo === 'formula' ? 'Fórmula' : 'Fixo'}
+                  </Badge>
+                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleRemove(r.id)}>
+                    <Trash2 className="h-3 w-3 text-destructive" />
+                  </Button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 cursor-pointer" onClick={() => openEdit(r)}>
                 <div className="flex-1 bg-accent rounded-lg px-3 py-2 text-sm font-medium text-accent-foreground truncate">{r.colunaOrigem}</div>
                 <ArrowRight className="h-4 w-4 text-primary shrink-0" />
                 <div className="flex-1 bg-primary/10 rounded-lg px-3 py-2 text-sm font-medium text-primary truncate">{r.colunaDestino}</div>
               </div>
+              {r.valor && <p className="text-xs text-muted-foreground">Valor: {r.valor}</p>}
             </CardContent>
           </Card>
         ))}
       </div>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{editId ? 'Editar Regra' : 'Nova Regra'}</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Fornecedor</label>
+              <Select value={form.fornecedor} onValueChange={v => setForm(f => ({ ...f, fornecedor: v }))}>
+                <SelectTrigger><SelectValue placeholder="Selecionar" /></SelectTrigger>
+                <SelectContent>{fornecedores.map(f => <SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Campo Origem</label>
+              <Input value={form.colunaOrigem} onChange={e => setForm(f => ({ ...f, colunaOrigem: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Campo Destino</label>
+              <Input value={form.colunaDestino} onChange={e => setForm(f => ({ ...f, colunaDestino: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Tipo</label>
+              <Select value={form.tipo} onValueChange={v => setForm(f => ({ ...f, tipo: v as any }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="direto">Direto</SelectItem>
+                  <SelectItem value="formula">Fórmula</SelectItem>
+                  <SelectItem value="fixo">Fixo</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {form.tipo === 'fixo' && (
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Valor</label>
+                <Input value={form.valor} onChange={e => setForm(f => ({ ...f, valor: e.target.value }))} />
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
+            <Button className="gradient-primary text-primary-foreground" onClick={handleSave}>Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

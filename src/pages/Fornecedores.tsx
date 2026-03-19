@@ -1,10 +1,34 @@
+import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/StatusBadge";
-import { fornecedores } from "@/data/mockData";
+import { useApp } from "@/context/AppContext";
 import { Building2, Edit, Package, Calendar } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { toast } from "sonner";
 
 export default function Fornecedores() {
+  const { fornecedores, updateFornecedor } = useApp();
+  const navigate = useNavigate();
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editDesconto, setEditDesconto] = useState("");
+  const [editIpi, setEditIpi] = useState("");
+
+  const openEdit = (f: typeof fornecedores[0]) => {
+    setEditId(f.id);
+    setEditDesconto(String(f.descontoPadrao));
+    setEditIpi(String(f.ipiPadrao));
+  };
+
+  const saveEdit = () => {
+    if (!editId) return;
+    updateFornecedor(editId, { descontoPadrao: parseFloat(editDesconto) || 0, ipiPadrao: parseFloat(editIpi) || 0 });
+    toast.success("Fornecedor atualizado!");
+    setEditId(null);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -12,7 +36,6 @@ export default function Fornecedores() {
           <h1 className="text-2xl font-bold text-foreground">Fornecedores</h1>
           <p className="text-sm text-muted-foreground">{fornecedores.length} fornecedores cadastrados</p>
         </div>
-        <Button className="gradient-primary text-primary-foreground">+ Novo Fornecedor</Button>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -37,11 +60,38 @@ export default function Fornecedores() {
                 <div className="text-muted-foreground">Desc: <span className="text-foreground font-medium">{f.descontoPadrao}%</span></div>
                 <div className="text-muted-foreground">IPI: <span className="text-foreground font-medium">{f.ipiPadrao}%</span></div>
               </div>
-              <Button variant="outline" size="sm" className="w-full"><Edit className="h-3.5 w-3.5 mr-1" /> Editar Regras</Button>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" className="flex-1" onClick={() => openEdit(f)}>
+                  <Edit className="h-3.5 w-3.5 mr-1" /> Editar
+                </Button>
+                <Button variant="outline" size="sm" className="flex-1" onClick={() => navigate(`/regras?fornecedor=${f.nome}`)}>
+                  Regras
+                </Button>
+              </div>
             </CardContent>
           </Card>
         ))}
       </div>
+
+      <Dialog open={!!editId} onOpenChange={() => setEditId(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Editar Fornecedor</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Desconto Padrão (%)</label>
+              <Input type="number" value={editDesconto} onChange={e => setEditDesconto(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">IPI Padrão (%)</label>
+              <Input type="number" value={editIpi} onChange={e => setEditIpi(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditId(null)}>Cancelar</Button>
+            <Button className="gradient-primary text-primary-foreground" onClick={saveEdit}>Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

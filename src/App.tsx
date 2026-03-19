@@ -4,6 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/AppLayout";
+import { AppProvider } from "@/context/AppContext";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import ConversaoProdutos from "./pages/ConversaoProdutos";
@@ -24,25 +25,27 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Navigate to="/login" replace />} />
-          <Route path="/login" element={<Login />} />
-          <Route element={<AppLayout />}>
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/conversao" element={<ConversaoProdutos />} />
-            <Route path="/base" element={<BasePadronizada />} />
-            <Route path="/descontos" element={<DescontosCatalogos />} />
-            <Route path="/exportacoes" element={<ExportacoesMercos />} />
-            <Route path="/pedidos" element={<ConversaoPedidos />} />
-            <Route path="/fornecedores" element={<Fornecedores />} />
-            <Route path="/regras" element={<RegrasMapeamento />} />
-            <Route path="/historico" element={<Historico />} />
-            <Route path="/configuracoes" element={<Configuracoes />} />
-          </Route>
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
+      <AppProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<Navigate to="/login" replace />} />
+            <Route path="/login" element={<Login />} />
+            <Route element={<AppLayout />}>
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/conversao" element={<ConversaoProdutos />} />
+              <Route path="/base" element={<BasePadronizada />} />
+              <Route path="/descontos" element={<DescontosCatalogos />} />
+              <Route path="/exportacoes" element={<ExportacoesMercos />} />
+              <Route path="/pedidos" element={<ConversaoPedidos />} />
+              <Route path="/fornecedores" element={<Fornecedores />} />
+              <Route path="/regras" element={<RegrasMapeamento />} />
+              <Route path="/historico" element={<Historico />} />
+              <Route path="/configuracoes" element={<Configuracoes />} />
+            </Route>
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </BrowserRouter>
+      </AppProvider>
     </TooltipProvider>
   </QueryClientProvider>
 );

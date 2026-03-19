@@ -4,34 +4,64 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Upload, FileSpreadsheet, FileText, CheckCircle, AlertCircle, ArrowRight, Loader2, File } from "lucide-react";
 import { StatusBadge } from "@/components/StatusBadge";
-import { fornecedores } from "@/data/mockData";
+import { useApp, Produto } from "@/context/AppContext";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { Progress } from "@/components/ui/progress";
 
 export default function ConversaoProdutos() {
+  const { fornecedores, processarArquivo, addProdutos, addHistorico } = useApp();
   const [fornecedor, setFornecedor] = useState("");
   const [tipoArquivo, setTipoArquivo] = useState("");
-  const [state, setState] = useState<'idle' | 'processing' | 'done'>('idle');
+  const [state, setState] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
   const [progress, setProgress] = useState(0);
   const [dragOver, setDragOver] = useState(false);
+  const [result, setResult] = useState<{ produtos: Produto[]; fornecedorNome: string; fileName: string } | null>(null);
   const navigate = useNavigate();
 
   const handleProcessar = () => {
+    if (!fornecedor) { toast.error("Selecione um fornecedor"); return; }
+    if (!tipoArquivo) { toast.error("Selecione o tipo de arquivo"); return; }
+
     setState('processing');
     setProgress(0);
+
     const interval = setInterval(() => {
       setProgress(prev => {
         if (prev >= 100) {
           clearInterval(interval);
-          setState('done');
-          toast.success("Arquivo processado com sucesso! 342 produtos detectados.");
+          try {
+            const res = processarArquivo(fornecedor, tipoArquivo);
+            setResult(res);
+            addProdutos(res.produtos);
+            addHistorico({
+              arquivo: res.fileName,
+              fornecedor: res.fornecedorNome,
+              usuario: 'Admin',
+              data: new Date().toISOString().replace('T', ' ').substring(0, 16),
+              tipoConversao: 'Importação de Produtos',
+              qtdItens: res.produtos.length,
+              status: 'concluído',
+            });
+            setState('done');
+            toast.success(`Arquivo processado! ${res.produtos.length} produtos detectados.`);
+          } catch {
+            setState('error');
+            toast.error("Erro ao processar arquivo");
+          }
           return 100;
         }
         return prev + Math.random() * 15 + 5;
       });
     }, 300);
   };
+
+  const resultStats = result ? {
+    total: result.produtos.length,
+    ok: result.produtos.filter(p => p.status === 'validado').length,
+    incompletos: result.produtos.filter(p => p.status === 'pendente' || p.status === 'incompleto').length,
+    erros: result.produtos.filter(p => p.status === 'erro').length,
+  } : null;
 
   return (
     <div className="space-y-8">
@@ -46,7 +76,7 @@ export default function ConversaoProdutos() {
           <CardContent className="space-y-5">
             <div
               className={`border-2 border-dashed rounded-xl p-10 text-center transition-all cursor-pointer ${
-                dragOver ? 'border-primary bg-primary/5 dropzone-active' : 'border-border hover:border-primary/40 hover:bg-accent/30'
+                dragOver ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40 hover:bg-accent/30'
               }`}
               onDragOver={e => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
@@ -96,13 +126,14 @@ export default function ConversaoProdutos() {
           </CardContent>
         </Card>
 
-        {/* Result panel */}
         {state !== 'idle' && (
           <Card className="shadow-card overflow-hidden">
             <CardHeader className="pb-3">
               <CardTitle className="text-base font-semibold flex items-center gap-2">
                 {state === 'processing' ? (
                   <><Loader2 className="h-4 w-4 animate-spin text-primary" /> Processando...</>
+                ) : state === 'error' ? (
+                  <><AlertCircle className="h-4 w-4 text-destructive" /> Erro no Processamento</>
                 ) : (
                   <><CheckCircle className="h-4 w-4 text-success" /> Processamento Concluído</>
                 )}
@@ -112,7 +143,7 @@ export default function ConversaoProdutos() {
               {state === 'processing' && (
                 <div className="space-y-3">
                   <Progress value={Math.min(progress, 100)} className="h-2" />
-                  <div className="shimmer rounded-lg p-4 space-y-2">
+                  <div className="rounded-lg p-4 space-y-2 bg-muted/50">
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <File className="h-4 w-4" /> Lendo arquivo...
                     </div>
@@ -122,28 +153,31 @@ export default function ConversaoProdutos() {
                 </div>
               )}
 
-              {state === 'done' && (
+              {state === 'done' && result && resultStats && (
                 <>
                   <div className="space-y-2.5 text-sm">
-                    <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Arquivo:</span><span className="font-medium">tabela_tramontina_marco2026.xlsx</span></div>
-                    <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Fornecedor:</span><span className="font-medium">Tramontina</span></div>
-                    <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Data:</span><span className="font-medium">15/03/2026</span></div>
+                    <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Arquivo:</span><span className="font-medium">{result.fileName}</span></div>
+                    <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Fornecedor:</span><span className="font-medium">{result.fornecedorNome}</span></div>
                     <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Status:</span><StatusBadge status="processado" /></div>
-                    <div className="flex justify-between py-1.5"><span className="text-muted-foreground">Produtos detectados:</span><span className="font-extrabold text-lg text-primary">342</span></div>
+                    <div className="flex justify-between py-1.5"><span className="text-muted-foreground">Produtos detectados:</span><span className="font-extrabold text-lg text-primary">{resultStats.total}</span></div>
                   </div>
                   <div className="rounded-xl border overflow-hidden">
                     <div className="flex items-center gap-2 text-sm p-3 bg-success/5 border-b border-success/10">
                       <CheckCircle className="h-4 w-4 text-success" />
-                      <span className="font-medium text-success">320 produtos importados com sucesso</span>
+                      <span className="font-medium text-success">{resultStats.ok} produtos importados com sucesso</span>
                     </div>
-                    <div className="flex items-center gap-2 text-sm p-3 bg-warning/5 border-b border-warning/10">
-                      <AlertCircle className="h-4 w-4 text-warning" />
-                      <span className="font-medium text-warning">15 produtos com campos incompletos</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm p-3 bg-destructive/5">
-                      <AlertCircle className="h-4 w-4 text-destructive" />
-                      <span className="font-medium text-destructive">7 produtos com erro de formatação</span>
-                    </div>
+                    {resultStats.incompletos > 0 && (
+                      <div className="flex items-center gap-2 text-sm p-3 bg-warning/5 border-b border-warning/10">
+                        <AlertCircle className="h-4 w-4 text-warning" />
+                        <span className="font-medium text-warning">{resultStats.incompletos} produtos pendentes/incompletos</span>
+                      </div>
+                    )}
+                    {resultStats.erros > 0 && (
+                      <div className="flex items-center gap-2 text-sm p-3 bg-destructive/5">
+                        <AlertCircle className="h-4 w-4 text-destructive" />
+                        <span className="font-medium text-destructive">{resultStats.erros} produtos com erro</span>
+                      </div>
+                    )}
                   </div>
                   <div className="flex gap-2">
                     <Button variant="outline" size="sm" className="flex-1" onClick={() => navigate('/base')}>
