@@ -1,11 +1,13 @@
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Upload, Download, ArrowRightLeft } from "lucide-react";
+import { Upload, Download, ArrowRightLeft, CheckCircle } from "lucide-react";
+import { useApp, PedidoItem } from "@/context/AppContext";
 import { toast } from "sonner";
 
-const pedidoItems = [
+const mockPedidoItems: PedidoItem[] = [
   { codigo: "NR-TRM-001", descricao: "Jogo de Chaves Combinadas 6-22mm", qtd: 5, preco: 161.42, total: 807.10 },
   { codigo: "NR-TRM-002", descricao: "Alicate Universal 8\"", qtd: 12, preco: 46.67, total: 560.04 },
   { codigo: "NR-VND-100", descricao: "Furadeira de Impacto 750W", qtd: 2, preco: 296.10, total: 592.20 },
@@ -13,6 +15,28 @@ const pedidoItems = [
 ];
 
 export default function ConversaoPedidos() {
+  const { converterPedido, produtos } = useApp();
+  const [destino, setDestino] = useState("");
+  const [uploaded, setUploaded] = useState(false);
+  const [converted, setConverted] = useState(false);
+
+  // Use real products if available, otherwise mock
+  const pedidoItems: PedidoItem[] = produtos.length > 0
+    ? produtos.slice(0, 5).map(p => ({ codigo: p.codigoFinal || p.codigoOriginal, descricao: p.nome, qtd: Math.ceil(Math.random() * 10) + 1, preco: p.precoFinal, total: 0 })).map(i => ({ ...i, total: +(i.qtd * i.preco).toFixed(2) }))
+    : mockPedidoItems;
+
+  const handleUpload = () => {
+    setUploaded(true);
+    toast.info("Pedido Mercos carregado!");
+  };
+
+  const handleExportar = () => {
+    if (!destino) { toast.error("Selecione um destino"); return; }
+    converterPedido(destino, pedidoItems);
+    setConverted(true);
+    toast.success(`Pedido convertido para ${destino}!`);
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -24,33 +48,51 @@ export default function ConversaoPedidos() {
         <Card className="shadow-card">
           <CardHeader><CardTitle className="text-base flex items-center gap-2"><ArrowRightLeft className="h-4 w-4" /> Configurar Conversão</CardTitle></CardHeader>
           <CardContent className="space-y-4">
-            <div className="border-2 border-dashed border-border rounded-xl p-6 text-center cursor-pointer hover:border-primary/50 transition-colors">
-              <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-              <p className="text-sm font-medium">Upload do pedido Mercos</p>
-              <p className="text-xs text-muted-foreground">.xlsx, .csv</p>
+            <div
+              className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${uploaded ? 'border-success bg-success/5' : 'border-border hover:border-primary/50'}`}
+              onClick={handleUpload}
+            >
+              {uploaded ? (
+                <>
+                  <CheckCircle className="h-8 w-8 mx-auto text-success mb-2" />
+                  <p className="text-sm font-medium text-success">Pedido carregado</p>
+                  <p className="text-xs text-muted-foreground">{pedidoItems.length} itens</p>
+                </>
+              ) : (
+                <>
+                  <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                  <p className="text-sm font-medium">Upload do pedido Mercos</p>
+                  <p className="text-xs text-muted-foreground">.xlsx, .csv</p>
+                </>
+              )}
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Destino</label>
-              <Select>
+              <Select value={destino} onValueChange={setDestino}>
                 <SelectTrigger><SelectValue placeholder="Selecionar destino" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="jaweb">JaWeb</SelectItem>
-                  <SelectItem value="erp">ERP Fornecedor</SelectItem>
-                  <SelectItem value="outro">Outro layout</SelectItem>
+                  <SelectItem value="JaWeb">JaWeb</SelectItem>
+                  <SelectItem value="ERP Fornecedor">ERP Fornecedor</SelectItem>
+                  <SelectItem value="Outro layout">Outro layout</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <Button className="w-full gradient-primary text-primary-foreground" onClick={() => toast.success("Pedido convertido!")}>
+            <Button className="w-full gradient-primary text-primary-foreground" onClick={handleExportar}>
               <Download className="h-4 w-4 mr-1" /> Exportar Pedido Convertido
             </Button>
+            {converted && (
+              <div className="rounded-lg border border-success/20 bg-success/5 p-3 text-sm text-success flex items-center gap-2">
+                <CheckCircle className="h-4 w-4" /> Pedido convertido e registrado no histórico
+              </div>
+            )}
           </CardContent>
         </Card>
 
         <Card className="shadow-card lg:col-span-2">
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle className="text-base">Itens do Pedido #1542</CardTitle>
-              <span className="text-xs text-muted-foreground">Ref: MRC-2026-1542</span>
+              <CardTitle className="text-base">Itens do Pedido</CardTitle>
+              <span className="text-xs text-muted-foreground">{pedidoItems.length} itens</span>
             </div>
           </CardHeader>
           <CardContent>
