@@ -17,6 +17,7 @@
 
     --primary: 262 60% 50%;
     --primary-foreground: 0 0% 100%;
+    --primary-glow: 262 70% 65%;
 
     --secondary: 220 14% 96%;
     --secondary-foreground: 240 10% 20%;
@@ -70,10 +71,92 @@
   .gradient-sidebar {
     background: linear-gradient(180deg, hsl(262, 40%, 18%), hsl(262, 35%, 12%));
   }
+  .gradient-success {
+    background: linear-gradient(135deg, hsl(142, 71%, 45%), hsl(142, 60%, 55%));
+  }
   .shadow-card {
     box-shadow: 0 1px 3px 0 hsl(0 0% 0% / 0.04), 0 1px 2px -1px hsl(0 0% 0% / 0.04);
   }
   .shadow-card-hover {
-    box-shadow: 0 4px 12px 0 hsl(0 0% 0% / 0.08);
+    box-shadow: 0 8px 25px -5px hsl(262 60% 50% / 0.1), 0 4px 10px -4px hsl(0 0% 0% / 0.06);
   }
+  .shadow-premium {
+    box-shadow: 0 20px 60px -15px hsl(262 60% 50% / 0.15), 0 0 0 1px hsl(262 60% 50% / 0.05);
+  }
+}
+
+/* Premium table styling */
+.premium-table thead th {
+  @apply text-xs font-semibold uppercase tracking-wider text-muted-foreground/80 bg-muted/50;
+}
+
+.premium-table tbody tr {
+  @apply transition-colors duration-150;
+}
+
+.premium-table tbody tr:hover {
+  background: hsl(262 40% 95% / 0.5);
+}
+
+/* Smooth page transitions */
+.page-enter {
+  animation: pageIn 0.3s ease-out;
+}
+
+@keyframes pageIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Upload drop zone pulse */
+.dropzone-active {
+  animation: dropPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes dropPulse {
+  0%, 100% { border-color: hsl(262 60% 50% / 0.3); }
+  50% { border-color: hsl(262 60% 50% / 0.6); background: hsl(262 40% 95% / 0.5); }
+}
+
+/* Processing shimmer */
+.shimmer {
+  background: linear-gradient(90deg, transparent 0%, hsl(262 60% 50% / 0.08) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+/* Catalog card hover */
+.catalog-card {
+  transition: all 0.2s ease;
+}
+.catalog-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px -5px hsl(262 60% 50% / 0.12);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(220 13% 91%);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(220 10% 80%);
 }
