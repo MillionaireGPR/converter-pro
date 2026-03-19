@@ -1,5 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
-import { LucideIcon } from "lucide-react";
+import { LucideIcon, TrendingUp, TrendingDown } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface StatCardProps {
   title: string;
@@ -7,24 +8,43 @@ interface StatCardProps {
   icon: LucideIcon;
   trend?: string;
   trendUp?: boolean;
+  accent?: boolean;
 }
 
-export function StatCard({ title, value, icon: Icon, trend, trendUp }: StatCardProps) {
+export function StatCard({ title, value, icon: Icon, trend, trendUp, accent }: StatCardProps) {
   return (
-    <Card className="shadow-card hover:shadow-card-hover transition-shadow">
+    <Card className={cn(
+      "shadow-card hover:shadow-card-hover transition-all duration-300 group overflow-hidden relative",
+      accent && "border-primary/20"
+    )}>
+      {accent && (
+        <div className="absolute inset-0 gradient-primary opacity-[0.03] group-hover:opacity-[0.06] transition-opacity" />
+      )}
       <CardContent className="p-5">
         <div className="flex items-start justify-between">
-          <div className="space-y-1">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{title}</p>
-            <p className="text-2xl font-bold text-foreground">{value}</p>
+          <div className="space-y-2">
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">{title}</p>
+            <p className="text-2xl font-extrabold text-foreground tracking-tight">{value}</p>
             {trend && (
-              <p className={`text-xs font-medium ${trendUp ? 'text-success' : 'text-destructive'}`}>
-                {trend}
-              </p>
+              <div className={cn(
+                "flex items-center gap-1 text-xs font-medium",
+                trendUp ? 'text-success' : 'text-muted-foreground'
+              )}>
+                {trendUp !== undefined && (
+                  trendUp ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />
+                )}
+                <span>{trend}</span>
+              </div>
             )}
           </div>
-          <div className="p-2.5 rounded-xl bg-accent">
-            <Icon className="h-5 w-5 text-accent-foreground" />
+          <div className={cn(
+            "p-3 rounded-xl transition-colors duration-300",
+            accent ? "gradient-primary" : "bg-accent group-hover:bg-primary/10"
+          )}>
+            <Icon className={cn(
+              "h-5 w-5 transition-colors duration-300",
+              accent ? "text-primary-foreground" : "text-accent-foreground group-hover:text-primary"
+            )} />
           </div>
         </div>
       </CardContent>

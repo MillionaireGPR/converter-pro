@@ -75,3 +75,21 @@ export const regrasMapeamento = [
   { id: '6', fornecedor: 'Bosch', colunaOrigem: 'EAN', colunaDestino: 'Código do Produto', tipo: 'direto' as const },
   { id: '7', fornecedor: 'Bosch', colunaOrigem: 'IPI fixo 10%', colunaDestino: 'IPI', tipo: 'fixo' as const },
 ];
+
+// Chart data for dashboard
+export const chartDataMensal = [
+  { mes: 'Out', arquivos: 28, produtos: 620, exportacoes: 12 },
+  { mes: 'Nov', arquivos: 35, produtos: 780, exportacoes: 16 },
+  { mes: 'Dez', arquivos: 31, produtos: 710, exportacoes: 14 },
+  { mes: 'Jan', arquivos: 42, produtos: 920, exportacoes: 19 },
+  { mes: 'Fev', arquivos: 38, produtos: 850, exportacoes: 17 },
+  { mes: 'Mar', arquivos: 48, produtos: 1060, exportacoes: 23 },
+];
+
+export const chartDataFornecedor = [
+  { nome: 'Tramontina', produtos: 342, fill: 'hsl(262, 60%, 50%)' },
+  { nome: 'Bosch', produtos: 278, fill: 'hsl(262, 70%, 65%)' },
+  { nome: 'Vonder', produtos: 189, fill: 'hsl(262, 40%, 75%)' },
+  { nome: 'Irwin', produtos: 156, fill: 'hsl(262, 30%, 82%)' },
+  { nome: 'Starrett', produtos: 95, fill: 'hsl(220, 14%, 85%)' },
+];
