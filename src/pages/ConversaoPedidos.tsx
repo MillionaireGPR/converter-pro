@@ -20,10 +20,17 @@ export default function ConversaoPedidos() {
   const [uploaded, setUploaded] = useState(false);
   const [converted, setConverted] = useState(false);
 
-  // Use real products if available, otherwise mock
-  const pedidoItems: PedidoItem[] = produtos.length > 0
-    ? produtos.slice(0, 5).map(p => ({ codigo: p.codigoFinal || p.codigoOriginal, descricao: p.nome, qtd: Math.ceil(Math.random() * 10) + 1, preco: p.precoFinal, total: 0 })).map(i => ({ ...i, total: +(i.qtd * i.preco).toFixed(2) }))
-    : mockPedidoItems;
+  // Use real products if available, otherwise mock — memoized to avoid re-renders changing random qtd
+  const pedidoItems: PedidoItem[] = useMemo(() => {
+    if (produtos.length > 0) {
+      return produtos.slice(0, 5).map((p, i) => {
+        const qtd = [3, 5, 2, 10, 1][i % 5];
+        const preco = p.precoFinal;
+        return { codigo: p.codigoFinal || p.codigoOriginal, descricao: p.nome, qtd, preco, total: +(qtd * preco).toFixed(2) };
+      });
+    }
+    return mockPedidoItems;
+  }, [produtos]);
 
   const handleUpload = () => {
     setUploaded(true);

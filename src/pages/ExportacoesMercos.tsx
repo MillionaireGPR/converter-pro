@@ -74,22 +74,37 @@ export default function ExportacoesMercos() {
           <Card className="shadow-card">
             <CardHeader><CardTitle className="text-base">Checklist de Validação</CardTitle></CardHeader>
             <CardContent className="space-y-3">
-              {checks.map((c, i) => (
-                <div key={i} className="flex items-center gap-3">
-                  {c.ok ? <CheckCircle className="h-4 w-4 text-success shrink-0" /> : <AlertTriangle className="h-4 w-4 text-warning shrink-0" />}
-                  <div className="flex-1">
-                    <p className="text-sm">{c.label}</p>
-                    <p className="text-xs text-muted-foreground">{c.count}</p>
+              {(() => {
+                const displayProducts = hasExports ? exportProducts : produtos;
+                const semCodigo = displayProducts.filter(p => !p.codigoFinal).length;
+                const semPreco = displayProducts.filter(p => !p.precoFinal || p.precoFinal <= 0).length;
+                const duplicados = displayProducts.length - new Set(displayProducts.map(p => p.codigoFinal)).size;
+                const erros = displayProducts.filter(p => p.status === 'erro').length;
+                const preenchidos = displayProducts.filter(p => p.codigoFinal && p.nome && p.precoFinal > 0).length;
+                const checkItems = [
+                  { label: "Campos obrigatórios preenchidos", ok: preenchidos === displayProducts.length, count: `${preenchidos}/${displayProducts.length}` },
+                  { label: "Produtos sem código", ok: semCodigo === 0, count: `${semCodigo} encontrado(s)` },
+                  { label: "Produtos sem preço", ok: semPreco === 0, count: `${semPreco} encontrado(s)` },
+                  { label: "Produtos com duplicidade", ok: duplicados === 0, count: `${duplicados} encontrado(s)` },
+                  { label: "Erros de formatação", ok: erros === 0, count: `${erros} encontrado(s)` },
+                ];
+                return checkItems.map((c, i) => (
+                  <div key={i} className="flex items-center gap-3">
+                    {c.ok ? <CheckCircle className="h-4 w-4 text-success shrink-0" /> : <AlertTriangle className="h-4 w-4 text-warning shrink-0" />}
+                    <div className="flex-1">
+                      <p className="text-sm">{c.label}</p>
+                      <p className="text-xs text-muted-foreground">{c.count}</p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ));
+              })()}
             </CardContent>
           </Card>
 
           <Card className="shadow-card lg:col-span-2">
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base">Preview da Exportação ({validProducts.length} válidos)</CardTitle>
+                <CardTitle className="text-base">Preview da Exportação ({hasExports ? validProducts.length : produtos.filter(p => p.status !== 'erro' && p.codigoFinal && p.precoFinal > 0).length} válidos)</CardTitle>
                 <Badge variant="outline" className="text-xs">Formato Mercos v3</Badge>
               </div>
             </CardHeader>
@@ -108,7 +123,7 @@ export default function ExportacoesMercos() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {exportProducts.map(p => (
+                    {(hasExports ? exportProducts : produtos).map(p => (
                       <TableRow key={p.id} className={p.status === 'erro' || !p.codigoFinal ? 'bg-destructive/5' : ''}>
                         <TableCell className="font-mono text-xs">{p.codigoFinal || <span className="text-destructive font-semibold">VAZIO</span>}</TableCell>
                         <TableCell className="text-sm">{p.nome}</TableCell>
