@@ -60,7 +60,7 @@ export default function ExportacoesMercos() {
         </div>
       </div>
 
-      {exportProducts.length === 0 ? (
+      {!hasExports && produtos.length === 0 ? (
         <Card className="shadow-card">
           <CardContent className="p-12 text-center">
             <Package className="h-12 w-12 mx-auto text-muted-foreground/40 mb-4" />
