@@ -35,12 +35,14 @@ export default function ExportacoesMercos() {
   const validProducts = exportProducts.filter(p => p.status !== 'erro' && p.codigoFinal && p.precoFinal > 0);
 
   const handleGerarPlanilha = () => {
-    if (validProducts.length === 0) {
-      toast.error("Nenhum produto válido para exportar");
+    // If no export yet, use all valid products from base
+    const prodsToExport = hasExports ? validProducts : produtos.filter(p => p.status !== 'erro' && p.codigoFinal && p.precoFinal > 0);
+    if (prodsToExport.length === 0) {
+      toast.error("Nenhum produto válido para exportar. Selecione produtos na Base Padronizada.");
       return;
     }
-    exportarMercos(validProducts);
-    toast.success(`Planilha Mercos gerada com ${validProducts.length} produtos!`);
+    exportarMercos(prodsToExport);
+    toast.success(`Planilha Mercos gerada com ${prodsToExport.length} produtos!`);
   };
 
   return (
