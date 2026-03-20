@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { useApp } from "@/context/AppContext";
 import { Download, CheckCircle, AlertTriangle, XCircle, Package } from "lucide-react";
 import { toast } from "sonner";
-import { useMemo } from "react";
+
 import { useNavigate } from "react-router-dom";
 
 export default function ExportacoesMercos() {
