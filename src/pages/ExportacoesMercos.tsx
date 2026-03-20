@@ -17,20 +17,8 @@ export default function ExportacoesMercos() {
   const exportProducts = latestExport?.produtos || [];
   const hasExports = exportProducts.length > 0;
 
-  const checks = useMemo(() => {
-    const semCodigo = exportProducts.filter(p => !p.codigoFinal).length;
-    const semPreco = exportProducts.filter(p => !p.precoFinal || p.precoFinal <= 0).length;
-    const duplicados = exportProducts.length - new Set(exportProducts.map(p => p.codigoFinal)).size;
-    const erros = exportProducts.filter(p => p.status === 'erro').length;
-    const preenchidos = exportProducts.filter(p => p.codigoFinal && p.nome && p.precoFinal > 0).length;
-    return [
-      { label: "Campos obrigatórios preenchidos", ok: preenchidos === exportProducts.length, count: `${preenchidos}/${exportProducts.length}` },
-      { label: "Produtos sem código", ok: semCodigo === 0, count: `${semCodigo} encontrado(s)` },
-      { label: "Produtos sem preço", ok: semPreco === 0, count: `${semPreco} encontrado(s)` },
-      { label: "Produtos com duplicidade", ok: duplicados === 0, count: `${duplicados} encontrado(s)` },
-      { label: "Erros de formatação", ok: erros === 0, count: `${erros} encontrado(s)` },
-    ];
-  }, [exportProducts]);
+
+
 
   const validProducts = exportProducts.filter(p => p.status !== 'erro' && p.codigoFinal && p.precoFinal > 0);
 
