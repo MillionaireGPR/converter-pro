@@ -4,14 +4,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useApp } from "@/context/AppContext";
-import { ArrowRight, Plus, Trash2, X } from "lucide-react";
+import { ArrowRight, Plus, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { useSearchParams } from "react-router-dom";
 
 export default function RegrasMapeamento() {
-  const { regras, fornecedores, addRegra, updateRegra, removeRegra } = useApp();
+  const { regrasMapeamento, fornecedores, addRegra, updateRegra, removeRegra } = useApp();
   const [searchParams] = useSearchParams();
   const [filtro, setFiltro] = useState(searchParams.get('fornecedor') || "todos");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -23,7 +23,7 @@ export default function RegrasMapeamento() {
     if (f) setFiltro(f);
   }, [searchParams]);
 
-  const regrasFiltradas = filtro === "todos" ? regras : regras.filter(r => r.fornecedor === filtro);
+  const regrasFiltradas = filtro === "todos" ? regrasMapeamento : regrasMapeamento.filter(r => r.fornecedor === filtro);
 
   const openNew = () => {
     setEditId(null);
@@ -31,7 +31,7 @@ export default function RegrasMapeamento() {
     setDialogOpen(true);
   };
 
-  const openEdit = (r: typeof regras[0]) => {
+  const openEdit = (r: typeof regrasMapeamento[0]) => {
     setEditId(r.id);
     setForm({ fornecedor: r.fornecedor, colunaOrigem: r.colunaOrigem, colunaDestino: r.colunaDestino, tipo: r.tipo, valor: r.valor || '' });
     setDialogOpen(true);

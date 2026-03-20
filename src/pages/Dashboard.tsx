@@ -11,19 +11,14 @@ import { useMemo } from "react";
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { produtos, fornecedores, historico, exportacoesMercos, catalogosGerados, pedidosConvertidos } = useApp();
-
-  const arquivosProcessados = historico.filter(h => h.tipoConversao === 'Importação de Produtos' && h.status === 'concluído').length;
-  const fornecedoresAtivos = fornecedores.filter(f => f.status === 'ativo' && f.totalProdutos > 0).length;
-  const alertasPendentes = produtos.filter(p => p.status === 'erro' || p.status === 'incompleto').length;
-  const taxaAproveitamento = produtos.length > 0 ? Math.round((produtos.filter(p => p.status === 'validado').length / produtos.length) * 100) : 0;
+  const { produtosPadronizados, fornecedores, historico, dashboard } = useApp();
 
   const chartDataFornecedor = useMemo(() => {
     const fills = ['hsl(262, 60%, 50%)', 'hsl(262, 70%, 65%)', 'hsl(262, 40%, 75%)', 'hsl(262, 30%, 82%)', 'hsl(220, 14%, 85%)'];
     const map = new Map<string, number>();
-    produtos.forEach(p => map.set(p.fornecedor, (map.get(p.fornecedor) || 0) + 1));
+    produtosPadronizados.forEach(p => map.set(p.fornecedor, (map.get(p.fornecedor) || 0) + 1));
     return Array.from(map.entries()).map(([nome, count], i) => ({ nome, produtos: count, fill: fills[i % fills.length] }));
-  }, [produtos]);
+  }, [produtosPadronizados]);
 
   const recentHistorico = historico.slice(0, 6);
 
@@ -40,17 +35,17 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Arquivos Processados" value={arquivosProcessados} icon={FileUp} trend={arquivosProcessados > 0 ? `${arquivosProcessados} processado(s)` : "Nenhum ainda"} trendUp={arquivosProcessados > 0} accent />
-        <StatCard title="Produtos Convertidos" value={produtos.length} icon={Package} trend={produtos.length > 0 ? `${produtos.length} na base` : "Nenhum ainda"} trendUp={produtos.length > 0} />
-        <StatCard title="Exportações Mercos" value={exportacoesMercos.length} icon={Download} trend={exportacoesMercos.length > 0 ? `${exportacoesMercos.length} gerada(s)` : "Nenhuma ainda"} />
-        <StatCard title="Catálogos Gerados" value={catalogosGerados.length} icon={BookOpen} trend={catalogosGerados.length > 0 ? `${catalogosGerados.length} catálogo(s)` : "Nenhum ainda"} trendUp={catalogosGerados.length > 0} />
+        <StatCard title="Arquivos Processados" value={dashboard.arquivosProcessados} icon={FileUp} trend={dashboard.arquivosProcessados > 0 ? `${dashboard.arquivosProcessados} processado(s)` : "Nenhum ainda"} trendUp={dashboard.arquivosProcessados > 0} accent />
+        <StatCard title="Produtos Convertidos" value={dashboard.produtosConvertidos} icon={Package} trend={dashboard.produtosConvertidos > 0 ? `${dashboard.produtosConvertidos} na base` : "Nenhum ainda"} trendUp={dashboard.produtosConvertidos > 0} />
+        <StatCard title="Exportações Mercos" value={dashboard.exportacoesMercosCount} icon={Download} trend={dashboard.exportacoesMercosCount > 0 ? `${dashboard.exportacoesMercosCount} gerada(s)` : "Nenhuma ainda"} />
+        <StatCard title="Catálogos Gerados" value={dashboard.catalogosGeradosCount} icon={BookOpen} trend={dashboard.catalogosGeradosCount > 0 ? `${dashboard.catalogosGeradosCount} catálogo(s)` : "Nenhum ainda"} trendUp={dashboard.catalogosGeradosCount > 0} />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Fornecedores Ativos" value={fornecedoresAtivos} icon={Building2} />
-        <StatCard title="Pedidos Convertidos" value={pedidosConvertidos.length} icon={ShoppingCart} trend={pedidosConvertidos.length > 0 ? `${pedidosConvertidos.length} pedido(s)` : "Nenhum ainda"} trendUp={pedidosConvertidos.length > 0} />
-        <StatCard title="Taxa de Aproveitamento" value={`${taxaAproveitamento}%`} icon={TrendingUp} accent />
-        <StatCard title="Alertas Pendentes" value={alertasPendentes} icon={AlertTriangle} />
+        <StatCard title="Fornecedores Ativos" value={dashboard.fornecedoresAtivos} icon={Building2} />
+        <StatCard title="Pedidos Convertidos" value={dashboard.pedidosConvertidosCount} icon={ShoppingCart} trend={dashboard.pedidosConvertidosCount > 0 ? `${dashboard.pedidosConvertidosCount} pedido(s)` : "Nenhum ainda"} trendUp={dashboard.pedidosConvertidosCount > 0} />
+        <StatCard title="Taxa de Aproveitamento" value={`${dashboard.taxaAproveitamento}%`} icon={TrendingUp} accent />
+        <StatCard title="Alertas Pendentes" value={dashboard.alertasPendentes} icon={AlertTriangle} />
       </div>
 
       {chartDataFornecedor.length > 0 && (

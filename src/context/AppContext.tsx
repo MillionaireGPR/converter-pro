@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, ReactNode } from "react";
+import React, { createContext, useContext, useState, useCallback, useMemo, ReactNode } from "react";
 
 // ===== TYPES =====
 
@@ -14,6 +14,16 @@ export interface Fornecedor {
   ultimoProcessamento: string;
   totalProdutos: number;
   status: 'ativo' | 'inativo';
+}
+
+export interface ArquivoProcessado {
+  id: string;
+  nome: string;
+  fornecedor: string;
+  tipo: string;
+  data: string;
+  qtdProdutos: number;
+  status: 'concluído' | 'erro';
 }
 
 export interface Produto {
@@ -41,6 +51,15 @@ export interface RegraMapeamento {
   colunaDestino: string;
   tipo: 'direto' | 'formula' | 'fixo';
   valor?: string;
+}
+
+export interface DescontoSalvo {
+  id: string;
+  fornecedor: string;
+  campanha: string;
+  percentual: number;
+  produtosAfetados: number;
+  data: string;
 }
 
 export interface OperacaoHistorico {
@@ -87,6 +106,17 @@ export interface PedidoItem {
   total: number;
 }
 
+export interface DashboardData {
+  arquivosProcessados: number;
+  produtosConvertidos: number;
+  exportacoesMercosCount: number;
+  catalogosGeradosCount: number;
+  fornecedoresAtivos: number;
+  pedidosConvertidosCount: number;
+  taxaAproveitamento: number;
+  alertasPendentes: number;
+}
+
 // ===== INITIAL DATA =====
 
 const initialFornecedores: Fornecedor[] = [
@@ -107,7 +137,7 @@ const initialRegras: RegraMapeamento[] = [
   { id: '7', fornecedor: 'Bosch', colunaOrigem: 'IPI fixo 10%', colunaDestino: 'IPI', tipo: 'fixo', valor: '10' },
 ];
 
-// ===== SIMULATED PRODUCT GENERATORS =====
+// ===== PRODUCT GENERATORS =====
 
 let nextId = 1;
 const genId = () => String(nextId++);
@@ -179,7 +209,7 @@ function generateIrwinProducts(desconto: number, ipi: number): Produto[] {
   });
 }
 
-export const supplierGenerators: Record<string, (d: number, i: number) => Produto[]> = {
+const supplierGenerators: Record<string, (d: number, i: number) => Produto[]> = {
   'Tramontina': generateTramontinaProducts,
   'Vonder': generateVonderProducts,
   'Bosch': generateBoschProducts,
@@ -187,29 +217,33 @@ export const supplierGenerators: Record<string, (d: number, i: number) => Produt
   'Irwin': generateIrwinProducts,
 };
 
-// ===== CONTEXT =====
+// ===== CONTEXT TYPE =====
 
-interface AppState {
+interface AppContextType {
+  // Entities
   fornecedores: Fornecedor[];
-  produtos: Produto[];
-  regras: RegraMapeamento[];
-  historico: OperacaoHistorico[];
+  arquivos: ArquivoProcessado[];
+  produtosPadronizados: Produto[];
+  regrasMapeamento: RegraMapeamento[];
+  descontos: DescontoSalvo[];
   exportacoesMercos: ExportacaoMercos[];
   catalogosGerados: CatalogoGerado[];
   pedidosConvertidos: PedidoConvertido[];
-}
+  historico: OperacaoHistorico[];
 
-interface AppContextType extends AppState {
+  // Computed
+  dashboard: DashboardData;
+
   // Actions
   processarArquivo: (fornecedorId: string, tipoArquivo: string) => { produtos: Produto[]; fornecedorNome: string; fileName: string };
   addProdutos: (prods: Produto[]) => void;
   updateProduto: (id: string, updates: Partial<Produto>) => void;
   validarProdutos: (ids: string[]) => void;
-  aplicarDesconto: (ids: string[], percentual: number) => void;
+  aplicarDesconto: (ids: string[], percentual: number, campanha?: string, fornecedor?: string) => void;
   exportarMercos: (prods: Produto[]) => void;
-  addHistorico: (op: Omit<OperacaoHistorico, 'id'>) => void;
-  addCatalogo: (cat: Omit<CatalogoGerado, 'id'>) => void;
+  gerarCatalogo: (cat: Omit<CatalogoGerado, 'id'>) => void;
   converterPedido: (destino: string, itens: PedidoItem[]) => void;
+  registrarHistorico: (op: Omit<OperacaoHistorico, 'id'>) => void;
   updateFornecedor: (id: string, updates: Partial<Fornecedor>) => void;
   addRegra: (regra: Omit<RegraMapeamento, 'id'>) => void;
   updateRegra: (id: string, updates: Partial<RegraMapeamento>) => void;
@@ -225,29 +259,47 @@ export function useApp() {
   return ctx;
 }
 
+// ===== PROVIDER =====
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>(initialFornecedores);
-  const [produtos, setProdutos] = useState<Produto[]>([]);
-  const [regras, setRegras] = useState<RegraMapeamento[]>(initialRegras);
-  const [historico, setHistorico] = useState<OperacaoHistorico[]>([]);
+  const [arquivos, setArquivos] = useState<ArquivoProcessado[]>([]);
+  const [produtosPadronizados, setProdutosPadronizados] = useState<Produto[]>([]);
+  const [regrasMapeamento, setRegrasMapeamento] = useState<RegraMapeamento[]>(initialRegras);
+  const [descontos, setDescontos] = useState<DescontoSalvo[]>([]);
   const [exportacoesMercos, setExportacoesMercos] = useState<ExportacaoMercos[]>([]);
   const [catalogosGerados, setCatalogosGerados] = useState<CatalogoGerado[]>([]);
   const [pedidosConvertidos, setPedidosConvertidos] = useState<PedidoConvertido[]>([]);
+  const [historico, setHistorico] = useState<OperacaoHistorico[]>([]);
 
   const now = () => {
     const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
 
+  // === recalcularDashboard (computed) ===
+  const dashboard = useMemo<DashboardData>(() => {
+    const arquivosProcessados = arquivos.filter(a => a.status === 'concluído').length;
+    const produtosConvertidos = produtosPadronizados.length;
+    const exportacoesMercosCount = exportacoesMercos.length;
+    const catalogosGeradosCount = catalogosGerados.length;
+    const fornecedoresAtivos = fornecedores.filter(f => f.status === 'ativo' && f.totalProdutos > 0).length;
+    const pedidosConvertidosCount = pedidosConvertidos.length;
+    const alertasPendentes = produtosPadronizados.filter(p => p.status === 'erro' || p.status === 'incompleto').length;
+    const taxaAproveitamento = produtosConvertidos > 0
+      ? Math.round((produtosPadronizados.filter(p => p.status === 'validado').length / produtosConvertidos) * 100)
+      : 0;
+    return { arquivosProcessados, produtosConvertidos, exportacoesMercosCount, catalogosGeradosCount, fornecedoresAtivos, pedidosConvertidosCount, taxaAproveitamento, alertasPendentes };
+  }, [arquivos, produtosPadronizados, exportacoesMercos, catalogosGerados, fornecedores, pedidosConvertidos]);
+
+  // === processarArquivo ===
   const processarArquivo = useCallback((fornecedorId: string, tipoArquivo: string) => {
     const forn = fornecedores.find(f => f.id === fornecedorId);
     if (!forn) throw new Error("Fornecedor não encontrado");
-    
     const generator = supplierGenerators[forn.nome];
     if (!generator) throw new Error("Gerador não encontrado para " + forn.nome);
 
     const novosProdutos = generator(forn.descontoPadrao, forn.ipiPadrao);
-    
     const fileNames: Record<string, string> = {
       'Tramontina': 'tabela_tramontina_marco2026.xlsx',
       'Vonder': 'precos_vonder_q1.xlsx',
@@ -255,13 +307,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       'Starrett': 'starrett_lista_2026.pdf',
       'Irwin': 'irwin_novos_produtos.xlsx',
     };
+    const fileName = fileNames[forn.nome] || `arquivo_${forn.nome.toLowerCase()}.xlsx`;
 
-    return { produtos: novosProdutos, fornecedorNome: forn.nome, fileName: fileNames[forn.nome] || `arquivo_${forn.nome.toLowerCase()}.xlsx` };
+    // Register file
+    setArquivos(prev => [...prev, {
+      id: genId(), nome: fileName, fornecedor: forn.nome, tipo: tipoArquivo, data: now(), qtdProdutos: novosProdutos.length, status: 'concluído'
+    }]);
+
+    return { produtos: novosProdutos, fornecedorNome: forn.nome, fileName };
   }, [fornecedores]);
 
+  // === addProdutos ===
   const addProdutos = useCallback((prods: Produto[]) => {
-    setProdutos(prev => [...prev, ...prods]);
-    // Update fornecedor product count
+    setProdutosPadronizados(prev => [...prev, ...prods]);
     const fornMap = new Map<string, number>();
     prods.forEach(p => fornMap.set(p.fornecedor, (fornMap.get(p.fornecedor) || 0) + 1));
     setFornecedores(prev => prev.map(f => {
@@ -270,11 +328,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
+  // === updateProduto ===
   const updateProduto = useCallback((id: string, updates: Partial<Produto>) => {
-    setProdutos(prev => prev.map(p => {
+    setProdutosPadronizados(prev => prev.map(p => {
       if (p.id !== id) return p;
       const updated = { ...p, ...updates };
-      // Recalc precoFinal if price/discount changed
       if (updates.precoBase !== undefined || updates.desconto !== undefined) {
         updated.precoFinal = +(updated.precoBase * (1 - updated.desconto / 100)).toFixed(2);
       }
@@ -282,34 +340,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
+  // === validarProdutos ===
   const validarProdutos = useCallback((ids: string[]) => {
-    setProdutos(prev => prev.map(p => ids.includes(p.id) ? { ...p, status: 'validado' as StatusProduto } : p));
+    setProdutosPadronizados(prev => prev.map(p => ids.includes(p.id) ? { ...p, status: 'validado' as StatusProduto } : p));
     setHistorico(prev => [{ id: genId(), arquivo: '-', fornecedor: 'Diversos', usuario: 'Admin', data: now(), tipoConversao: 'Validação de Produtos', qtdItens: ids.length, status: 'concluído' as const }, ...prev]);
   }, []);
 
-  const aplicarDesconto = useCallback((ids: string[], percentual: number) => {
-    setProdutos(prev => prev.map(p => {
+  // === aplicarDesconto ===
+  const aplicarDesconto = useCallback((ids: string[], percentual: number, campanha?: string, fornecedor?: string) => {
+    setProdutosPadronizados(prev => prev.map(p => {
       if (!ids.includes(p.id)) return p;
       const precoFinal = +(p.precoBase * (1 - percentual / 100)).toFixed(2);
       return { ...p, desconto: percentual, precoFinal };
     }));
-    setHistorico(prev => [{ id: genId(), arquivo: '-', fornecedor: 'Diversos', usuario: 'Admin', data: now(), tipoConversao: 'Aplicação de Desconto', qtdItens: ids.length, status: 'concluído' as const }, ...prev]);
+    // Track saved discount
+    setDescontos(prev => [...prev, {
+      id: genId(), fornecedor: fornecedor || 'Diversos', campanha: campanha || `Desconto ${percentual}%`, percentual, produtosAfetados: ids.length, data: now()
+    }]);
+    setHistorico(prev => [{ id: genId(), arquivo: '-', fornecedor: fornecedor || 'Diversos', usuario: 'Admin', data: now(), tipoConversao: 'Aplicação de Desconto', qtdItens: ids.length, status: 'concluído' as const }, ...prev]);
   }, []);
 
+  // === exportarMercos ===
   const exportarMercos = useCallback((prods: Produto[]) => {
     const validProds = prods.filter(p => p.status !== 'erro' && p.codigoFinal);
     setExportacoesMercos(prev => [...prev, { id: genId(), data: now(), produtos: validProds, status: 'gerada' }]);
     setHistorico(prev => [{ id: genId(), arquivo: `export_mercos_${Date.now()}.xlsx`, fornecedor: validProds[0]?.fornecedor || '-', usuario: 'Admin', data: now(), tipoConversao: 'Exportação Mercos', qtdItens: validProds.length, status: 'concluído' as const }, ...prev]);
   }, []);
 
-  const addHistorico = useCallback((op: Omit<OperacaoHistorico, 'id'>) => {
-    setHistorico(prev => [{ ...op, id: genId() }, ...prev]);
-  }, []);
-
-  const addCatalogo = useCallback((cat: Omit<CatalogoGerado, 'id'>) => {
+  // === gerarCatalogo ===
+  const gerarCatalogo = useCallback((cat: Omit<CatalogoGerado, 'id'>) => {
     setCatalogosGerados(prev => [...prev, { ...cat, id: genId() }]);
   }, []);
 
+  // === registrarHistorico ===
+  const registrarHistorico = useCallback((op: Omit<OperacaoHistorico, 'id'>) => {
+    setHistorico(prev => [{ ...op, id: genId() }, ...prev]);
+  }, []);
+
+  // === converterPedido ===
   const converterPedido = useCallback((destino: string, itens: PedidoItem[]) => {
     const total = itens.reduce((s, i) => s + i.total, 0);
     const pedido: PedidoConvertido = { id: genId(), numero: `PED-${Date.now().toString().slice(-6)}`, destino, data: now(), itens, total };
@@ -317,20 +385,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setHistorico(prev => [{ id: genId(), arquivo: `pedido_${pedido.numero}.xlsx`, fornecedor: '-', usuario: 'Admin', data: now(), tipoConversao: 'Conversão de Pedido', qtdItens: itens.length, status: 'concluído' as const }, ...prev]);
   }, []);
 
+  // === Fornecedor/Regra CRUD ===
   const updateFornecedor = useCallback((id: string, updates: Partial<Fornecedor>) => {
     setFornecedores(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
   }, []);
 
   const addRegra = useCallback((regra: Omit<RegraMapeamento, 'id'>) => {
-    setRegras(prev => [...prev, { ...regra, id: genId() }]);
+    setRegrasMapeamento(prev => [...prev, { ...regra, id: genId() }]);
   }, []);
 
   const updateRegra = useCallback((id: string, updates: Partial<RegraMapeamento>) => {
-    setRegras(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r));
+    setRegrasMapeamento(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r));
   }, []);
 
   const removeRegra = useCallback((id: string) => {
-    setRegras(prev => prev.filter(r => r.id !== id));
+    setRegrasMapeamento(prev => prev.filter(r => r.id !== id));
   }, []);
 
   const getFornecedorByName = useCallback((nome: string) => {
@@ -339,9 +408,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   return (
     <AppContext.Provider value={{
-      fornecedores, produtos, regras, historico, exportacoesMercos, catalogosGerados, pedidosConvertidos,
-      processarArquivo, addProdutos, updateProduto, validarProdutos, aplicarDesconto, exportarMercos,
-      addHistorico, addCatalogo, converterPedido, updateFornecedor, addRegra, updateRegra, removeRegra, getFornecedorByName,
+      fornecedores, arquivos, produtosPadronizados, regrasMapeamento, descontos,
+      exportacoesMercos, catalogosGerados, pedidosConvertidos, historico,
+      dashboard,
+      processarArquivo, addProdutos, updateProduto, validarProdutos, aplicarDesconto,
+      exportarMercos, gerarCatalogo, converterPedido, registrarHistorico,
+      updateFornecedor, addRegra, updateRegra, removeRegra, getFornecedorByName,
     }}>
       {children}
     </AppContext.Provider>

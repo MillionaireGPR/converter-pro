@@ -14,7 +14,7 @@ import { useNavigate } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 
 export default function BasePadronizada() {
-  const { produtos, fornecedores, updateProduto, validarProdutos, aplicarDesconto, exportarMercos } = useApp();
+  const { produtosPadronizados, fornecedores, updateProduto, validarProdutos, aplicarDesconto, exportarMercos } = useApp();
   const navigate = useNavigate();
   const [busca, setBusca] = useState("");
   const [filtroFornecedor, setFiltroFornecedor] = useState("todos");
@@ -27,9 +27,9 @@ export default function BasePadronizada() {
   const [descontoDialog, setDescontoDialog] = useState(false);
   const [descontoVal, setDescontoVal] = useState("15");
 
-  const categorias = [...new Set(produtos.map(p => p.categoria))].sort();
+  const categorias = [...new Set(produtosPadronizados.map(p => p.categoria))].sort();
 
-  const produtosFiltrados = produtos.filter(p => {
+  const produtosFiltrados = produtosPadronizados.filter(p => {
     const matchBusca = !busca || p.nome.toLowerCase().includes(busca.toLowerCase()) || p.codigoOriginal.toLowerCase().includes(busca.toLowerCase()) || p.codigoFinal.toLowerCase().includes(busca.toLowerCase());
     const matchFornecedor = filtroFornecedor === "todos" || p.fornecedor === filtroFornecedor;
     const matchStatus = filtroStatus === "todos" || p.status === filtroStatus;
@@ -43,10 +43,10 @@ export default function BasePadronizada() {
   };
 
   const stats = {
-    total: produtos.length,
-    validados: produtos.filter(p => p.status === 'validado').length,
-    pendentes: produtos.filter(p => p.status === 'pendente').length,
-    erros: produtos.filter(p => p.status === 'erro' || p.status === 'incompleto').length,
+    total: produtosPadronizados.length,
+    validados: produtosPadronizados.filter(p => p.status === 'validado').length,
+    pendentes: produtosPadronizados.filter(p => p.status === 'pendente').length,
+    erros: produtosPadronizados.filter(p => p.status === 'erro' || p.status === 'incompleto').length,
   };
 
   const handleValidar = () => {
@@ -73,7 +73,7 @@ export default function BasePadronizada() {
       toast.error("Selecione produtos para exportar");
       return;
     }
-    const prodsToExport = produtos.filter(p => selecionados.includes(p.id));
+    const prodsToExport = produtosPadronizados.filter(p => selecionados.includes(p.id));
     exportarMercos(prodsToExport);
     toast.success(`${prodsToExport.length} produto(s) enviados para Exportações Mercos!`);
     setSelecionados([]);
@@ -138,7 +138,7 @@ export default function BasePadronizada() {
         </div>
       </div>
 
-      {produtos.length === 0 ? (
+      {produtosPadronizados.length === 0 ? (
         <Card className="shadow-card">
           <CardContent className="p-12 text-center">
             <Package className="h-12 w-12 mx-auto text-muted-foreground/40 mb-4" />

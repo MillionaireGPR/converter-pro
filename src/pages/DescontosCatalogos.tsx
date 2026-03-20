@@ -12,7 +12,7 @@ import { useNavigate } from "react-router-dom";
 import logo from "@/assets/logo-nunes.png";
 
 export default function DescontosCatalogos() {
-  const { produtos, fornecedores, aplicarDesconto, addCatalogo, addHistorico } = useApp();
+  const { produtosPadronizados, fornecedores, aplicarDesconto, gerarCatalogo, registrarHistorico } = useApp();
   const navigate = useNavigate();
   const [fornecedor, setFornecedor] = useState("");
   const [desconto, setDesconto] = useState("15");
@@ -22,28 +22,28 @@ export default function DescontosCatalogos() {
   const [mostrarDesconto, setMostrarDesconto] = useState(true);
 
   const fornNome = fornecedores.find(f => f.id === fornecedor)?.nome;
-  const produtosFiltrados = fornNome ? produtos.filter(p => p.fornecedor === fornNome) : produtos;
+  const produtosFiltrados = fornNome ? produtosPadronizados.filter(p => p.fornecedor === fornNome) : produtosPadronizados;
   const descNum = parseFloat(desconto) || 0;
 
   const handleSalvar = () => {
     if (!produtosFiltrados.length) { toast.error("Sem produtos para aplicar desconto"); return; }
     const ids = produtosFiltrados.map(p => p.id);
-    aplicarDesconto(ids, descNum);
+    aplicarDesconto(ids, descNum, campanha, fornNome);
     toast.success(`Desconto de ${descNum}% salvo para ${ids.length} produto(s)!`);
   };
 
   const handleGerarPDF = () => {
-    addCatalogo({ nome: campanha, fornecedor: fornNome || 'Todos', desconto: descNum, data: new Date().toISOString().split('T')[0], qtdProdutos: produtosFiltrados.length });
-    addHistorico({ arquivo: `catalogo_${campanha.replace(/\s/g, '_').toLowerCase()}.pdf`, fornecedor: fornNome || 'Diversos', usuario: 'Admin', data: new Date().toISOString().replace('T', ' ').substring(0, 16), tipoConversao: 'Catálogo Gerado', qtdItens: produtosFiltrados.length, status: 'concluído' });
+    gerarCatalogo({ nome: campanha, fornecedor: fornNome || 'Todos', desconto: descNum, data: new Date().toISOString().split('T')[0], qtdProdutos: produtosFiltrados.length });
+    registrarHistorico({ arquivo: `catalogo_${campanha.replace(/\s/g, '_').toLowerCase()}.pdf`, fornecedor: fornNome || 'Diversos', usuario: 'Admin', data: new Date().toISOString().replace('T', ' ').substring(0, 16), tipoConversao: 'Catálogo Gerado', qtdItens: produtosFiltrados.length, status: 'concluído' });
     toast.success("Catálogo PDF registrado com sucesso!");
   };
 
   const handleGerarExcel = () => {
-    addHistorico({ arquivo: `tabela_descontos_${Date.now()}.xlsx`, fornecedor: fornNome || 'Diversos', usuario: 'Admin', data: new Date().toISOString().replace('T', ' ').substring(0, 16), tipoConversao: 'Exportação Excel', qtdItens: produtosFiltrados.length, status: 'concluído' });
+    registrarHistorico({ arquivo: `tabela_descontos_${Date.now()}.xlsx`, fornecedor: fornNome || 'Diversos', usuario: 'Admin', data: new Date().toISOString().replace('T', ' ').substring(0, 16), tipoConversao: 'Exportação Excel', qtdItens: produtosFiltrados.length, status: 'concluído' });
     toast.success("Exportação Excel registrada!");
   };
 
-  if (produtos.length === 0) {
+  if (produtosPadronizados.length === 0) {
     return (
       <div className="space-y-8">
         <div>

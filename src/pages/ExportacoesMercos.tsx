@@ -5,32 +5,25 @@ import { Badge } from "@/components/ui/badge";
 import { useApp } from "@/context/AppContext";
 import { Download, CheckCircle, AlertTriangle, XCircle, Package } from "lucide-react";
 import { toast } from "sonner";
-
 import { useNavigate } from "react-router-dom";
 
 export default function ExportacoesMercos() {
-  const { produtos, exportacoesMercos, exportarMercos, addHistorico } = useApp();
+  const { produtosPadronizados, exportacoesMercos, exportarMercos } = useApp();
   const navigate = useNavigate();
 
-  // Show only products from the latest export, or empty if none
   const latestExport = exportacoesMercos.length > 0 ? exportacoesMercos[exportacoesMercos.length - 1] : null;
   const exportProducts = latestExport?.produtos || [];
   const hasExports = exportProducts.length > 0;
-
-
-
-
-  const validProducts = exportProducts.filter(p => p.status !== 'erro' && p.codigoFinal && p.precoFinal > 0);
+  const displayProducts = hasExports ? exportProducts : produtosPadronizados;
+  const validProducts = displayProducts.filter(p => p.status !== 'erro' && p.codigoFinal && p.precoFinal > 0);
 
   const handleGerarPlanilha = () => {
-    // If no export yet, use all valid products from base
-    const prodsToExport = hasExports ? validProducts : produtos.filter(p => p.status !== 'erro' && p.codigoFinal && p.precoFinal > 0);
-    if (prodsToExport.length === 0) {
+    if (validProducts.length === 0) {
       toast.error("Nenhum produto válido para exportar. Selecione produtos na Base Padronizada.");
       return;
     }
-    exportarMercos(prodsToExport);
-    toast.success(`Planilha Mercos gerada com ${prodsToExport.length} produtos!`);
+    exportarMercos(validProducts);
+    toast.success(`Planilha Mercos gerada com ${validProducts.length} produtos!`);
   };
 
   return (
@@ -48,7 +41,7 @@ export default function ExportacoesMercos() {
         </div>
       </div>
 
-      {!hasExports && produtos.length === 0 ? (
+      {displayProducts.length === 0 ? (
         <Card className="shadow-card">
           <CardContent className="p-12 text-center">
             <Package className="h-12 w-12 mx-auto text-muted-foreground/40 mb-4" />
@@ -63,7 +56,6 @@ export default function ExportacoesMercos() {
             <CardHeader><CardTitle className="text-base">Checklist de Validação</CardTitle></CardHeader>
             <CardContent className="space-y-3">
               {(() => {
-                const displayProducts = hasExports ? exportProducts : produtos;
                 const semCodigo = displayProducts.filter(p => !p.codigoFinal).length;
                 const semPreco = displayProducts.filter(p => !p.precoFinal || p.precoFinal <= 0).length;
                 const duplicados = displayProducts.length - new Set(displayProducts.map(p => p.codigoFinal)).size;
@@ -92,7 +84,7 @@ export default function ExportacoesMercos() {
           <Card className="shadow-card lg:col-span-2">
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base">Preview da Exportação ({hasExports ? validProducts.length : produtos.filter(p => p.status !== 'erro' && p.codigoFinal && p.precoFinal > 0).length} válidos)</CardTitle>
+                <CardTitle className="text-base">Preview da Exportação ({validProducts.length} válidos)</CardTitle>
                 <Badge variant="outline" className="text-xs">Formato Mercos v3</Badge>
               </div>
             </CardHeader>
@@ -111,7 +103,7 @@ export default function ExportacoesMercos() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(hasExports ? exportProducts : produtos).map(p => (
+                    {displayProducts.map(p => (
                       <TableRow key={p.id} className={p.status === 'erro' || !p.codigoFinal ? 'bg-destructive/5' : ''}>
                         <TableCell className="font-mono text-xs">{p.codigoFinal || <span className="text-destructive font-semibold">VAZIO</span>}</TableCell>
                         <TableCell className="text-sm">{p.nome}</TableCell>
