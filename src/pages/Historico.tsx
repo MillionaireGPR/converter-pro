@@ -13,7 +13,7 @@ const routeMap: Record<string, string> = {
   'Catálogo Gerado': '/descontos',
   'Conversão de Pedido': '/pedidos',
   'Validação de Produtos': '/base',
-  'Aplicação de Desconto': '/base',
+  'Aplicação de Desconto': '/descontos',
   'Exportação Excel': '/descontos',
 };
 

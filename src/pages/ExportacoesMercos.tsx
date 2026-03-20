@@ -5,41 +5,32 @@ import { Badge } from "@/components/ui/badge";
 import { useApp } from "@/context/AppContext";
 import { Download, CheckCircle, AlertTriangle, XCircle, Package } from "lucide-react";
 import { toast } from "sonner";
-import { useMemo } from "react";
+
 import { useNavigate } from "react-router-dom";
 
 export default function ExportacoesMercos() {
   const { produtos, exportacoesMercos, exportarMercos, addHistorico } = useApp();
   const navigate = useNavigate();
 
-  // Use latest export or all valid products
-  const latestExport = exportacoesMercos[exportacoesMercos.length - 1];
-  const exportProducts = latestExport?.produtos || produtos;
+  // Show only products from the latest export, or empty if none
+  const latestExport = exportacoesMercos.length > 0 ? exportacoesMercos[exportacoesMercos.length - 1] : null;
+  const exportProducts = latestExport?.produtos || [];
+  const hasExports = exportProducts.length > 0;
 
-  const checks = useMemo(() => {
-    const semCodigo = exportProducts.filter(p => !p.codigoFinal).length;
-    const semPreco = exportProducts.filter(p => !p.precoFinal || p.precoFinal <= 0).length;
-    const duplicados = exportProducts.length - new Set(exportProducts.map(p => p.codigoFinal)).size;
-    const erros = exportProducts.filter(p => p.status === 'erro').length;
-    const preenchidos = exportProducts.filter(p => p.codigoFinal && p.nome && p.precoFinal > 0).length;
-    return [
-      { label: "Campos obrigatórios preenchidos", ok: preenchidos === exportProducts.length, count: `${preenchidos}/${exportProducts.length}` },
-      { label: "Produtos sem código", ok: semCodigo === 0, count: `${semCodigo} encontrado(s)` },
-      { label: "Produtos sem preço", ok: semPreco === 0, count: `${semPreco} encontrado(s)` },
-      { label: "Produtos com duplicidade", ok: duplicados === 0, count: `${duplicados} encontrado(s)` },
-      { label: "Erros de formatação", ok: erros === 0, count: `${erros} encontrado(s)` },
-    ];
-  }, [exportProducts]);
+
+
 
   const validProducts = exportProducts.filter(p => p.status !== 'erro' && p.codigoFinal && p.precoFinal > 0);
 
   const handleGerarPlanilha = () => {
-    if (validProducts.length === 0) {
-      toast.error("Nenhum produto válido para exportar");
+    // If no export yet, use all valid products from base
+    const prodsToExport = hasExports ? validProducts : produtos.filter(p => p.status !== 'erro' && p.codigoFinal && p.precoFinal > 0);
+    if (prodsToExport.length === 0) {
+      toast.error("Nenhum produto válido para exportar. Selecione produtos na Base Padronizada.");
       return;
     }
-    exportarMercos(validProducts);
-    toast.success(`Planilha Mercos gerada com ${validProducts.length} produtos!`);
+    exportarMercos(prodsToExport);
+    toast.success(`Planilha Mercos gerada com ${prodsToExport.length} produtos!`);
   };
 
   return (
@@ -57,7 +48,7 @@ export default function ExportacoesMercos() {
         </div>
       </div>
 
-      {exportProducts.length === 0 ? (
+      {!hasExports && produtos.length === 0 ? (
         <Card className="shadow-card">
           <CardContent className="p-12 text-center">
             <Package className="h-12 w-12 mx-auto text-muted-foreground/40 mb-4" />
@@ -71,22 +62,37 @@ export default function ExportacoesMercos() {
           <Card className="shadow-card">
             <CardHeader><CardTitle className="text-base">Checklist de Validação</CardTitle></CardHeader>
             <CardContent className="space-y-3">
-              {checks.map((c, i) => (
-                <div key={i} className="flex items-center gap-3">
-                  {c.ok ? <CheckCircle className="h-4 w-4 text-success shrink-0" /> : <AlertTriangle className="h-4 w-4 text-warning shrink-0" />}
-                  <div className="flex-1">
-                    <p className="text-sm">{c.label}</p>
-                    <p className="text-xs text-muted-foreground">{c.count}</p>
+              {(() => {
+                const displayProducts = hasExports ? exportProducts : produtos;
+                const semCodigo = displayProducts.filter(p => !p.codigoFinal).length;
+                const semPreco = displayProducts.filter(p => !p.precoFinal || p.precoFinal <= 0).length;
+                const duplicados = displayProducts.length - new Set(displayProducts.map(p => p.codigoFinal)).size;
+                const erros = displayProducts.filter(p => p.status === 'erro').length;
+                const preenchidos = displayProducts.filter(p => p.codigoFinal && p.nome && p.precoFinal > 0).length;
+                const checkItems = [
+                  { label: "Campos obrigatórios preenchidos", ok: preenchidos === displayProducts.length, count: `${preenchidos}/${displayProducts.length}` },
+                  { label: "Produtos sem código", ok: semCodigo === 0, count: `${semCodigo} encontrado(s)` },
+                  { label: "Produtos sem preço", ok: semPreco === 0, count: `${semPreco} encontrado(s)` },
+                  { label: "Produtos com duplicidade", ok: duplicados === 0, count: `${duplicados} encontrado(s)` },
+                  { label: "Erros de formatação", ok: erros === 0, count: `${erros} encontrado(s)` },
+                ];
+                return checkItems.map((c, i) => (
+                  <div key={i} className="flex items-center gap-3">
+                    {c.ok ? <CheckCircle className="h-4 w-4 text-success shrink-0" /> : <AlertTriangle className="h-4 w-4 text-warning shrink-0" />}
+                    <div className="flex-1">
+                      <p className="text-sm">{c.label}</p>
+                      <p className="text-xs text-muted-foreground">{c.count}</p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ));
+              })()}
             </CardContent>
           </Card>
 
           <Card className="shadow-card lg:col-span-2">
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base">Preview da Exportação ({validProducts.length} válidos)</CardTitle>
+                <CardTitle className="text-base">Preview da Exportação ({hasExports ? validProducts.length : produtos.filter(p => p.status !== 'erro' && p.codigoFinal && p.precoFinal > 0).length} válidos)</CardTitle>
                 <Badge variant="outline" className="text-xs">Formato Mercos v3</Badge>
               </div>
             </CardHeader>
@@ -105,7 +111,7 @@ export default function ExportacoesMercos() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {exportProducts.map(p => (
+                    {(hasExports ? exportProducts : produtos).map(p => (
                       <TableRow key={p.id} className={p.status === 'erro' || !p.codigoFinal ? 'bg-destructive/5' : ''}>
                         <TableCell className="font-mono text-xs">{p.codigoFinal || <span className="text-destructive font-semibold">VAZIO</span>}</TableCell>
                         <TableCell className="text-sm">{p.nome}</TableCell>

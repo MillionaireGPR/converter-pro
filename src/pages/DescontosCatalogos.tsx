@@ -22,7 +22,7 @@ export default function DescontosCatalogos() {
   const [mostrarDesconto, setMostrarDesconto] = useState(true);
 
   const fornNome = fornecedores.find(f => f.id === fornecedor)?.nome;
-  const produtosFiltrados = fornNome ? produtos.filter(p => p.fornecedor === fornNome) : produtos.slice(0, 5);
+  const produtosFiltrados = fornNome ? produtos.filter(p => p.fornecedor === fornNome) : produtos;
   const descNum = parseFloat(desconto) || 0;
 
   const handleSalvar = () => {
