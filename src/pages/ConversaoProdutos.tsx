@@ -10,7 +10,7 @@ import { useNavigate } from "react-router-dom";
 import { Progress } from "@/components/ui/progress";
 
 export default function ConversaoProdutos() {
-  const { fornecedores, processarArquivo, addProdutos, addHistorico } = useApp();
+  const { fornecedores, processarArquivo, addProdutos, registrarHistorico } = useApp();
   const [fornecedor, setFornecedor] = useState("");
   const [tipoArquivo, setTipoArquivo] = useState("");
   const [state, setState] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
@@ -34,7 +34,7 @@ export default function ConversaoProdutos() {
             const res = processarArquivo(fornecedor, tipoArquivo);
             setResult(res);
             addProdutos(res.produtos);
-            addHistorico({
+            registrarHistorico({
               arquivo: res.fileName,
               fornecedor: res.fornecedorNome,
               usuario: 'Admin',

@@ -15,22 +15,21 @@ const mockPedidoItems: PedidoItem[] = [
 ];
 
 export default function ConversaoPedidos() {
-  const { converterPedido, produtos } = useApp();
+  const { converterPedido, produtosPadronizados } = useApp();
   const [destino, setDestino] = useState("");
   const [uploaded, setUploaded] = useState(false);
   const [converted, setConverted] = useState(false);
 
-  // Use real products if available, otherwise mock — memoized to avoid re-renders changing random qtd
   const pedidoItems: PedidoItem[] = useMemo(() => {
-    if (produtos.length > 0) {
-      return produtos.slice(0, 5).map((p, i) => {
+    if (produtosPadronizados.length > 0) {
+      return produtosPadronizados.slice(0, 5).map((p, i) => {
         const qtd = [3, 5, 2, 10, 1][i % 5];
         const preco = p.precoFinal;
         return { codigo: p.codigoFinal || p.codigoOriginal, descricao: p.nome, qtd, preco, total: +(qtd * preco).toFixed(2) };
       });
     }
     return mockPedidoItems;
-  }, [produtos]);
+  }, [produtosPadronizados]);
 
   const handleUpload = () => {
     setUploaded(true);
