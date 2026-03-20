@@ -12,9 +12,10 @@ export default function ExportacoesMercos() {
   const { produtos, exportacoesMercos, exportarMercos, addHistorico } = useApp();
   const navigate = useNavigate();
 
-  // Use latest export or all valid products
-  const latestExport = exportacoesMercos[exportacoesMercos.length - 1];
-  const exportProducts = latestExport?.produtos || produtos;
+  // Show only products from the latest export, or empty if none
+  const latestExport = exportacoesMercos.length > 0 ? exportacoesMercos[exportacoesMercos.length - 1] : null;
+  const exportProducts = latestExport?.produtos || [];
+  const hasExports = exportProducts.length > 0;
 
   const checks = useMemo(() => {
     const semCodigo = exportProducts.filter(p => !p.codigoFinal).length;
