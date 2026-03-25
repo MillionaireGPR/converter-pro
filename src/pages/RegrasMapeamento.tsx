@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { useSearchParams } from "react-router-dom";
 
 export default function RegrasMapeamento() {
-  const { regrasMapeamento, fornecedores, addRegra, updateRegra, removeRegra } = useApp();
+  const { regrasMapeamento, fornecedores, addRegra, updateRegra, removeRegra, detectedHeaders } = useApp();
   const [searchParams] = useSearchParams();
   const [filtro, setFiltro] = useState(searchParams.get('fornecedor') || "todos");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -54,6 +54,45 @@ export default function RegrasMapeamento() {
     toast.success("Regra removida!");
   };
 
+  const sugerirRegras = () => {
+    if (!detectedHeaders.length) { toast.error("Nenhum header detectado. Processe um arquivo primeiro."); return; }
+    if (filtro === 'todos') { toast.error("Selecione um fornecedor específico para sugerir regras."); return; }
+
+    const targets = [
+      { key: 'codigoOriginal', words: ['código', 'referência', 'cod', 'ref', 'modelo', 'part'] },
+      { key: 'nome', words: ['descrição', 'nome', 'produto', 'item', 'desc'] },
+      { key: 'precoBase', words: ['preço', 'valor', 'venda', 'vlr', 'tabela'] },
+      { key: 'quantidadeCaixa', words: ['caixa', 'unidade', 'emb', 'qtd', 'quantidade', 'cx'] }
+    ];
+
+    let sugeridas = 0;
+    targets.forEach(t => {
+      // Verifica se já existe regra para esse destino
+      const existe = regrasMapeamento.find(r => r.fornecedor === filtro && r.colunaDestino === t.key);
+      if (existe) return;
+
+      // Busca por similaridade nos headers detectados
+      const bestMatch = detectedHeaders.find(h => {
+        const lowerH = h.toLowerCase();
+        return t.words.some(w => lowerH.includes(w));
+      });
+
+      if (bestMatch) {
+        addRegra({
+          fornecedor: filtro,
+          colunaOrigem: bestMatch,
+          colunaDestino: t.key,
+          tipo: 'direto',
+          valor: ''
+        });
+        sugeridas++;
+      }
+    });
+
+    if (sugeridas > 0) toast.success(`${sugeridas} regras sugeridas e adicionadas!`);
+    else toast.info("Nenhuma correspondência óbvia encontrada nos headers.");
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -69,6 +108,7 @@ export default function RegrasMapeamento() {
               {fornecedores.map(f => <SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>)}
             </SelectContent>
           </Select>
+          <Button variant="outline" className="text-primary border-primary/20" onClick={sugerirRegras} title="Sugerir regras baseadas nos headers do último arquivo importado">Sugerir Regras</Button>
           <Button className="gradient-primary text-primary-foreground" onClick={openNew}><Plus className="h-4 w-4 mr-1" /> Nova Regra</Button>
         </div>
       </div>
@@ -112,11 +152,33 @@ export default function RegrasMapeamento() {
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Campo Origem</label>
-              <Input value={form.colunaOrigem} onChange={e => setForm(f => ({ ...f, colunaOrigem: e.target.value }))} />
+              <div className="flex gap-2">
+                <Input value={form.colunaOrigem} onChange={e => setForm(f => ({ ...f, colunaOrigem: e.target.value }))} className="flex-1" placeholder="Nome exato da coluna" />
+                {detectedHeaders.length > 0 && (
+                  <Select onValueChange={v => setForm(f => ({ ...f, colunaOrigem: v }))}>
+                    <SelectTrigger className="w-12 px-0 flex justify-center"><SelectValue placeholder="" /></SelectTrigger>
+                    <SelectContent>
+                      {detectedHeaders.map(h => <SelectItem key={h} value={h}>{h}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+              {detectedHeaders.length > 0 && <p className="text-[10px] text-muted-foreground italic">Use a setinha ao lado para escolher entre os headers detectados</p>}
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Campo Destino</label>
-              <Input value={form.colunaDestino} onChange={e => setForm(f => ({ ...f, colunaDestino: e.target.value }))} />
+              <label className="text-sm font-medium">Campo Destino (Sistema)</label>
+              <Select value={form.colunaDestino} onValueChange={v => setForm(f => ({ ...f, colunaDestino: v }))}>
+                <SelectTrigger><SelectValue placeholder="Selecionar destino" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="codigoOriginal">Código Original</SelectItem>
+                  <SelectItem value="nome">Nome/Produto</SelectItem>
+                  <SelectItem value="descricaoComplementar">Descrição Completa</SelectItem>
+                  <SelectItem value="precoBase">Preço de Tabela</SelectItem>
+                  <SelectItem value="quantidadeCaixa">Quantidade Caixa</SelectItem>
+                  <SelectItem value="ipi">IPI (%)</SelectItem>
+                  <SelectItem value="categoria">Categoria</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Tipo</label>

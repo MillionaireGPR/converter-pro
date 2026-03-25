@@ -2,28 +2,80 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useState } from "react";
 import { useApp } from "@/context/AppContext";
 import { Download, CheckCircle, AlertTriangle, XCircle, Package } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
+import * as XLSX from "xlsx";
 
 export default function ExportacoesMercos() {
   const { produtosPadronizados, exportacoesMercos, exportarMercos } = useApp();
   const navigate = useNavigate();
+  const [precoMode, setPrecoMode] = useState<'tabela' | 'desconto'>('desconto');
 
   const latestExport = exportacoesMercos.length > 0 ? exportacoesMercos[exportacoesMercos.length - 1] : null;
   const exportProducts = latestExport?.produtos || [];
   const hasExports = exportProducts.length > 0;
+  
+  // Se for uma exportação histórica, respeitamos o que foi salvo nela. 
+  // Se for nova, usamos os produtos filtrados/carregados no contexto no momento.
   const displayProducts = hasExports ? exportProducts : produtosPadronizados;
-  const validProducts = displayProducts.filter(p => p.status !== 'erro' && p.codigoFinal && p.precoFinal > 0);
+  
+  const validProducts = displayProducts.filter(p => p.status !== 'erro' && p.codigoFinal && (precoMode === 'tabela' ? p.precoBase > 0 : p.precoFinal > 0));
 
-  const handleGerarPlanilha = () => {
+  const handleGerarPlanilha = async () => {
     if (validProducts.length === 0) {
-      toast.error("Nenhum produto válido para exportar. Selecione produtos na Base Padronizada.");
+      toast.error("Nenhum produto válido para exportar. Corrija os erros na Base Padronizada.");
       return;
     }
-    exportarMercos(validProducts);
-    toast.success(`Planilha Mercos gerada com ${validProducts.length} produtos!`);
+
+    try {
+      console.log(`[Flow MVP] Iniciando geração de planilha de exportação Mercos: ${validProducts.length} itens a serem documentados.`);
+      
+      // 1. Prepara os dados pro formato Mercos
+      const data = validProducts.map(p => ({
+        "Código do produto": p.codigoFinal || p.codigoOriginal,
+        "Nome do produto": p.nome,
+        "Preço de Tabela": precoMode === 'tabela' ? p.precoBase : p.precoFinal,
+        "IPI (%)": p.ipi,
+        "Unidade": p.unidade || "UN",
+        "Categoria": p.categoria,
+        "Descrição complementar": p.descricao
+      }));
+
+      // 2. Cria a planilha
+      const worksheet = XLSX.utils.json_to_sheet(data);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Produtos");
+
+      // 3. Define larguras de colunas básicas
+      worksheet["!cols"] = [
+        { wch: 15 }, // Código
+        { wch: 40 }, // Nome
+        { wch: 15 }, // Preço
+        { wch: 10 }, // IPI
+        { wch: 10 }, // Unidade
+        { wch: 20 }, // Categoria
+        { wch: 50 }, // Descrição
+      ];
+
+      // 4. Dispara download
+      const fileName = `export_mercos_${validProducts[0]?.fornecedor || 'geral'}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      console.log(`[Flow MVP] Fazendo download do arquivo: ${fileName}`);
+      XLSX.writeFile(workbook, fileName);
+
+      // 5. Registra no contexto e no Supabase (Aguardando)
+      console.log(`[Flow MVP] Salvando registro de exportação no Supabase/Estado com modo: ${precoMode}.`);
+      await exportarMercos(validProducts);
+      
+      console.log(`[Flow MVP] Fluxo completo de exportação finalizado.`);
+      toast.success(`Planilha "${fileName}" gerada e registrada com sucesso!`);
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao gerar planilha XLSX.");
+    }
   };
 
   return (
@@ -33,9 +85,18 @@ export default function ExportacoesMercos() {
           <h1 className="text-2xl font-bold text-foreground">Exportações Mercos</h1>
           <p className="text-sm text-muted-foreground">Gere arquivos no formato de importação do Mercos</p>
         </div>
-        <div className="flex gap-2">
-          <Badge variant="outline" className="text-xs">{exportacoesMercos.length} exportação(ões) realizadas</Badge>
-          <Button size="sm" className="gradient-primary text-primary-foreground" onClick={handleGerarPlanilha}>
+        <div className="flex gap-2 items-center flex-wrap">
+          <Select value={precoMode} onValueChange={(v: any) => setPrecoMode(v)}>
+            <SelectTrigger className="w-[180px] h-9 bg-card">
+              <SelectValue placeholder="Modo de Preço" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="desconto">Preço com Desconto</SelectItem>
+              <SelectItem value="tabela">Preço Base (Tabela)</SelectItem>
+            </SelectContent>
+          </Select>
+          <Badge variant="outline" className="text-xs h-9">{exportacoesMercos.length} exportação(ões) realizadas</Badge>
+          <Button size="sm" className="gradient-primary text-primary-foreground h-9" onClick={handleGerarPlanilha}>
             <Download className="h-4 w-4 mr-1" /> Gerar Planilha Mercos
           </Button>
         </div>
@@ -95,7 +156,7 @@ export default function ExportacoesMercos() {
                     <TableRow>
                       <TableHead>Código*</TableHead>
                       <TableHead>Nome do Produto*</TableHead>
-                      <TableHead className="text-right">Preço Tabela*</TableHead>
+                      <TableHead className="text-right">Preço ({precoMode === 'tabela' ? 'Base' : 'Final'})*</TableHead>
                       <TableHead className="text-right">IPI*</TableHead>
                       <TableHead>Unidade</TableHead>
                       <TableHead>Categoria</TableHead>
@@ -107,7 +168,7 @@ export default function ExportacoesMercos() {
                       <TableRow key={p.id} className={p.status === 'erro' || !p.codigoFinal ? 'bg-destructive/5' : ''}>
                         <TableCell className="font-mono text-xs">{p.codigoFinal || <span className="text-destructive font-semibold">VAZIO</span>}</TableCell>
                         <TableCell className="text-sm">{p.nome}</TableCell>
-                        <TableCell className="text-right text-sm">R$ {p.precoFinal.toFixed(2)}</TableCell>
+                        <TableCell className="text-right text-sm">R$ {(precoMode === 'tabela' ? p.precoBase : p.precoFinal).toFixed(2)}</TableCell>
                         <TableCell className="text-right text-sm">{p.ipi}%</TableCell>
                         <TableCell className="text-sm">{p.unidade}</TableCell>
                         <TableCell className="text-xs">{p.categoria}</TableCell>

@@ -1,4 +1,8 @@
-import React, { createContext, useContext, useState, useCallback, useMemo, ReactNode } from "react";
+import React, { createContext, useContext, useState, useCallback, useMemo, ReactNode, useEffect } from "react";
+import { ProdutoNormalizado } from "../core/types";
+import { validarProduto as motorValidar } from "../core/validators";
+import { supabase } from "../integrations/supabase/client";
+import { toast } from "sonner";
 
 // ===== TYPES =====
 
@@ -29,12 +33,14 @@ export interface ArquivoProcessado {
 export interface Produto {
   id: string;
   fornecedor: string;
+  fornecedorId?: string;
   codigoOriginal: string;
   codigoFinal: string;
   nome: string;
   descricao: string;
   precoBase: number;
-  desconto: number;
+  descontoPercentual: number;
+  descontoString?: string;
   precoFinal: number;
   ipi: number;
   unidade: string;
@@ -42,6 +48,9 @@ export interface Produto {
   categoria: string;
   embalagem: string;
   status: StatusProduto;
+  erros: string[];
+  imagemUrl?: string;
+  temImagem?: boolean;
 }
 
 export interface RegraMapeamento {
@@ -153,7 +162,7 @@ function generateTramontinaProducts(desconto: number, ipi: number): Produto[] {
   ];
   return items.map(i => {
     const pf = +(i.preco * (1 - desconto / 100)).toFixed(2);
-    return { id: genId(), fornecedor: 'Tramontina', codigoOriginal: i.cod, codigoFinal: `NR-${i.cod}`, nome: i.nome, descricao: i.desc, precoBase: i.preco, desconto, precoFinal: pf, ipi, unidade: i.un, qtdCaixa: i.qtd, categoria: i.cat, embalagem: i.emb, status: 'validado' as StatusProduto };
+    return { id: genId(), fornecedor: 'Tramontina', codigoOriginal: i.cod, codigoFinal: `NR-${i.cod}`, nome: i.nome, descricao: i.desc, precoBase: i.preco, descontoPercentual: desconto, precoFinal: pf, ipi, unidade: i.un, qtdCaixa: i.qtd, categoria: i.cat, embalagem: i.emb, status: 'validado' as StatusProduto, erros: [] };
   });
 }
 
@@ -167,7 +176,7 @@ function generateVonderProducts(desconto: number, ipi: number): Produto[] {
   ];
   return items.map(i => {
     const pf = +(i.preco * (1 - desconto / 100)).toFixed(2);
-    return { id: genId(), fornecedor: 'Vonder', codigoOriginal: i.cod, codigoFinal: `NR-${i.cod}`, nome: i.nome, descricao: i.desc, precoBase: i.preco, desconto, precoFinal: pf, ipi, unidade: i.un, qtdCaixa: i.qtd, categoria: i.cat, embalagem: i.emb, status: 'pendente' as StatusProduto };
+    return { id: genId(), fornecedor: 'Vonder', codigoOriginal: i.cod, codigoFinal: `NR-${i.cod}`, nome: i.nome, descricao: i.desc, precoBase: i.preco, descontoPercentual: desconto, precoFinal: pf, ipi, unidade: i.un, qtdCaixa: i.qtd, categoria: i.cat, embalagem: i.emb, status: 'pendente' as StatusProduto, erros: [] };
   });
 }
 
@@ -180,7 +189,7 @@ function generateBoschProducts(desconto: number, ipi: number): Produto[] {
   ];
   return items.map(i => {
     const pf = +(i.preco * (1 - desconto / 100)).toFixed(2);
-    return { id: genId(), fornecedor: 'Bosch', codigoOriginal: i.cod, codigoFinal: i.codFinal, nome: i.nome, descricao: i.desc, precoBase: i.preco, desconto, precoFinal: pf, ipi, unidade: i.un, qtdCaixa: i.qtd, categoria: i.cat, embalagem: i.emb, status: i.status };
+    return { id: genId(), fornecedor: 'Bosch', codigoOriginal: i.cod, codigoFinal: i.codFinal, nome: i.nome, descricao: i.desc, precoBase: i.preco, descontoPercentual: desconto, precoFinal: pf, ipi, unidade: i.un, qtdCaixa: i.qtd, categoria: i.cat, embalagem: i.emb, status: i.status, erros: [] };
   });
 }
 
@@ -193,7 +202,7 @@ function generateStarrettProducts(desconto: number, ipi: number): Produto[] {
   ];
   return items.map(i => {
     const pf = +(i.preco * (1 - desconto / 100)).toFixed(2);
-    return { id: genId(), fornecedor: 'Starrett', codigoOriginal: i.cod, codigoFinal: `NR-${i.cod}`, nome: i.nome, descricao: i.desc, precoBase: i.preco, desconto, precoFinal: pf, ipi, unidade: i.un, qtdCaixa: i.qtd, categoria: i.cat, embalagem: i.emb, status: 'validado' as StatusProduto };
+    return { id: genId(), fornecedor: 'Starrett', codigoOriginal: i.cod, codigoFinal: `NR-${i.cod}`, nome: i.nome, descricao: i.desc, precoBase: i.preco, descontoPercentual: desconto, precoFinal: pf, ipi, unidade: i.un, qtdCaixa: i.qtd, categoria: i.cat, embalagem: i.emb, status: 'validado' as StatusProduto, erros: [] };
   });
 }
 
@@ -205,7 +214,7 @@ function generateIrwinProducts(desconto: number, ipi: number): Produto[] {
   ];
   return items.map(i => {
     const pf = +(i.preco * (1 - desconto / 100)).toFixed(2);
-    return { id: genId(), fornecedor: 'Irwin', codigoOriginal: i.cod, codigoFinal: `NR-${i.cod}`, nome: i.nome, descricao: i.desc, precoBase: i.preco, desconto, precoFinal: pf, ipi, unidade: i.un, qtdCaixa: i.qtd, categoria: i.cat, embalagem: i.emb, status: 'pendente' as StatusProduto };
+    return { id: genId(), fornecedor: 'Irwin', codigoOriginal: i.cod, codigoFinal: `NR-${i.cod}`, nome: i.nome, descricao: i.desc, precoBase: i.preco, descontoPercentual: desconto, precoFinal: pf, ipi, unidade: i.un, qtdCaixa: i.qtd, categoria: i.cat, embalagem: i.emb, status: 'pendente' as StatusProduto, erros: [] };
   });
 }
 
@@ -233,22 +242,29 @@ interface AppContextType {
 
   // Computed
   dashboard: DashboardData;
+  isLoading: boolean;
 
   // Actions
   processarArquivo: (fornecedorId: string, tipoArquivo: string) => { produtos: Produto[]; fornecedorNome: string; fileName: string };
-  addProdutos: (prods: Produto[]) => void;
-  updateProduto: (id: string, updates: Partial<Produto>) => void;
-  validarProdutos: (ids: string[]) => void;
-  aplicarDesconto: (ids: string[], percentual: number, campanha?: string, fornecedor?: string) => void;
-  exportarMercos: (prods: Produto[]) => void;
+  addProdutos: (prods: Produto[]) => Promise<void>;
+  addProdutosNormalizados: (prods: ProdutoNormalizado[]) => Promise<void>;
+  updateProduto: (id: string, updates: Partial<Produto>) => Promise<void>;
+  validarProdutos: (ids: string[]) => Promise<void>;
+  aplicarDesconto: (ids: string[], percentual: number, campanha?: string, fornecedor?: string, descontoString?: string) => Promise<void>;
+  exportarMercos: (prods: Produto[]) => Promise<void>;
   gerarCatalogo: (cat: Omit<CatalogoGerado, 'id'>) => void;
   converterPedido: (destino: string, itens: PedidoItem[]) => void;
-  registrarHistorico: (op: Omit<OperacaoHistorico, 'id'>) => void;
-  updateFornecedor: (id: string, updates: Partial<Fornecedor>) => void;
+  registrarHistorico: (op: Omit<OperacaoHistorico, 'id'>) => Promise<void>;
+  updateFornecedor: (id: string, updates: Partial<Fornecedor>) => Promise<void>;
+  removeFornecedor: (id: string, deleteData?: boolean) => Promise<void>;
   addRegra: (regra: Omit<RegraMapeamento, 'id'>) => void;
-  updateRegra: (id: string, updates: Partial<RegraMapeamento>) => void;
+  updateRegra: (id: string, regra: Omit<RegraMapeamento, 'id'>) => void;
   removeRegra: (id: string) => void;
+  detectedHeaders: string[];
+  setDetectedHeaders: (headers: string[]) => void;
   getFornecedorByName: (nome: string) => Fornecedor | undefined;
+  seedSuppliers: () => Promise<void>;
+  limparBase: (fornecedorNome?: string) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -262,7 +278,7 @@ export function useApp() {
 // ===== PROVIDER =====
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [fornecedores, setFornecedores] = useState<Fornecedor[]>(initialFornecedores);
+  const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
   const [arquivos, setArquivos] = useState<ArquivoProcessado[]>([]);
   const [produtosPadronizados, setProdutosPadronizados] = useState<Produto[]>([]);
   const [regrasMapeamento, setRegrasMapeamento] = useState<RegraMapeamento[]>(initialRegras);
@@ -271,6 +287,104 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [catalogosGerados, setCatalogosGerados] = useState<CatalogoGerado[]>([]);
   const [pedidosConvertidos, setPedidosConvertidos] = useState<PedidoConvertido[]>([]);
   const [historico, setHistorico] = useState<OperacaoHistorico[]>([]);
+  const [detectedHeaders, setDetectedHeaders] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // === Carregar dados do Supabase ao iniciar ===
+  useEffect(() => {
+    async function loadInitialData() {
+      try {
+        setIsLoading(true);
+        
+        // 1. Fornecedores
+        const { data: fornData, error: fornError } = await supabase.from('suppliers').select('*');
+        if (fornError) throw fornError;
+        if (fornData) {
+          setFornecedores(fornData.map(f => ({
+            id: f.id,
+            nome: f.name,
+            tipoArquivo: f.file_type || 'Excel',
+            frequencia: f.frequency || 'Semanal',
+            descontoPadrao: f.default_discount || 0,
+            ipiPadrao: f.default_ipi || 0,
+            ultimoProcessamento: f.last_processed || '',
+            totalProdutos: f.total_products || 0,
+            status: f.status as any
+          })));
+        }
+
+        // 2. Produtos
+        const { data: prodData, error: prodError } = await supabase.from('standardized_products').select('*');
+        if (prodError) throw prodError;
+        if (prodData) {
+          setProdutosPadronizados(prodData.map(p => {
+            let fornNome = p.supplier_name;
+            const refFornecedor = fornData?.find(f => f.id === p.supplier_id || f.name === p.supplier_name);
+            if (refFornecedor) fornNome = refFornecedor.name;
+
+            return {
+              id: p.id,
+              fornecedor: fornNome,
+              fornecedorId: p.supplier_id || undefined,
+              codigoOriginal: p.original_code,
+              codigoFinal: p.final_code || '',
+              nome: p.name,
+              descricao: p.description || '',
+              precoBase: p.base_price || 0,
+              descontoPercentual: p.discount_percent || 0,
+              precoFinal: p.final_price || 0,
+              ipi: p.ipi || 0,
+              unidade: p.unit || '',
+              qtdCaixa: p.box_qty || 1,
+              categoria: p.categoria || '',
+              embalagem: p.embalagem || '',
+              status: p.status as any,
+              erros: (p.errors as any) || [],
+              imagemUrl: p.image_url || '',
+              temImagem: p.has_image || false
+            };
+          }));
+        }
+
+        // 3. Histórico
+        const { data: histData, error: histError } = await supabase.from('export_history').select('*').order('date', { ascending: false });
+        if (histError) throw histError;
+        if (histData) {
+          setHistorico(histData.map(h => {
+            let fornNomeHist = h.supplier_name || '-';
+            const refFornecedorHist = fornData?.find(f => f.id === h.supplier_name);
+            if (refFornecedorHist) fornNomeHist = refFornecedorHist.name;
+
+            return {
+              id: h.id,
+              arquivo: h.filename,
+              fornecedor: fornNomeHist,
+              usuario: h.user_name || 'Admin',
+              data: h.date,
+              tipoConversao: h.conversion_type || '',
+              qtdItens: h.item_count || 0,
+              status: h.status as any
+            };
+          }));
+        }
+
+      } catch (error) {
+        console.error("[Flow MVP] Erro ao carregar dados do Supabase:", error);
+        toast.error("Erro de conexão. Ativando modo offline com dados base.");
+        
+        // --- OFFLINE FALLBACK ---
+        setFornecedores([
+          { id: "00000000-0000-4000-a000-000000000001", nome: "NUNES", tipoArquivo: "Excel", frequencia: "Mensal", descontoPadrao: 0, ipiPadrao: 0, ultimoProcessamento: "", totalProdutos: 0, status: "ativo" },
+          { id: "00000000-0000-4000-a000-000000000002", nome: "CLINK", tipoArquivo: "Excel", frequencia: "Semanal", descontoPadrao: 15, ipiPadrao: 5, ultimoProcessamento: "", totalProdutos: 0, status: "ativo" },
+          { id: "00000000-0000-4000-a000-000000000003", nome: "Tramontina", tipoArquivo: "Excel", frequencia: "Semanal", descontoPadrao: 0, ipiPadrao: 0, ultimoProcessamento: "", totalProdutos: 0, status: "ativo" }
+        ]);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    loadInitialData();
+  }, []);
 
   const now = () => {
     const d = new Date();
@@ -291,6 +405,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
       : 0;
     return { arquivosProcessados, produtosConvertidos, exportacoesMercosCount, catalogosGeradosCount, fornecedoresAtivos, pedidosConvertidosCount, taxaAproveitamento, alertasPendentes };
   }, [arquivos, produtosPadronizados, exportacoesMercos, catalogosGerados, fornecedores, pedidosConvertidos]);
+
+  // === registrarHistorico ===
+  const registrarHistorico = useCallback(async (op: Omit<OperacaoHistorico, 'id'>) => {
+    try {
+      const { data, error } = await supabase.from('export_history').insert({
+        filename: op.arquivo,
+        supplier_name: op.fornecedor,
+        user_name: op.usuario,
+        conversion_type: op.tipoConversao,
+        item_count: op.qtdItens,
+        status: op.status
+      }).select().single();
+
+      if (error) throw error;
+
+      if (data) {
+        setHistorico(prev => [{
+          id: data.id,
+          arquivo: data.filename,
+          fornecedor: data.supplier_name || '-',
+          usuario: data.user_name || 'Admin',
+          data: data.date || now(),
+          tipoConversao: data.conversion_type || '',
+          qtdItens: data.item_count || 0,
+          status: data.status as any
+        }, ...prev]);
+      }
+    } catch (error) {
+      console.error("Erro ao registrar histórico:", error);
+      toast.error("Erro ao salvar histórico.");
+    }
+  }, []);
 
   // === processarArquivo ===
   const processarArquivo = useCallback((fornecedorId: string, tipoArquivo: string) => {
@@ -317,64 +463,345 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return { produtos: novosProdutos, fornecedorNome: forn.nome, fileName };
   }, [fornecedores]);
 
-  // === addProdutos ===
-  const addProdutos = useCallback((prods: Produto[]) => {
-    setProdutosPadronizados(prev => [...prev, ...prods]);
-    const fornMap = new Map<string, number>();
-    prods.forEach(p => fornMap.set(p.fornecedor, (fornMap.get(p.fornecedor) || 0) + 1));
-    setFornecedores(prev => prev.map(f => {
-      const add = fornMap.get(f.nome);
-      return add ? { ...f, totalProdutos: f.totalProdutos + add, ultimoProcessamento: new Date().toISOString().split('T')[0] } : f;
-    }));
+  // === seedSuppliers ===
+  const seedSuppliers = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const defaultSuppliers = [
+        { name: 'Tramontina', file_type: 'Excel', frequency: 'Mensal', default_discount: 15, default_ipi: 5, status: 'ativo' },
+        { name: 'Vonder', file_type: 'Excel', frequency: 'Quinzenal', default_discount: 10, default_ipi: 10, status: 'ativo' },
+        { name: 'Bosch', file_type: 'PDF', frequency: 'Mensal', default_discount: 20, default_ipi: 5, status: 'ativo' },
+        { name: 'Starrett', file_type: 'Excel', frequency: 'Semanal', default_discount: 5, default_ipi: 15, status: 'ativo' },
+        { name: 'Irwin', file_type: 'Excel', frequency: 'Mensal', default_discount: 12, default_ipi: 8, status: 'ativo' },
+      ];
+
+      const { data: existing } = await supabase.from('suppliers').select('name');
+      const existingNames = existing?.map(s => s.name) || [];
+      const toInsert = defaultSuppliers.filter(s => !existingNames.includes(s.name));
+      
+      if (toInsert.length > 0) {
+        const { error } = await supabase.from('suppliers').insert(toInsert);
+        if (error) throw error;
+      }
+
+      const { data: updatedForns } = await supabase.from('suppliers').select('*');
+      if (updatedForns) {
+        setFornecedores(updatedForns.map(f => ({
+          id: f.id, nome: f.name, tipoArquivo: f.file_type || 'Excel', frequencia: f.frequency || 'Semanal',
+          descontoPadrao: f.default_discount || 0, ipiPadrao: f.default_ipi || 0,
+          ultimoProcessamento: f.last_processed || '', totalProdutos: f.total_products || 0, status: f.status as any
+        })));
+      }
+      toast.success("Fornecedores padrão adicionados com sucesso!");
+    } catch (error) {
+      console.error("[Flow MVP] Erro ao semear fornecedores:", error);
+      toast.warning("Modo offline: Fornecedores padrão adicionados apenas localmente.");
+      setFornecedores([
+        { id: genId(), nome: 'Tramontina', tipoArquivo: 'Excel', frequencia: 'Mensal', descontoPadrao: 15, ipiPadrao: 5, ultimoProcessamento: "", totalProdutos: 0, status: 'ativo' },
+        { id: genId(), nome: 'Vonder', tipoArquivo: 'Excel', frequencia: 'Quinzenal', descontoPadrao: 10, ipiPadrao: 10, ultimoProcessamento: "", totalProdutos: 0, status: 'ativo' },
+        { id: genId(), nome: 'Bosch', tipoArquivo: 'PDF', frequencia: 'Mensal', descontoPadrao: 20, ipiPadrao: 5, ultimoProcessamento: "", totalProdutos: 0, status: 'ativo' },
+        { id: genId(), nome: 'Starrett', tipoArquivo: 'Excel', frequencia: 'Semanal', descontoPadrao: 5, ipiPadrao: 15, ultimoProcessamento: "", totalProdutos: 0, status: 'ativo' },
+        { id: genId(), nome: 'Irwin', tipoArquivo: 'Excel', frequencia: 'Mensal', descontoPadrao: 12, ipiPadrao: 8, ultimoProcessamento: "", totalProdutos: 0, status: 'ativo' },
+      ]);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  // === addProdutos ===
+  const addProdutos = useCallback(async (prods: Produto[]) => {
+    try {
+      if (prods.length === 0) return;
+
+      // 1. Encontra fornecedores únicos envolvidos
+      const fornecedoresEnvolvidos = Array.from(new Set(prods.map(p => p.fornecedor)));
+      console.log(`[Flow MVP] Limpando produtos antigos do fornecedor:`, fornecedoresEnvolvidos);
+
+      // 2. Limpa o banco de dados e o estado
+      const { error: delError } = await supabase
+        .from('standardized_products')
+        .delete()
+        .in('supplier_name', fornecedoresEnvolvidos);
+        
+      if (delError) console.error(`[Flow MVP] Falha ao limpar banco.`, delError);
+      
+      setProdutosPadronizados(prev => prev.filter(p => !fornecedoresEnvolvidos.includes(p.fornecedor)));
+
+      const isUUID = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
+      const inserts = prods.map(p => {
+        const sId = (p.fornecedorId && isUUID(p.fornecedorId)) ? p.fornecedorId : null;
+        if (p.fornecedorId && !sId) {
+          console.warn(`[Flow MVP] supplier_id "${p.fornecedorId}" não é um UUID válido. Enviando NULL para evitar erro de banco.`);
+        }
+        
+        return {
+          supplier_id: sId,
+          supplier_name: p.fornecedor,
+        original_code: p.codigoOriginal,
+        final_code: p.codigoFinal,
+        name: p.nome,
+        description: p.descricao,
+        base_price: p.precoBase,
+        discount_percent: p.descontoPercentual,
+        final_price: p.precoFinal,
+        ipi: p.ipi,
+        unit: p.unidade,
+        box_qty: p.qtdCaixa,
+        categoria: p.categoria,
+        embalagem: p.embalagem,
+        status: p.status,
+        errors: p.erros as any,
+        image_url: p.imagemUrl || null,
+          has_image: p.temImagem || false
+        };
+      });
+
+      console.log(`[Flow MVP] Tentando salvar ${inserts.length} produtos no Supabase...`);
+      const { data, error } = await supabase.from('standardized_products').insert(inserts).select();
+      
+      if (error) {
+        console.error(`[Flow MVP] Falha no Supabase. Usando Fallback Local para ${prods.length} itens.`, error);
+        toast.warning("Modo Offline: Dados salvos apenas localmente");
+        const localProds = prods.map(p => ({ ...p, id: genId() }));
+        setProdutosPadronizados(prev => [...prev, ...localProds]);
+      } else if (data) {
+        console.log(`[Flow MVP] Sucesso no Supabase. ${data.length} itens salvos.`);
+        const newProds: Produto[] = data.map(p => ({
+          id: p.id,
+          fornecedor: p.supplier_name,
+          fornecedorId: p.supplier_id || undefined,
+          codigoOriginal: p.original_code,
+          codigoFinal: p.final_code || '',
+          nome: p.name,
+          descricao: p.description || '',
+          precoBase: p.base_price || 0,
+          descontoPercentual: p.discount_percent || 0,
+          precoFinal: p.final_price || 0,
+          ipi: p.ipi || 0,
+          unidade: p.unit || '',
+          qtdCaixa: p.box_qty || 1,
+          categoria: p.categoria || '',
+          embalagem: p.embalagem || '',
+          status: p.status as any,
+          erros: (p.errors as any) || [],
+          imagemUrl: (p as any).image_url || '',
+          temImagem: (p as any).has_image || false
+        }));
+        setProdutosPadronizados(prev => [...prev, ...newProds]);
+      }
+
+      // Atualiza contagem nos fornecedores
+      const fornMap = new Map<string, number>();
+      prods.forEach(p => fornMap.set(p.fornecedor, (fornMap.get(p.fornecedor) || 0) + 1));
+      
+      for (const [name, count] of fornMap.entries()) {
+        const f = fornecedores.find(x => x.nome === name);
+        if (f && isUUID(f.id)) {
+          await supabase.from('suppliers').update({ 
+            total_products: f.totalProdutos + count,
+            last_processed: new Date().toISOString()
+          }).eq('id', f.id);
+        }
+      }
+
+      // Recarrega fornecedores para garantir sincronia
+      const { data: updatedForns } = await supabase.from('suppliers').select('*');
+      if (updatedForns) {
+        setFornecedores(updatedForns.map(f => ({
+          id: f.id, nome: f.name, tipoArquivo: f.file_type || 'Excel', frequencia: f.frequency || 'Semanal',
+          descontoPadrao: f.default_discount || 0, ipiPadrao: f.default_ipi || 0,
+          ultimoProcessamento: f.last_processed || '', totalProdutos: f.total_products || 0, status: f.status as any
+        })));
+      }
+
+    } catch (error) {
+      console.error("Erro ao adicionar produtos:", error);
+      toast.error("Erro ao salvar produtos no banco.");
+    }
+  }, [fornecedores]);
+
+  // === addProdutosNormalizados ===
+  const addProdutosNormalizados = useCallback(async (prods: ProdutoNormalizado[]) => {
+    console.log(`[Flow MVP] Recebidos ${prods.length} produtos do motor para normalização visual.`);
+    const mappedProds: Produto[] = prods.map(p => ({
+      id: genId(),
+      fornecedor: p.fornecedor,
+      fornecedorId: p.fornecedorId,
+      codigoOriginal: p.codigoOriginal,
+      codigoFinal: p.codigo,
+      nome: p.nome,
+      descricao: p.descricaoComplementar || '',
+      precoBase: p.precoBase,
+      descontoPercentual: p.descontoPercentual || 0,
+      descontoString: p.descontoString,
+      precoFinal: p.precoFinal,
+      ipi: p.ipi || 0,
+      unidade: p.unidade,
+      qtdCaixa: p.quantidadeCaixa,
+      categoria: p.categoria || '',
+      embalagem: p.embalagem || '',
+      status: p.status as StatusProduto,
+      erros: p.erros || [],
+      imagemUrl: p.imagemUrl || '',
+      temImagem: p.temImagem || false
+    }));
+
+    await addProdutos(mappedProds);
+  }, [addProdutos]);
 
   // === updateProduto ===
-  const updateProduto = useCallback((id: string, updates: Partial<Produto>) => {
-    setProdutosPadronizados(prev => prev.map(p => {
-      if (p.id !== id) return p;
+  const updateProduto = useCallback(async (id: string, updates: Partial<Produto>) => {
+    try {
+      const p = produtosPadronizados.find(x => x.id === id);
+      if (!p) return;
+
       const updated = { ...p, ...updates };
-      if (updates.precoBase !== undefined || updates.desconto !== undefined) {
-        updated.precoFinal = +(updated.precoBase * (1 - updated.desconto / 100)).toFixed(2);
+      if (updates.precoBase !== undefined || updates.descontoPercentual !== undefined) {
+        updated.precoFinal = +(updated.precoBase * (1 - updated.descontoPercentual / 100)).toFixed(2);
       }
-      return updated;
-    }));
-  }, []);
+
+      console.log(`[Flow MVP] Atualizando produto ${id}:`, updates);
+      const { error } = await supabase.from('standardized_products').update({
+        final_code: updated.codigoFinal,
+        name: updated.nome,
+        description: updated.descricao,
+        base_price: updated.precoBase,
+        discount_percent: updated.descontoPercentual,
+        final_price: updated.precoFinal,
+        ipi: updated.ipi,
+        unit: updated.unidade,
+        box_qty: updated.qtdCaixa,
+        categoria: updated.categoria,
+        embalagem: updated.embalagem,
+        status: updated.status,
+        errors: updated.erros as any,
+        image_url: updated.imagemUrl || null,
+        has_image: updated.temImagem || false
+      }).eq('id', id);
+
+      if (error) {
+        console.warn(`[Flow MVP] Supabase falhou, usando fallback local para item ${id}`);
+        toast.warning("Modo Offline: Alteração salva localmente");
+      }
+
+      setProdutosPadronizados(prev => prev.map(prod => prod.id === id ? updated : prod));
+    } catch (error) {
+      console.error("Erro ao atualizar produto:", error);
+      toast.error("Erro ao processar alteração local.");
+    }
+  }, [produtosPadronizados]);
 
   // === validarProdutos ===
-  const validarProdutos = useCallback((ids: string[]) => {
-    setProdutosPadronizados(prev => prev.map(p => ids.includes(p.id) ? { ...p, status: 'validado' as StatusProduto } : p));
-    setHistorico(prev => [{ id: genId(), arquivo: '-', fornecedor: 'Diversos', usuario: 'Admin', data: now(), tipoConversao: 'Validação de Produtos', qtdItens: ids.length, status: 'concluído' as const }, ...prev]);
-  }, []);
+  const validarProdutos = useCallback(async (ids: string[]) => {
+    try {
+      const results = await Promise.all(ids.map(async (id) => {
+        const p = produtosPadronizados.find(x => x.id === id);
+        if (!p) return null;
+        
+        const pNormalizado: ProdutoNormalizado = {
+          fornecedor: p.fornecedor,
+          codigoOriginal: p.codigoOriginal,
+          codigo: p.codigoFinal || p.codigoOriginal,
+          nome: p.nome,
+          precoBase: p.precoBase,
+          precoFinal: p.precoFinal,
+          ipi: p.ipi,
+          unidade: p.unidade,
+          quantidadeCaixa: p.qtdCaixa,
+          categoria: p.categoria,
+          status: p.status as any,
+          erros: p.erros,
+        };
+
+        const result = motorValidar(pNormalizado);
+        const finalStatus = result.status as StatusProduto;
+        const finalCode = result.status === 'validado' ? (p.codigoFinal || p.codigoOriginal) : p.codigoFinal;
+
+        const { error } = await supabase.from('standardized_products').update({
+          status: finalStatus,
+          errors: result.erros as any,
+          final_code: finalCode
+        }).eq('id', id);
+
+        if (error) console.warn(`[Flow MVP] Fallback local para validação do item ${id}`);
+
+        return { ...p, status: finalStatus, erros: result.erros, codigoFinal: finalCode };
+      }));
+      
+      console.log(`[Flow MVP] Validação aplicada a ${ids.length} produtos.`);
+
+      const updatedProds = results.filter(Boolean) as Produto[];
+      setProdutosPadronizados(prev => prev.map(p => {
+        const upd = updatedProds.find(u => u.id === p.id);
+        return upd || p;
+      }));
+
+      await registrarHistorico({ arquivo: '-', fornecedor: 'Diversos', usuario: 'Admin', data: now(), tipoConversao: 'Validação de Produtos', qtdItens: ids.length, status: 'concluído' });
+    } catch (error) {
+      console.error("Erro ao validar produtos:", error);
+      toast.error("Erro ao salvar validação.");
+    }
+  }, [produtosPadronizados, registrarHistorico]);
 
   // === aplicarDesconto ===
-  const aplicarDesconto = useCallback((ids: string[], percentual: number, campanha?: string, fornecedor?: string) => {
-    setProdutosPadronizados(prev => prev.map(p => {
-      if (!ids.includes(p.id)) return p;
-      const precoFinal = +(p.precoBase * (1 - percentual / 100)).toFixed(2);
-      return { ...p, desconto: percentual, precoFinal };
-    }));
-    // Track saved discount
-    setDescontos(prev => [...prev, {
-      id: genId(), fornecedor: fornecedor || 'Diversos', campanha: campanha || `Desconto ${percentual}%`, percentual, produtosAfetados: ids.length, data: now()
-    }]);
-    setHistorico(prev => [{ id: genId(), arquivo: '-', fornecedor: fornecedor || 'Diversos', usuario: 'Admin', data: now(), tipoConversao: 'Aplicação de Desconto', qtdItens: ids.length, status: 'concluído' as const }, ...prev]);
-  }, []);
+  const aplicarDesconto = useCallback(async (ids: string[], percentual: number, campanha?: string, fornecedor?: string, descontoString?: string) => {
+    try {
+      console.log(`[Flow MVP] Aplicando desconto de ${percentual}% (${descontoString || 'Simples'}) em ${ids.length} itens.`);
+      const results = await Promise.all(ids.map(async (id) => {
+        const p = produtosPadronizados.find(x => x.id === id);
+        if (!p) return null;
+        const precoFinal = +(p.precoBase * (1 - percentual / 100)).toFixed(2);
+        
+        const { error } = await supabase.from('standardized_products').update({
+          discount_percent: percentual,
+          final_price: precoFinal
+        }).eq('id', id);
+
+        if (error) console.warn(`[Flow MVP] Supabase falhou no desconto do item ${id}, usando fallback local.`);
+
+        return { ...p, descontoPercentual: percentual, descontoString, precoFinal };
+      }));
+
+      const updatedProds = results.filter(Boolean) as Produto[];
+
+      setProdutosPadronizados(prev => prev.map(p => {
+        const upd = updatedProds.find(u => u.id === p.id);
+        return upd || p;
+      }));
+
+      setDescontos(prev => [...prev, {
+        id: genId(), fornecedor: fornecedor || 'Diversos', campanha: campanha || `Desconto ${percentual}%`, percentual, produtosAfetados: ids.length, data: now()
+      }]);
+
+      await registrarHistorico({ 
+        arquivo: '-', fornecedor: fornecedor || 'Diversos', usuario: 'Admin', data: now(), 
+        tipoConversao: 'Aplicação de Desconto', qtdItens: ids.length, status: 'concluído' 
+      });
+    } catch (error) {
+      console.error("Erro ao aplicar desconto:", error);
+      toast.error("Erro ao salvar descontos.");
+    }
+  }, [produtosPadronizados, registrarHistorico]);
 
   // === exportarMercos ===
-  const exportarMercos = useCallback((prods: Produto[]) => {
+  const exportarMercos = useCallback(async (prods: Produto[]) => {
     const validProds = prods.filter(p => p.status !== 'erro' && p.codigoFinal);
+    console.log(`[Flow MVP] Preparando exportação Mercos com ${validProds.length} itens válidos de um total de ${prods.length} recebidos.`);
     setExportacoesMercos(prev => [...prev, { id: genId(), data: now(), produtos: validProds, status: 'gerada' }]);
-    setHistorico(prev => [{ id: genId(), arquivo: `export_mercos_${Date.now()}.xlsx`, fornecedor: validProds[0]?.fornecedor || '-', usuario: 'Admin', data: now(), tipoConversao: 'Exportação Mercos', qtdItens: validProds.length, status: 'concluído' as const }, ...prev]);
-  }, []);
+    await registrarHistorico({ 
+      arquivo: `export_mercos_${Date.now()}.xlsx`, 
+      fornecedor: validProds[0]?.fornecedor || '-', 
+      usuario: 'Admin', data: now(), 
+      tipoConversao: 'Exportação Mercos', 
+      qtdItens: validProds.length, 
+      status: 'concluído' 
+    });
+  }, [registrarHistorico]);
 
   // === gerarCatalogo ===
   const gerarCatalogo = useCallback((cat: Omit<CatalogoGerado, 'id'>) => {
     setCatalogosGerados(prev => [...prev, { ...cat, id: genId() }]);
-  }, []);
-
-  // === registrarHistorico ===
-  const registrarHistorico = useCallback((op: Omit<OperacaoHistorico, 'id'>) => {
-    setHistorico(prev => [{ ...op, id: genId() }, ...prev]);
   }, []);
 
   // === converterPedido ===
@@ -382,12 +809,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const total = itens.reduce((s, i) => s + i.total, 0);
     const pedido: PedidoConvertido = { id: genId(), numero: `PED-${Date.now().toString().slice(-6)}`, destino, data: now(), itens, total };
     setPedidosConvertidos(prev => [...prev, pedido]);
-    setHistorico(prev => [{ id: genId(), arquivo: `pedido_${pedido.numero}.xlsx`, fornecedor: '-', usuario: 'Admin', data: now(), tipoConversao: 'Conversão de Pedido', qtdItens: itens.length, status: 'concluído' as const }, ...prev]);
+    registrarHistorico({ arquivo: `pedido_${pedido.numero}.xlsx`, fornecedor: '-', usuario: 'Admin', data: now(), tipoConversao: 'Conversão de Pedido', qtdItens: itens.length, status: 'concluído' });
+  }, [registrarHistorico]);
+
+  // === limparBase ===
+  const limparBase = useCallback(async (fornecedorNome?: string) => {
+    try {
+      setIsLoading(true);
+      if (fornecedorNome) {
+        console.log(`[Flow MVP] Limpando base apenas para o fornecedor: ${fornecedorNome}`);
+        const { error } = await supabase.from('standardized_products').delete().eq('supplier_name', fornecedorNome);
+        if (error) throw error;
+        setProdutosPadronizados(prev => prev.filter(p => p.fornecedor !== fornecedorNome));
+      } else {
+        console.log(`[Flow MVP] Limpando toda a base de produtos.`);
+        const { error } = await supabase.from('standardized_products').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        if (error) throw error;
+        setProdutosPadronizados([]);
+      }
+      toast.success(fornecedorNome ? `Produtos da ${fornecedorNome} removidos.` : "Toda a base foi limpa com sucesso!");
+    } catch (error) {
+      console.error("[Flow MVP] Erro ao limpar base:", error);
+      toast.error("Erro ao limpar a base de dados.");
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
   // === Fornecedor/Regra CRUD ===
-  const updateFornecedor = useCallback((id: string, updates: Partial<Fornecedor>) => {
-    setFornecedores(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
+  const updateFornecedor = useCallback(async (id: string, updates: Partial<Fornecedor>) => {
+    try {
+      const { error } = await supabase.from('suppliers').update({
+        name: updates.nome,
+        file_type: updates.tipoArquivo,
+        frequency: updates.frequencia,
+        default_discount: updates.descontoPadrao,
+        default_ipi: updates.ipiPadrao,
+        status: updates.status
+      }).eq('id', id);
+
+      if (error) throw error;
+      setFornecedores(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
+    } catch (error) {
+      console.error("Erro ao atualizar fornecedor:", error);
+      toast.error("Erro ao salvar fornecedor.");
+    }
   }, []);
 
   const addRegra = useCallback((regra: Omit<RegraMapeamento, 'id'>) => {
@@ -397,6 +863,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const updateRegra = useCallback((id: string, updates: Partial<RegraMapeamento>) => {
     setRegrasMapeamento(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r));
   }, []);
+
+  const removeFornecedor = useCallback(async (id: string, deleteData: boolean = false) => {
+    try {
+      const f = fornecedores.find(x => x.id === id);
+      if (!f) return;
+
+      console.log(`[Flow MVP] Removendo fornecedor ${f.nome} (ID: ${id}). Dados vinculados: ${deleteData}`);
+
+      if (deleteData) {
+        // 1. Remove produtos (por ID ou Nome para segurança)
+        await supabase.from('standardized_products').delete().or(`supplier_id.eq.${id},supplier_name.eq.${f.nome}`);
+        setProdutosPadronizados(prev => prev.filter(p => p.fornecedorId !== id && p.fornecedor !== f.nome));
+        
+        // 2. Remove regras
+        setRegrasMapeamento(prev => prev.filter(r => r.fornecedor !== f.nome));
+      }
+
+      // 3. Remove fornecedor
+      const { error } = await supabase.from('suppliers').delete().eq('id', id);
+      if (error) throw error;
+
+      setFornecedores(prev => prev.filter(x => x.id !== id));
+      toast.success(`Fornecedor ${f.nome} removido.`);
+    } catch (error) {
+      console.error("Erro ao remover fornecedor:", error);
+      toast.error("Erro ao excluir fornecedor do banco.");
+    }
+  }, [fornecedores]);
 
   const removeRegra = useCallback((id: string) => {
     setRegrasMapeamento(prev => prev.filter(r => r.id !== id));
@@ -410,10 +904,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <AppContext.Provider value={{
       fornecedores, arquivos, produtosPadronizados, regrasMapeamento, descontos,
       exportacoesMercos, catalogosGerados, pedidosConvertidos, historico,
-      dashboard,
-      processarArquivo, addProdutos, updateProduto, validarProdutos, aplicarDesconto,
+      dashboard, detectedHeaders, isLoading,
+      processarArquivo, addProdutos, addProdutosNormalizados, updateProduto, validarProdutos, aplicarDesconto,
       exportarMercos, gerarCatalogo, converterPedido, registrarHistorico,
-      updateFornecedor, addRegra, updateRegra, removeRegra, getFornecedorByName,
+      updateFornecedor, removeFornecedor, addRegra, updateRegra, removeRegra, getFornecedorByName, seedSuppliers, limparBase,
+      setDetectedHeaders
     }}>
       {children}
     </AppContext.Provider>

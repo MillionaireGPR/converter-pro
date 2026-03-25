@@ -9,38 +9,130 @@ import { useApp } from "@/context/AppContext";
 import { Eye, FileDown, FileSpreadsheet, Save, Tag, Sparkles, Package } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
 import logo from "@/assets/logo-nunes.png";
 
 export default function DescontosCatalogos() {
   const { produtosPadronizados, fornecedores, aplicarDesconto, gerarCatalogo, registrarHistorico } = useApp();
   const navigate = useNavigate();
   const [fornecedor, setFornecedor] = useState("");
-  const [desconto, setDesconto] = useState("15");
+  const [descontoPrincipal, setDescontoPrincipal] = useState("15");
+  const [descontoAdicional, setDescontoAdicional] = useState("");
   const [campanha, setCampanha] = useState("Campanha Verão 2026");
   const [showPreview, setShowPreview] = useState(false);
   const [usarPrecoFinal, setUsarPrecoFinal] = useState(false);
   const [mostrarDesconto, setMostrarDesconto] = useState(true);
 
-  const fornNome = fornecedores.find(f => f.id === fornecedor)?.nome;
-  const produtosFiltrados = fornNome ? produtosPadronizados.filter(p => p.fornecedor === fornNome) : produtosPadronizados;
-  const descNum = parseFloat(desconto) || 0;
+  const forn = fornecedores.find(f => f.id === fornecedor);
+  const fornNome = forn?.nome;
+  const produtosFiltrados = forn ? produtosPadronizados.filter(p => p.fornecedorId === forn.id || p.fornecedor === forn.nome) : produtosPadronizados;
 
-  const handleSalvar = () => {
+  const fornecedoresComProdutos = fornecedores.filter(f => 
+    produtosPadronizados.some(p => p.fornecedorId === f.id || p.fornecedor === f.nome)
+  );
+
+  // Calculadora de desconto composto do formato "30+15+10"
+  const d1 = parseFloat(descontoPrincipal) || 0;
+  const d2 = parseFloat(descontoAdicional) || 0;
+  
+  const calcularEquivalente = (p1: number, p2: number) => {
+    const mult = (1 - p1 / 100) * (1 - p2 / 100);
+    return +((1 - mult) * 100).toFixed(2);
+  };
+
+  const descNum = calcularEquivalente(d1, d2);
+  const descontoString = d2 > 0 ? `${d1}+${d2}` : `${d1}`;
+  const valido = d1 >= 0 && d1 <= 100 && d2 >= 0 && d2 <= 100;
+
+  const handleSalvar = async () => {
+    if (!valido) { toast.error("Por favor, informe descontos válidos entre 0 e 100."); return; }
     if (!produtosFiltrados.length) { toast.error("Sem produtos para aplicar desconto"); return; }
-    const ids = produtosFiltrados.map(p => p.id);
-    aplicarDesconto(ids, descNum, campanha, fornNome);
-    toast.success(`Desconto de ${descNum}% salvo para ${ids.length} produto(s)!`);
+    try {
+      const ids = produtosFiltrados.map(p => p.id);
+      console.log(`[Flow MVP] Enviando desconto composto:`, { d1, d2, equivalente: descNum });
+      await aplicarDesconto(ids, descNum, campanha, fornNome, descontoString);
+      toast.success(`Desconto de ${descontoString}% salvo para ${ids.length} produto(s)!`);
+    } catch (err) {
+      toast.error("Erro ao salvar descontos no banco.");
+    }
   };
 
-  const handleGerarPDF = () => {
-    gerarCatalogo({ nome: campanha, fornecedor: fornNome || 'Todos', desconto: descNum, data: new Date().toISOString().split('T')[0], qtdProdutos: produtosFiltrados.length });
-    registrarHistorico({ arquivo: `catalogo_${campanha.replace(/\s/g, '_').toLowerCase()}.pdf`, fornecedor: fornNome || 'Diversos', usuario: 'Admin', data: new Date().toISOString().replace('T', ' ').substring(0, 16), tipoConversao: 'Catálogo Gerado', qtdItens: produtosFiltrados.length, status: 'concluído' });
-    toast.success("Catálogo PDF registrado com sucesso!");
+  const handleGerarPDF = async () => {
+    if (!valido) { toast.error("Formato de desconto inválido."); return; }
+    if (!produtosFiltrados.length) { toast.error("Sem produtos."); return; }
+    try {
+      console.log(`[Flow MVP] Gerando PDF simples jspdf...`);
+      const doc = new jsPDF();
+      doc.setFontSize(16);
+      doc.text(`Catálogo Comercial - ${campanha}`, 14, 20);
+      doc.setFontSize(10);
+      doc.text(`Fornecedor: ${fornNome || 'Todos'} | Itens: ${produtosFiltrados.length}`, 14, 28);
+      
+      const head = [['Código', 'Produto', 'Preço Original', 'Desconto', 'Preço Final', 'Fornecedor']];
+      const body = produtosFiltrados.map(p => {
+        const pf = usarPrecoFinal ? p.precoFinal : +(p.precoBase * (1 - descNum / 100)).toFixed(2);
+        return [
+          p.codigoFinal || p.codigoOriginal,
+          p.nome.substring(0, 45),
+          `R$ ${p.precoBase.toFixed(2)}`,
+          `${descontoString}%`,
+          `R$ ${pf.toFixed(2)}`,
+          p.fornecedor
+        ]
+      });
+
+      autoTable(doc, {
+        startY: 35,
+        head: head,
+        body: body,
+        styles: { fontSize: 8, cellPadding: 2 },
+        headStyles: { fillColor: [41, 128, 185] }
+      });
+
+      const fileName = `catalogo_${campanha.replace(/\s/g, '_').toLowerCase()}.pdf`;
+      doc.save(fileName);
+
+      await registrarHistorico({ arquivo: fileName, fornecedor: fornNome || 'Diversos', usuario: 'Admin', data: new Date().toISOString().replace('T', ' ').substring(0, 16), tipoConversao: 'Catálogo Gerado PDF', qtdItens: produtosFiltrados.length, status: 'concluído' });
+      console.log(`[Flow MVP] Arquivo PDF gerado e baixado: ${fileName}`);
+      toast.success("Catálogo PDF baixado com sucesso!");
+    } catch (err) {
+      console.error(err);
+      toast.error("Erro ao gerar catálogo em PDF.");
+    }
   };
 
-  const handleGerarExcel = () => {
-    registrarHistorico({ arquivo: `tabela_descontos_${Date.now()}.xlsx`, fornecedor: fornNome || 'Diversos', usuario: 'Admin', data: new Date().toISOString().replace('T', ' ').substring(0, 16), tipoConversao: 'Exportação Excel', qtdItens: produtosFiltrados.length, status: 'concluído' });
-    toast.success("Exportação Excel registrada!");
+  const handleGerarExcel = async () => {
+    if (!valido) { toast.error("Formato de desconto inválido."); return; }
+    if (!produtosFiltrados.length) { toast.error("Sem produtos."); return; }
+    try {
+      console.log(`[Flow MVP] Gerando Excel com XLSX...`);
+      const dataToExport = produtosFiltrados.map(p => {
+        const pf = usarPrecoFinal ? p.precoFinal : +(p.precoBase * (1 - descNum / 100)).toFixed(2);
+        return {
+          "Código": p.codigoFinal || p.codigoOriginal,
+          "Produto": p.nome,
+          "Preço Original": Number(p.precoBase).toFixed(2),
+          "Desconto Aplicado": `${descontoString}%`,
+          "Preço Final": Number(pf).toFixed(2),
+          "Fornecedor": p.fornecedor
+        };
+      });
+
+      const ws = XLSX.utils.json_to_sheet(dataToExport);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Catálogo");
+      const fileName = `catalogo_descontos_${Date.now()}.xlsx`;
+      XLSX.writeFile(wb, fileName);
+
+      await registrarHistorico({ arquivo: fileName, fornecedor: fornNome || 'Diversos', usuario: 'Admin', data: new Date().toISOString().replace('T', ' ').substring(0, 16), tipoConversao: 'Exportação Excel (Descontos)', qtdItens: produtosFiltrados.length, status: 'concluído' });
+      console.log(`[Flow MVP] Arquivo Excel gerado e baixado: ${fileName}`);
+      toast.success("Catálogo Excel baixado com sucesso!");
+    } catch (err) {
+      console.error(err);
+      toast.error("Erro ao gerar arquivo Excel.");
+    }
   };
 
   if (produtosPadronizados.length === 0) {
@@ -79,16 +171,28 @@ export default function DescontosCatalogos() {
               <label className="text-sm font-medium">Fornecedor</label>
               <Select value={fornecedor} onValueChange={setFornecedor}>
                 <SelectTrigger><SelectValue placeholder="Selecionar" /></SelectTrigger>
-                <SelectContent>{fornecedores.map(f => <SelectItem key={f.id} value={f.id}>{f.nome}</SelectItem>)}</SelectContent>
+                <SelectContent>{fornecedoresComProdutos.map(f => <SelectItem key={f.id} value={f.id}>{f.nome}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium">Percentual de Desconto</label>
-              <div className="relative">
-                <Input type="number" value={desconto} onChange={e => setDesconto(e.target.value)} className="pr-8" />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">%</span>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Principal (%)</label>
+                <div className="relative">
+                  <Input type="number" value={descontoPrincipal} onChange={e => setDescontoPrincipal(e.target.value)} className={!valido ? 'border-destructive' : ''} />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Adicional (%)</label>
+                <div className="relative">
+                  <Input type="number" value={descontoAdicional} onChange={e => setDescontoAdicional(e.target.value)} placeholder="0" />
+                </div>
               </div>
             </div>
+            {d2 > 0 && (
+              <p className="text-[11px] text-primary font-medium bg-primary/5 px-2 py-1 rounded">
+                Equivalente a {descNum}% de desconto direto
+              </p>
+            )}
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Nome da Campanha</label>
               <Input value={campanha} onChange={e => setCampanha(e.target.value)} />
@@ -107,7 +211,7 @@ export default function DescontosCatalogos() {
 
             <div className="gradient-primary rounded-xl p-4 text-primary-foreground space-y-1.5">
               <div className="flex justify-between text-sm"><span className="opacity-80">Itens afetados:</span><span className="font-bold">{produtosFiltrados.length}</span></div>
-              <div className="flex justify-between text-sm"><span className="opacity-80">Desconto aplicado:</span><span className="font-bold">{desconto}%</span></div>
+              <div className="flex justify-between text-sm"><span className="opacity-80">Desconto final:</span><span className="font-bold">{descNum}%</span></div>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -162,7 +266,7 @@ export default function DescontosCatalogos() {
                           <div className="flex items-baseline gap-2 mt-3 pt-3 border-t">
                             {mostrarDesconto && <span className="text-xs line-through text-muted-foreground">R$ {p.precoBase.toFixed(2)}</span>}
                             <span className="text-lg font-extrabold text-primary">R$ {pf.toFixed(2)}</span>
-                            {mostrarDesconto && <span className="text-[10px] font-semibold bg-success/10 text-success px-1.5 py-0.5 rounded-md">-{descNum}%</span>}
+                            {mostrarDesconto && <span className="text-[10px] font-semibold bg-success/10 text-success px-1.5 py-0.5 rounded-md">-{descontoString}%</span>}
                           </div>
                         </div>
                       );
@@ -191,8 +295,8 @@ export default function DescontosCatalogos() {
                         <TableCell className="font-mono text-xs text-primary/80 font-medium">{p.codigoFinal || p.codigoOriginal}</TableCell>
                         <TableCell className="text-sm font-medium">{p.nome}</TableCell>
                         <TableCell className="text-right text-sm tabular-nums text-muted-foreground">R$ {p.precoBase.toFixed(2)}</TableCell>
-                        <TableCell className="text-right text-sm text-primary font-semibold tabular-nums">{descNum}%</TableCell>
-                        <TableCell className="text-right text-sm font-bold tabular-nums">R$ {(p.precoBase * (1 - descNum / 100)).toFixed(2)}</TableCell>
+                        <TableCell className="text-right text-sm text-primary font-semibold tabular-nums">{descontoString}%</TableCell>
+                        <TableCell className="text-right text-sm font-bold tabular-nums">R$ {(usarPrecoFinal ? p.precoFinal : p.precoBase * (1 - descNum / 100)).toFixed(2)}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

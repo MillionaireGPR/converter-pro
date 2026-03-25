@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -7,14 +7,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useApp } from "@/context/AppContext";
-import { Search, Download, Tag, CheckCircle, Package, AlertTriangle, FileSpreadsheet, BookOpen } from "lucide-react";
+import { Search, Download, Tag, CheckCircle, Package, AlertTriangle, FileSpreadsheet, BookOpen, AlertCircle, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 export default function BasePadronizada() {
-  const { produtosPadronizados, fornecedores, updateProduto, validarProdutos, aplicarDesconto, exportarMercos } = useApp();
+  const { produtosPadronizados, fornecedores, updateProduto, validarProdutos, aplicarDesconto, exportarMercos, limparBase } = useApp();
   const navigate = useNavigate();
   const [busca, setBusca] = useState("");
   const [filtroFornecedor, setFiltroFornecedor] = useState("todos");
@@ -26,16 +27,40 @@ export default function BasePadronizada() {
   const [editValue, setEditValue] = useState<string>("");
   const [descontoDialog, setDescontoDialog] = useState(false);
   const [descontoVal, setDescontoVal] = useState("15");
+  const [limparDialog, setLimparDialog] = useState(false);
+  const [fornecedorLimpar, setFornecedorLimpar] = useState("todos");
 
-  const categorias = [...new Set(produtosPadronizados.map(p => p.categoria))].sort();
+  const [paginaAtual, setPaginaAtual] = useState(1);
+  const itensPorPagina = 50;
 
-  const produtosFiltrados = produtosPadronizados.filter(p => {
-    const matchBusca = !busca || p.nome.toLowerCase().includes(busca.toLowerCase()) || p.codigoOriginal.toLowerCase().includes(busca.toLowerCase()) || p.codigoFinal.toLowerCase().includes(busca.toLowerCase());
-    const matchFornecedor = filtroFornecedor === "todos" || p.fornecedor === filtroFornecedor;
-    const matchStatus = filtroStatus === "todos" || p.status === filtroStatus;
-    const matchCategoria = filtroCategoria === "todos" || p.categoria === filtroCategoria;
-    return matchBusca && matchFornecedor && matchStatus && matchCategoria;
-  });
+  const categorias = useMemo(() => [...new Set(produtosPadronizados.map(p => p.categoria || "Sem Categoria"))].sort(), [produtosPadronizados]);
+
+  const produtosFiltrados = useMemo(() => {
+    return produtosPadronizados.filter(p => {
+      const searchLower = busca.toLowerCase();
+      const codigoOri = (p.codigoOriginal || "").toLowerCase();
+      const codigoFin = (p.codigoFinal || "").toLowerCase();
+      const nomeLower = (p.nome || "").toLowerCase();
+      
+      const matchBusca = !busca || 
+        nomeLower.includes(searchLower) || 
+        codigoOri.includes(searchLower) || 
+        codigoFin.includes(searchLower);
+
+      const matchFornecedor = filtroFornecedor === "todos" || p.fornecedor === filtroFornecedor;
+      const matchStatus = filtroStatus === "todos" || p.status === filtroStatus;
+      const prodCat = p.categoria || "Sem Categoria";
+      const matchCategoria = filtroCategoria === "todos" || prodCat === filtroCategoria;
+      return matchBusca && matchFornecedor && matchStatus && matchCategoria;
+    });
+  }, [produtosPadronizados, busca, filtroFornecedor, filtroStatus, filtroCategoria]);
+
+  useEffect(() => {
+    setPaginaAtual(1);
+  }, [busca, filtroFornecedor, filtroStatus, filtroCategoria]);
+
+  const totalPaginas = Math.ceil(produtosFiltrados.length / itensPorPagina);
+  const produtosPaginados = produtosFiltrados.slice((paginaAtual - 1) * itensPorPagina, paginaAtual * itensPorPagina);
 
   const toggleAll = () => {
     if (selecionados.length === produtosFiltrados.length) setSelecionados([]);
@@ -49,11 +74,17 @@ export default function BasePadronizada() {
     erros: produtosPadronizados.filter(p => p.status === 'erro' || p.status === 'incompleto').length,
   };
 
-  const handleValidar = () => {
+  const handleValidar = async () => {
     if (!selecionados.length) return;
-    validarProdutos(selecionados);
-    toast.success(`${selecionados.length} produto(s) validados!`);
-    setSelecionados([]);
+    try {
+      console.log(`[Flow MVP] Iniciando validação em lote para ${selecionados.length} itens.`);
+      await validarProdutos(selecionados);
+      console.log(`[Flow MVP] Validação concluída. Tela Base Padronizada atualizada.`);
+      toast.success(`${selecionados.length} produto(s) validados com sucesso!`);
+      setSelecionados([]);
+    } catch (err) {
+      toast.error("Erro ao validar produtos no banco.");
+    }
   };
 
   const handleDesconto = () => {
@@ -61,11 +92,16 @@ export default function BasePadronizada() {
     setDescontoDialog(true);
   };
 
-  const applyDesconto = () => {
-    aplicarDesconto(selecionados, parseFloat(descontoVal) || 0);
-    toast.success(`Desconto de ${descontoVal}% aplicado a ${selecionados.length} produto(s)!`);
-    setDescontoDialog(false);
-    setSelecionados([]);
+  const applyDesconto = async () => {
+    try {
+      console.log(`[Flow MVP] Acionando aplicarDesconto na Base Padronizada: ${descontoVal}% em ${selecionados.length} itens.`);
+      await aplicarDesconto(selecionados, parseFloat(descontoVal) || 0);
+      toast.success(`Desconto de ${descontoVal}% aplicado a ${selecionados.length} produto(s)!`);
+      setDescontoDialog(false);
+      setSelecionados([]);
+    } catch (err) {
+      toast.error("Erro ao aplicar desconto no banco.");
+    }
   };
 
   const handleExportar = () => {
@@ -80,22 +116,32 @@ export default function BasePadronizada() {
     navigate('/exportacoes');
   };
 
+  const handleLimparBase = async () => {
+    await limparBase(fornecedorLimpar === "todos" ? undefined : fornecedorLimpar);
+    setLimparDialog(false);
+  };
+
   const startEdit = (id: string, field: string, value: string) => {
     setEditId(id);
     setEditField(field);
     setEditValue(value);
   };
 
-  const commitEdit = () => {
+  const commitEdit = async () => {
     if (!editId) return;
-    const updates: Record<string, any> = {};
-    if (editField === 'precoBase' || editField === 'ipi' || editField === 'desconto') {
-      updates[editField] = parseFloat(editValue) || 0;
-    } else {
-      updates[editField] = editValue;
+    try {
+      const updates: Record<string, any> = {};
+      if (editField === 'precoBase' || editField === 'ipi' || editField === 'desconto') {
+        updates[editField] = parseFloat(editValue) || 0;
+      } else {
+        updates[editField] = editValue;
+      }
+      console.log(`[Flow MVP] Confirmando edição inline na Base: item ${editId}, campo ${editField} -> ${editValue}`);
+      await updateProduto(editId, updates);
+      setEditId(null);
+    } catch (err) {
+      toast.error("Erro ao salvar edição.");
     }
-    updateProduto(editId, updates);
-    setEditId(null);
   };
 
   const renderEditableCell = (prodId: string, field: string, value: string, className?: string) => {
@@ -125,7 +171,11 @@ export default function BasePadronizada() {
           <h1 className="text-3xl font-extrabold text-foreground tracking-tight">Base Padronizada</h1>
           <p className="text-sm text-muted-foreground mt-1">Centro operacional de produtos — edite, valide e exporte (duplo-clique para editar)</p>
         </div>
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap items-center">
+          <Button variant="outline" size="sm" onClick={() => setLimparDialog(true)} className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive border-destructive/20 transition-colors">
+            <Trash2 className="h-3.5 w-3.5" /> Limpar Base
+          </Button>
+          <div className="h-6 w-px bg-border mx-1 hidden sm:block"></div>
           <Button variant="outline" size="sm" onClick={handleDesconto} disabled={!selecionados.length} className="gap-1.5">
             <Tag className="h-3.5 w-3.5" /> Desconto
           </Button>
@@ -222,7 +272,7 @@ export default function BasePadronizada() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {produtosFiltrados.map(p => (
+                    {produtosPaginados.map(p => (
                       <TableRow key={p.id} className={cn("group", selecionados.includes(p.id) && "bg-primary/[0.03]")}>
                         <TableCell className="pl-5">
                           <Checkbox checked={selecionados.includes(p.id)} onCheckedChange={() => setSelecionados(prev => prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id])} />
@@ -238,7 +288,7 @@ export default function BasePadronizada() {
                         <TableCell className="text-right text-sm tabular-nums">
                           {renderEditableCell(p.id, 'precoBase', p.precoBase.toFixed(2))}
                         </TableCell>
-                        <TableCell className="text-right text-sm text-primary font-semibold tabular-nums">{p.desconto}%</TableCell>
+                        <TableCell className="text-right text-sm text-primary font-semibold tabular-nums">{p.descontoPercentual}%</TableCell>
                         <TableCell className="text-right text-sm font-bold tabular-nums">R$ {p.precoFinal.toFixed(2)}</TableCell>
                         <TableCell className="text-right text-sm text-muted-foreground tabular-nums">
                           {renderEditableCell(p.id, 'ipi', String(p.ipi))}
@@ -246,7 +296,25 @@ export default function BasePadronizada() {
                         <TableCell>
                           {renderEditableCell(p.id, 'categoria', p.categoria, "text-xs px-2 py-0.5 rounded-md bg-muted text-muted-foreground")}
                         </TableCell>
-                        <TableCell><StatusBadge status={p.status} /></TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <StatusBadge status={p.status} />
+                            {p.erros.length > 0 && (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <AlertCircle className="h-4 w-4 text-destructive cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent className="bg-destructive text-destructive-foreground border-none">
+                                    <ul className="text-xs list-disc pl-3">
+                                      {p.erros.map((err, i) => <li key={i}>{err}</li>)}
+                                    </ul>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+                          </div>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -260,6 +328,13 @@ export default function BasePadronizada() {
                     <>{produtosFiltrados.length} produtos encontrados</>
                   )}
                 </span>
+                {totalPaginas > 1 && (
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setPaginaAtual(p => Math.max(1, p - 1))} disabled={paginaAtual === 1}>Anterior</Button>
+                    <span className="text-xs font-medium px-2">Pág {paginaAtual} de {totalPaginas}</span>
+                    <Button variant="outline" size="sm" onClick={() => setPaginaAtual(p => Math.min(totalPaginas, p + 1))} disabled={paginaAtual === totalPaginas}>Próxima</Button>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -284,6 +359,33 @@ export default function BasePadronizada() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setDescontoDialog(false)}>Cancelar</Button>
             <Button className="gradient-primary text-primary-foreground" onClick={applyDesconto}>Aplicar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={limparDialog} onOpenChange={setLimparDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-destructive flex items-center gap-2"><Trash2 className="h-5 w-5"/> Limpar Base de Produtos</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-4">
+            <p className="text-sm text-foreground">Esta ação removerá os produtos da base padronizada e do banco de dados.</p>
+            <p className="text-xs text-muted-foreground bg-muted p-2 rounded-md">O histórico de arquivos processados não será apagado, apenas os produtos convertidos.</p>
+            
+            <div className="space-y-1.5 mt-4 pt-2 border-t">
+              <label className="text-sm font-medium">O que você deseja limpar?</label>
+              <Select value={fornecedorLimpar} onValueChange={setFornecedorLimpar}>
+                <SelectTrigger className="w-full bg-card"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos" className="font-semibold text-destructive">Toda a Base (Todos os fornecedores)</SelectItem>
+                  {fornecedores.map(f => <SelectItem key={f.id} value={f.nome}>Apenas produtos da {f.nome}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLimparDialog(false)}>Cancelar</Button>
+            <Button variant="destructive" onClick={handleLimparBase}>Sim, Limpar Agora</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -14,7 +14,147 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      suppliers: {
+        Row: {
+          id: string
+          name: string
+          file_type: string | null
+          frequency: string | null
+          default_discount: number | null
+          default_ipi: number | null
+          last_processed: string | null
+          total_products: number | null
+          status: string | null
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          name: string
+          file_type?: string | null
+          frequency?: string | null
+          default_discount?: number | null
+          default_ipi?: number | null
+          last_processed?: string | null
+          total_products?: number | null
+          status?: string | null
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          name?: string
+          file_type?: string | null
+          frequency?: string | null
+          default_discount?: number | null
+          default_ipi?: number | null
+          last_processed?: string | null
+          total_products?: number | null
+          status?: string | null
+          created_at?: string | null
+        }
+      }
+      standardized_products: {
+        Row: {
+          id: string
+          supplier_id: string | null
+          supplier_name: string
+          original_code: string
+          final_code: string | null
+          name: string
+          description: string | null
+          base_price: number | null
+          discount_percent: number | null
+          final_price: number | null
+          ipi: number | null
+          unit: string | null
+          box_qty: number | null
+          categoria: string | null
+          embalagem: string | null
+          status: string | null
+          errors: Json | null
+          has_image: boolean | null
+          image_url: string | null
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          supplier_id?: string | null
+          supplier_name: string
+          original_code: string
+          final_code?: string | null
+          name: string
+          description?: string | null
+          base_price?: number | null
+          discount_percent?: number | null
+          final_price?: number | null
+          ipi?: number | null
+          unit?: string | null
+          box_qty?: number | null
+          categoria?: string | null
+          embalagem?: string | null
+          status?: string | null
+          errors?: Json | null
+          has_image?: boolean | null
+          image_url?: string | null
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          supplier_id?: string | null
+          supplier_name?: string
+          original_code?: string
+          final_code?: string | null
+          name?: string
+          description?: string | null
+          base_price?: number | null
+          discount_percent?: number | null
+          final_price?: number | null
+          ipi?: number | null
+          unit?: string | null
+          box_qty?: number | null
+          categoria?: string | null
+          embalagem?: string | null
+          status?: string | null
+          errors?: Json | null
+          has_image?: boolean | null
+          image_url?: string | null
+          created_at?: string | null
+        }
+      }
+      export_history: {
+        Row: {
+          id: string
+          filename: string
+          supplier_name: string | null
+          user_name: string | null
+          date: string | null
+          conversion_type: string | null
+          item_count: number | null
+          status: string | null
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          filename: string
+          supplier_name?: string | null
+          user_name?: string | null
+          date?: string | null
+          conversion_type?: string | null
+          item_count?: number | null
+          status?: string | null
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          filename?: string
+          supplier_name?: string | null
+          user_name?: string | null
+          date?: string | null
+          conversion_type?: string | null
+          item_count?: number | null
+          status?: string | null
+          created_at?: string | null
+        }
+      }
     }
     Views: {
       [_ in never]: never
