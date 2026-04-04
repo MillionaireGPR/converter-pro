@@ -1,18 +1,20 @@
 import { useState, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { Upload, FileSpreadsheet, FileText, CheckCircle, AlertCircle, ArrowRight, Loader2, File as FileIcon } from "lucide-react";
+import { Upload, FileSpreadsheet, FileText, CheckCircle, AlertCircle, ArrowRight, Loader2, File as FileIcon, Info } from "lucide-react";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useApp, Produto } from "@/context/AppContext";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { Progress } from "@/components/ui/progress";
-import * as XLSX from "xlsx";
-import { processarArquivo as motorProcessar } from "@/core/engine";
-import { findHeaderRowIndex } from "@/core/autoMapper";
+import { processarArquivoV2, ConversionResultV2 } from "@/core/engine";
+import { detectFileType } from "@/core/pipeline/fileDetector";
+import { ACCEPTED_FILE_TYPES } from "@/core/pipeline/fileDetector";
 import { supabase } from "@/integrations/supabase/client";
+import { ImportMetadata } from "@/core/types/productPipeline";
 
 export default function ConversaoProdutos() {
   const { fornecedores, addProdutosNormalizados, registrarHistorico, setDetectedHeaders } = useApp();
@@ -23,7 +25,8 @@ export default function ConversaoProdutos() {
   const [progress, setProgress] = useState(0);
   const [dragOver, setDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [resultData, setResultData] = useState<{ total: number; ok: number; pendentes: number; erros: number; fileName: string; fornNome: string } | null>(null);
+  const [resultData, setResultData] = useState<{ total: number; ok: number; pendentes: number; erros: number; duplicados: number; fileName: string; fornNome: string } | null>(null);
+  const [importMeta, setImportMeta] = useState<ImportMetadata | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
@@ -31,8 +34,9 @@ export default function ConversaoProdutos() {
     const file = e.target.files?.[0];
     if (file) {
       setSelectedFile(file);
-      setTipoArquivo("excel"); // Assume excel por padrão ao selecionar arquivo
-      console.log(`[Flow MVP] Arquivo selecionado: ${file.name}, tamanho: ${file.size} bytes`);
+      const detected = detectFileType(file.name);
+      setTipoArquivo(detected === 'pdf' ? 'pdf' : 'excel');
+      console.log(`[Pipeline] Arquivo selecionado: ${file.name} (${detected}), ${file.size} bytes`);
       toast.success(`Arquivo ${file.name} selecionado!`);
     }
   };
@@ -43,116 +47,97 @@ export default function ConversaoProdutos() {
 
     setState('processing');
     setProgress(10);
+    setImportMeta(null);
 
     try {
-      const reader = new FileReader();
-      
-      reader.onload = async (e) => {
-        try {
-          const data = new Uint8Array(e.target?.result as ArrayBuffer);
-          const workbook = XLSX.read(data, { type: 'array' });
-          const firstSheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[firstSheetName];
-          
-          // --- DETECÇÃO INTELIGENTE DE CABEÇALHO ---
-          // Primeiro lê como array bruto para pontuar as linhas
-          const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
-          const bestHeaderIndex = findHeaderRowIndex(rawRows);
-          console.log(`[Flow MVP] Linha escolhida como cabeçalho real (0-indexed): ${bestHeaderIndex}`);
-          
-          const headers = (rawRows[bestHeaderIndex] || []).filter(h => h && typeof h === 'string');
-          setDetectedHeaders(headers);
+      let supplier = fornecedores.find(f => f.id === fornecedor);
+      let supplierId = supplier?.id;
 
-          // Depois lê os objetos ignorando o lixo visual acima do cabeçalho
-          const jsonData = XLSX.utils.sheet_to_json(worksheet, { range: bestHeaderIndex, blankrows: false }) as Record<string, any>[];
-          
-          // Lemos a estrutura espacial (2D Array) rigorosa pulando as mesmas 'blankrows' para perfeito pareamento de índices
-          const structuralData = XLSX.utils.sheet_to_json(worksheet, { header: 1, range: bestHeaderIndex, blankrows: false }) as any[][];
+      if (fornecedor === 'novo') {
+        if (!novoFornecedor.trim()) throw new Error("Digite o nome do novo fornecedor");
+        supplier = {
+          id: '', // Será preenchido após o insert
+          nome: novoFornecedor.trim(),
+          tipoArquivo: detectFileType(selectedFile.name) === 'pdf' ? 'PDF' : 'Excel',
+          frequencia: "Eventual",
+          descontoPadrao: 0,
+          ipiPadrao: 0,
+          ultimoProcessamento: new Date().toISOString(),
+          totalProdutos: 0,
+          status: "ativo"
+        };
+        console.log(`[Pipeline] Fornecedor dinâmico: ${supplier.nome}`);
 
-          console.log(`[Flow MVP] Leitura XLSX concluída corrompendo lixo. Linhas úteis extraídas: ${jsonData.length}`);
-          console.log(`[Flow MVP] Headers finais processados:`, Object.keys(jsonData[0] || {}));
-          console.log(`[Flow MVP] Preview da primeira linha limpa:`, jsonData[0]);
-          setProgress(40);
+        const { data: newSupplierData, error: insertError } = await supabase.from('suppliers').insert({
+          name: supplier.nome,
+          file_type: supplier.tipoArquivo,
+          status: supplier.status,
+          frequency: supplier.frequencia
+        }).select().single();
 
-          let supplier = fornecedores.find(f => f.id === fornecedor);
-          
-          if (fornecedor === 'novo') {
-            if (!novoFornecedor.trim()) throw new Error("Digite o nome do novo fornecedor");
-            const tempId = crypto.randomUUID();
-            supplier = {
-              id: tempId,
-              nome: novoFornecedor.trim(),
-              tipoArquivo: "Excel",
-              frequencia: "Eventual",
-              descontoPadrao: 0,
-              ipiPadrao: 0,
-              ultimoProcessamento: new Date().toISOString(),
-              totalProdutos: 0,
-              status: "ativo"
-            };
-            console.log(`[Flow MVP] Fornecedor dinâmico resolvido on-the-fly: ${supplier.nome}`);
-
-            // Tenta salvar no banco passivamente
-            supabase.from('suppliers').insert({
-              name: supplier.nome,
-              file_type: supplier.tipoArquivo,
-              status: supplier.status,
-              frequency: supplier.frequencia
-            }).then(({error}) => {
-               if(error && error.code !== '23505') console.error("[Flow MVP] Erro ao salvar fornecedor on-the-fly:", error);
-            });
+        if (insertError) {
+          if (insertError.code === '23505') {
+             // Já existe um com esse nome, busca o ID dele
+             const { data: existing } = await supabase.from('suppliers').select('id').eq('name', supplier.nome).single();
+             if (existing) {
+               supplierId = existing.id;
+               supplier.id = existing.id;
+             } else {
+               throw new Error("Fornecedor já existe mas não pôde ser recuperado.");
+             }
+          } else {
+            console.error("[Pipeline] Erro ao salvar fornecedor:", insertError);
+            throw new Error("Falha ao registrar novo fornecedor no banco.");
           }
-
-          if (!supplier) throw new Error("Fornecedor não encontrado");
-
-          // Processa usando o motor
-          console.log(`[Flow MVP] Iniciando processamento automático para: ${supplier.nome}`);
-          const result = motorProcessar(jsonData, supplier.id, supplier.nome, structuralData);
-          
-          console.log(`[Flow MVP] Produtos normalizados gerados: ${result.produtos.length}`, result.produtos.slice(0, 2));
-          setProgress(60);
-
-          // Salva no contexto e no Supabase (Aguardando)
-          console.log(`[Flow MVP] Enviando dados para salvamento no Contexto/Supabase...`);
-          await addProdutosNormalizados(result.produtos);
-          
-          setProgress(85);
-
-          // Registra histórico (Aguardando)
-          await registrarHistorico({
-            arquivo: selectedFile.name,
-            fornecedor: supplier.nome,
-            usuario: 'Admin',
-            data: new Date().toISOString().replace('T', ' ').substring(0, 16),
-            tipoConversao: 'Importação de Produtos (Real)',
-            qtdItens: result.produtos.length,
-            status: 'concluído',
-          });
-
-          setResultData({
-            total: result.stats.total,
-            ok: result.stats.validados,
-            pendentes: result.stats.pendentes,
-            erros: result.stats.erros,
-            fileName: selectedFile.name,
-            fornNome: supplier.nome
-          });
-
-          setProgress(100);
-          setState('done');
-          toast.success(`Sucesso! ${result.stats.total} itens processados e salvos.`);
-        } catch (innerError: any) {
-          console.error(innerError);
-          setState('error');
-          toast.error(innerError.message || "Erro no salvamento dos dados");
+        } else if (newSupplierData) {
+          supplierId = newSupplierData.id;
+          supplier.id = newSupplierData.id;
         }
-      };
+      }
 
-      reader.onerror = () => {
-        throw new Error("Erro na leitura do arquivo");
-      };
+      if (!supplier) throw new Error("Fornecedor não encontrado");
+      if (!supplierId) throw new Error("ID do fornecedor não pôde ser resolvido para o relacionamento no banco.");
 
-      reader.readAsArrayBuffer(selectedFile);
+      setProgress(20);
+      console.log(`[Pipeline] Processando com pipeline V2 para: ${supplier.nome}`);
+
+      // Pipeline V2: aceita File diretamente (Excel, CSV ou PDF)
+      const result = await processarArquivoV2(selectedFile, supplierId, supplier.nome);
+
+      setProgress(60);
+      setImportMeta(result.metadata);
+      setDetectedHeaders(result.metadata.camposDetectados);
+
+      console.log(`[Pipeline] ${result.produtos.length} produtos. Parser: ${result.metadata.parserUsado}`);
+
+      // Salva no contexto e no Supabase
+      await addProdutosNormalizados(result.produtos);
+      setProgress(85);
+
+      // Registra histórico
+      await registrarHistorico({
+        arquivo: selectedFile.name,
+        fornecedor: supplier.nome,
+        usuario: 'Admin',
+        data: new Date().toISOString().replace('T', ' ').substring(0, 16),
+        tipoConversao: `Importação (${result.metadata.parserUsado})`,
+        qtdItens: result.produtos.length,
+        status: 'concluído',
+      });
+
+      setResultData({
+        total: result.stats.total,
+        ok: result.stats.validados,
+        pendentes: result.stats.pendentes,
+        erros: result.stats.erros,
+        duplicados: result.stats.duplicados,
+        fileName: selectedFile.name,
+        fornNome: result.metadata.fornecedorDetectado || result.metadata.fornecedorConfirmado || supplier.nome
+      });
+
+      setProgress(100);
+      setState('done');
+      toast.success(`Sucesso! ${result.stats.total} itens processados e salvos.`);
     } catch (error: any) {
       console.error(error);
       setState('error');
@@ -195,7 +180,7 @@ export default function ConversaoProdutos() {
                 type="file" 
                 ref={fileInputRef} 
                 onChange={handleFileChange} 
-                accept=".xlsx, .xls" 
+                accept={ACCEPTED_FILE_TYPES} 
                 className="hidden" 
               />
               <div className={`w-14 h-14 rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-sm ${selectedFile ? 'bg-success text-success-foreground' : 'gradient-primary text-primary-foreground'}`}>
@@ -205,7 +190,7 @@ export default function ConversaoProdutos() {
                 {selectedFile ? selectedFile.name : 'Arraste o arquivo ou clique para selecionar'}
               </p>
               <p className="text-xs text-muted-foreground mt-1.5">
-                {selectedFile ? `${(selectedFile.size / 1024).toFixed(1)} KB` : '.xlsx, .xls — máx 50MB'}
+                {selectedFile ? `${(selectedFile.size / 1024).toFixed(1)} KB` : '.xlsx, .xls, .csv, .pdf — máx 50MB'}
               </p>
             </div>
 
@@ -235,9 +220,8 @@ export default function ConversaoProdutos() {
                 <Select value={tipoArquivo} onValueChange={setTipoArquivo}>
                   <SelectTrigger><SelectValue placeholder="Selecionar tipo" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="excel"><div className="flex items-center gap-2"><FileSpreadsheet className="h-4 w-4 text-success" /> Excel</div></SelectItem>
-                    <SelectItem value="pdf-tabela"><div className="flex items-center gap-2"><FileText className="h-4 w-4 text-destructive" /> PDF Tabela</div></SelectItem>
-                    <SelectItem value="pdf-catalogo"><div className="flex items-center gap-2"><FileText className="h-4 w-4 text-warning" /> PDF Catálogo</div></SelectItem>
+                    <SelectItem value="excel"><div className="flex items-center gap-2"><FileSpreadsheet className="h-4 w-4 text-success" /> Excel / CSV</div></SelectItem>
+                    <SelectItem value="pdf"><div className="flex items-center gap-2"><FileText className="h-4 w-4 text-destructive" /> PDF</div></SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -290,6 +274,15 @@ export default function ConversaoProdutos() {
                     <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Arquivo:</span><span className="font-medium">{resultData.fileName}</span></div>
                     <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Fornecedor:</span><span className="font-medium">{resultData.fornNome}</span></div>
                     <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Status:</span><StatusBadge status="processado" /></div>
+                    {importMeta && (
+                      <>
+                        <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Parser:</span><Badge variant="outline" className="text-[10px]">{importMeta.parserUsado}</Badge></div>
+                        {importMeta.fornecedorDetectado && (
+                          <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Detectado:</span><Badge variant="outline" className="text-[10px] bg-primary/10">{importMeta.fornecedorDetectado}</Badge></div>
+                        )}
+                        <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Confiança:</span><span className="font-medium text-sm">{importMeta.confiancaExtracao}%</span></div>
+                      </>
+                    )}
                     <div className="flex justify-between py-1.5"><span className="text-muted-foreground">Produtos detectados:</span><span className="font-extrabold text-lg text-primary">{resultStats.total}</span></div>
                   </div>
                   <div className="rounded-xl border overflow-hidden">
@@ -304,9 +297,15 @@ export default function ConversaoProdutos() {
                       </div>
                     )}
                     {resultStats.erros > 0 && (
-                      <div className="flex items-center gap-2 text-sm p-3 bg-destructive/5">
+                      <div className="flex items-center gap-2 text-sm p-3 bg-destructive/5 border-b border-destructive/10">
                         <AlertCircle className="h-4 w-4 text-destructive" />
                         <span className="font-medium text-destructive">{resultStats.erros} produtos com erro</span>
+                      </div>
+                    )}
+                    {resultData.duplicados > 0 && (
+                      <div className="flex items-center gap-2 text-sm p-3 bg-muted/50">
+                        <Info className="h-4 w-4 text-muted-foreground" />
+                        <span className="font-medium text-muted-foreground">{resultData.duplicados} duplicados removidos</span>
                       </div>
                     )}
                   </div>

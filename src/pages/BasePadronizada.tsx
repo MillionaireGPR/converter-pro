@@ -37,20 +37,21 @@ export default function BasePadronizada() {
 
   const produtosFiltrados = useMemo(() => {
     return produtosPadronizados.filter(p => {
-      const searchLower = busca.toLowerCase();
-      const codigoOri = (p.codigoOriginal || "").toLowerCase();
-      const codigoFin = (p.codigoFinal || "").toLowerCase();
-      const nomeLower = (p.nome || "").toLowerCase();
+      const q = busca.toLowerCase().trim();
+      const matchBusca = !q || 
+                         (p.codigoFinal || p.codigoOriginal || '').toLowerCase().includes(q) || 
+                         (p.nome || '').toLowerCase().includes(q) ||
+                         (p.fornecedor || '').toLowerCase().includes(q);
       
-      const matchBusca = !busca || 
-        nomeLower.includes(searchLower) || 
-        codigoOri.includes(searchLower) || 
-        codigoFin.includes(searchLower);
+      let matchFornecedor = true;
+      if (filtroFornecedor !== 'todos') {
+        // filtroFornecedor aqui armazena f.nome devido ao <SelectItem value={f.nome}>
+        matchFornecedor = (p.fornecedor || '').toLowerCase() === filtroFornecedor.toLowerCase() || 
+                          p.fornecedorId === filtroFornecedor;
+      }
 
-      const matchFornecedor = filtroFornecedor === "todos" || p.fornecedor === filtroFornecedor;
-      const matchStatus = filtroStatus === "todos" || p.status === filtroStatus;
-      const prodCat = p.categoria || "Sem Categoria";
-      const matchCategoria = filtroCategoria === "todos" || prodCat === filtroCategoria;
+      const matchStatus = filtroStatus === 'todos' || p.status === filtroStatus;
+      const matchCategoria = filtroCategoria === 'todos' || p.categoria === filtroCategoria;
       return matchBusca && matchFornecedor && matchStatus && matchCategoria;
     });
   }, [produtosPadronizados, busca, filtroFornecedor, filtroStatus, filtroCategoria]);

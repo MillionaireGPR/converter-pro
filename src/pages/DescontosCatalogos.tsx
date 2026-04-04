@@ -27,10 +27,14 @@ export default function DescontosCatalogos() {
 
   const forn = fornecedores.find(f => f.id === fornecedor);
   const fornNome = forn?.nome;
-  const produtosFiltrados = forn ? produtosPadronizados.filter(p => p.fornecedorId === forn.id || p.fornecedor === forn.nome) : produtosPadronizados;
+  
+  // Filtra por ID ou por NOME (caso o banco não tenha retornado o ID corretamente)
+  const produtosFiltrados = forn 
+    ? produtosPadronizados.filter(p => p.fornecedorId === forn.id || p.fornecedor.toLowerCase() === forn.nome.toLowerCase()) 
+    : produtosPadronizados;
 
   const fornecedoresComProdutos = fornecedores.filter(f => 
-    produtosPadronizados.some(p => p.fornecedorId === f.id || p.fornecedor === f.nome)
+    produtosPadronizados.some(p => p.fornecedorId === f.id || p.fornecedor.toLowerCase() === f.nome.toLowerCase())
   );
 
   // Calculadora de desconto composto do formato "30+15+10"

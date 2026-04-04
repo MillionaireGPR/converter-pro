@@ -1,8 +1,11 @@
 import { ProdutoNormalizado, SupplierConfig } from './types';
+import { ProdutoNormalizadoV2, PipelineResult, Inconsistencia, ImportMetadata } from './types/productPipeline';
 import { getSupplierConfig } from './rules/suppliers';
 import { mapRowToProduto } from './normalizers/utils';
 import { validarProduto } from './validators';
 import { detectColumnMapping } from './autoMapper';
+import { runImportPipeline, PipelineOptions } from './pipeline/importPipeline';
+import { getAdapterById } from './supplierRules/registry';
 
 export interface ConversionResult {
   produtos: ProdutoNormalizado[];
@@ -14,9 +17,92 @@ export interface ConversionResult {
   };
 }
 
+export interface ConversionResultV2 {
+  produtos: ProdutoNormalizado[];
+  produtosV2: ProdutoNormalizadoV2[];
+  metadata: ImportMetadata;
+  inconsistencias: Inconsistencia[];
+  stats: {
+    total: number;
+    validados: number;
+    erros: number;
+    pendentes: number;
+    duplicados: number;
+  };
+}
+
 /**
- * Motor principal do conversor.
+ * Motor V2: Usa o novo pipeline completo.
+ * Aceita File diretamente (Excel, CSV ou PDF).
+ * Retorna dados no formato antigo (ProdutoNormalizado) para compatibilidade,
+ * MAIS os dados V2 e metadados completos.
+ */
+export const processarArquivoV2 = async (
+  file: File,
+  supplierId?: string,
+  supplierName?: string
+): Promise<ConversionResultV2> => {
+  const options: PipelineOptions = {
+    supplierId,
+    supplierName,
+    deduplicate: true,
+  };
+
+  // Tenta resolver o adapter pelo ID ou nome do fornecedor
+  if (supplierId) {
+    const adapter = getAdapterById(supplierId);
+    if (adapter) options.forceAdapter = adapter;
+  }
+  if (!options.forceAdapter && supplierName) {
+    const adapter = getAdapterById(supplierName);
+    if (adapter) options.forceAdapter = adapter;
+  }
+
+  const result: PipelineResult = await runImportPipeline(file, options);
+
+  // Converte ProdutoNormalizadoV2 → ProdutoNormalizado (compatibilidade)
+  const produtosCompat: ProdutoNormalizado[] = result.produtosNormalizados.map(p => ({
+    fornecedor: p.fornecedor,
+    fornecedorId: p.fornecedorId,
+    codigoOriginal: p.codigoOriginal || p.codigo,
+    codigo: p.codigo,
+    nome: p.nome,
+    descricaoComplementar: p.descricaoComplementar,
+    precoBase: p.precoBase,
+    descontoPercentual: p.descontoPercentual,
+    descontoString: p.descontoString,
+    precoFinal: p.precoFinal,
+    ipi: p.ipi,
+    unidade: p.unidade,
+    quantidadeCaixa: p.quantidadeCaixa,
+    categoria: p.categoria,
+    embalagem: p.embalagem,
+    observacoes: p.observacoes,
+    status: p.status,
+    erros: p.erros,
+    imagemUrl: p.imagemUrl,
+    temImagem: p.temImagem,
+  }));
+
+  return {
+    produtos: produtosCompat,
+    produtosV2: result.produtosNormalizados,
+    metadata: result.metadata,
+    inconsistencias: result.inconsistencias,
+    stats: {
+      total: result.stats.total,
+      validados: result.stats.validos,
+      erros: result.stats.comErro,
+      pendentes: result.stats.comWarning,
+      duplicados: result.stats.duplicados,
+    },
+  };
+};
+
+/**
+ * Motor LEGADO (mantido para compatibilidade).
  * Recebe uma lista de objetos (linhas da planilha) e o ID do fornecedor.
+ * NOTA: para novos fluxos, usar processarArquivoV2.
  */
 export const processarArquivo = (
   rawData: Record<string, any>[],
@@ -28,16 +114,12 @@ export const processarArquivo = (
   const headers = rawData.length > 0 ? Object.keys(rawData[0]) : [];
   
   if (!config) {
-    console.warn(`[Flow MVP] Configuração não encontrada para: ${supplierName || supplierId}. Tentando Auto-Mapeamento com headers originais:`, headers);
+    console.warn(`[Engine Legacy] Config não encontrada para: ${supplierName || supplierId}. Auto-Mapeamento:`, headers);
     config = detectColumnMapping(headers, supplierId, supplierName || supplierId);
   } else {
-    console.log(`[Flow MVP] Regra hardcoded '${config.id}' localizada. Headers da planilha:`, headers);
+    console.log(`[Engine Legacy] Regra '${config.id}' localizada. Headers:`, headers);
   }
 
-  console.log(`[Flow MVP] Preview 5 linhas brutas da planilha:`, rawData.slice(0, 5));
-  console.log(`[Flow MVP] Mapeamento utilizado (Aliases):`, config.columnAliases);
-
-  // Mapa espacial: Mapeia o alias original purificado para o seu índice posicional físico
   const positionMap: Record<string, number> = {};
   if (rawRows2D && rawRows2D.length > 0) {
     const structuralHeader = rawRows2D[0];
@@ -47,60 +129,14 @@ export const processarArquivo = (
         positionMap[normalized] = idx;
       }
     });
-    console.log(`[Flow MVP] Mapa Espacial Posicional do Header 2D (Colunas):`, positionMap);
   }
 
-  // Armazena as linhas extraídas sem validação, apenas pra log
-  const produtosBaseBrutos: ReturnType<typeof mapRowToProduto>[] = [];
-  
-  const errosDetalhados = {
-    semCodigo: 0,
-    semNome: 0,
-    semPreco: 0,
-    precoInvalido: 0,
-  };
-
   const produtos: ProdutoNormalizado[] = rawData.map((row, index) => {
-    const isClink = config!.id === 'clink' || config!.name.toLowerCase().includes('clink');
-    
-    if (isClink && index < 10) {
-      console.log(`\n[Flow MVP] --- CLINK INSIGHT L${index + 1} ---`);
-      console.log(`[Flow MVP] Objeto Bruto Lide:`, row);
-      console.log(`[Flow MVP] Chaves Reais Disponíveis:`, Object.keys(row));
-    }
-
-    // 1. Mapeia a linha para o tipo base usando Leitura Híbrida
     const raw2DLine = rawRows2D ? rawRows2D[index + 1] : undefined;
     const produtoBase = mapRowToProduto(row, config!, index, raw2DLine, positionMap);
-    produtosBaseBrutos.push(produtoBase);
-    
-    if (isClink && index < 10) {
-      console.log(`[Flow MVP] Valores Finais Extraídos L${index + 1}:`, {
-        codigo: produtoBase.codigo,
-        nome: produtoBase.nome,
-        precoBase: produtoBase.precoBase,
-        quantidadeCaixa: produtoBase.quantidadeCaixa
-      });
-    }
-
-    // 2. Valida o produto
-    const validado = validarProduto(produtoBase);
-
-    // Detalhar erros individualizados para o log
-    if (validado.status !== 'validado') {
-      if (!validado.codigo && !validado.codigoOriginal) errosDetalhados.semCodigo++;
-      if (!validado.nome) errosDetalhados.semNome++;
-      if (validado.precoBase === undefined || validado.precoBase === null) errosDetalhados.semPreco++;
-      else if (validado.precoBase <= 0) errosDetalhados.precoInvalido++;
-    }
-
-    return validado;
+    return validarProduto(produtoBase);
   });
 
-  console.log(`[Flow MVP] Preview 5 linhas Extraídas (Mapeamento direto, sem validação):`, produtosBaseBrutos.slice(0, 5));
-  console.log(`[Flow MVP] Preview 5 linhas ProdutoNormalizado (Final, c/ Erros resolvidos):`, produtos.slice(0, 5));
-  
-  // Calcula estatísticas
   const stats = produtos.reduce(
     (acc, p) => {
       acc.total++;
@@ -112,10 +148,5 @@ export const processarArquivo = (
     { total: 0, validados: 0, erros: 0, pendentes: 0 }
   );
 
-  console.log(`[Flow MVP] Breakdown de Falhas/Erros:`, errosDetalhados);
-
-  return {
-    produtos,
-    stats,
-  };
+  return { produtos, stats };
 };

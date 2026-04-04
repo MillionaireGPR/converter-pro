@@ -6,8 +6,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Upload, Download, ArrowRightLeft, CheckCircle, FileSpreadsheet, AlertTriangle, XCircle, List } from "lucide-react";
 import { toast } from "sonner";
 import { useApp } from "@/context/AppContext";
-import { processarPedido } from "@/core/orderParser";
-import type { ItemPedidoNormalizado, PedidoProcessado, OrderColumnMapping } from "@/core/types/orderTypes";
+import { processarPedido } from "@/core/orders/orderParser";
+import type { ItemPedidoNormalizado, PedidoProcessado, OrderColumnMapping } from "@/core/orders/orderTypes";
 
 export default function ConversaoPedidos() {
   const { registrarHistorico } = useApp();

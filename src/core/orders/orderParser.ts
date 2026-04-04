@@ -5,7 +5,7 @@ import {
   OrderColumnMapping,
   PedidoProcessado,
   StatusItemPedido,
-} from './types/orderTypes';
+} from './orderTypes';
 
 // ===== ALIASES PARA COLUNAS DE PEDIDO =====
 
