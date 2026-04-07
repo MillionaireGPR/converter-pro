@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useApp } from "@/context/AppContext";
-import { Search, Download, Tag, CheckCircle, Package, AlertTriangle, FileSpreadsheet, BookOpen, AlertCircle, Trash2 } from "lucide-react";
+import { Search, Download, Tag, CheckCircle, Package, AlertTriangle, FileSpreadsheet, BookOpen, AlertCircle, Trash2, Filter, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
@@ -21,6 +21,11 @@ export default function BasePadronizada() {
   const [filtroFornecedor, setFiltroFornecedor] = useState("todos");
   const [filtroStatus, setFiltroStatus] = useState("todos");
   const [filtroCategoria, setFiltroCategoria] = useState("todos");
+  // Novo filtro para identificar dados faltando
+  const [filtroCampoFaltando, setFiltroCampoFaltando] = useState<"todos" | "codigo" | "nome" | "preco" | "ipi" | "descricao" | "unidade" | "qtdCaixa">("todos");
+  // Estados para ordenação
+  const [sortField, setSortField] = useState<string | null>(null);
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [selecionados, setSelecionados] = useState<string[]>([]);
   const [editId, setEditId] = useState<string | null>(null);
   const [editField, setEditField] = useState<string>("");
@@ -52,13 +57,128 @@ export default function BasePadronizada() {
 
       const matchStatus = filtroStatus === 'todos' || p.status === filtroStatus;
       const matchCategoria = filtroCategoria === 'todos' || p.categoria === filtroCategoria;
-      return matchBusca && matchFornecedor && matchStatus && matchCategoria;
+      
+      // Filtro por campo faltando
+      let matchCampoFaltando = true;
+      if (filtroCampoFaltando !== 'todos') {
+        switch (filtroCampoFaltando) {
+          case 'codigo':
+            matchCampoFaltando = !p.codigoFinal && !p.codigoOriginal;
+            break;
+          case 'nome':
+            matchCampoFaltando = !p.nome || p.nome.trim() === '';
+            break;
+          case 'preco':
+            matchCampoFaltando = !p.precoFinal || p.precoFinal <= 0;
+            break;
+          case 'ipi':
+            matchCampoFaltando = p.ipi === undefined || p.ipi === null;
+            break;
+          case 'descricao':
+            matchCampoFaltando = !p.descricao || p.descricao.trim() === '';
+            break;
+          case 'unidade':
+            matchCampoFaltando = !p.unidade || p.unidade.trim() === '';
+            break;
+          case 'qtdCaixa':
+            matchCampoFaltando = !p.qtdCaixa || p.qtdCaixa <= 0;
+            break;
+        }
+      }
+      
+      return matchBusca && matchFornecedor && matchStatus && matchCategoria && matchCampoFaltando;
+    }).sort((a, b) => {
+      if (!sortField) return 0;
+      
+      let valA: any, valB: any;
+      
+      switch (sortField) {
+        case 'codigo':
+          valA = a.codigoFinal || a.codigoOriginal || '';
+          valB = b.codigoFinal || b.codigoOriginal || '';
+          break;
+        case 'nome':
+          valA = a.nome || '';
+          valB = b.nome || '';
+          break;
+        case 'fornecedor':
+          valA = a.fornecedor || '';
+          valB = b.fornecedor || '';
+          break;
+        case 'precoBase':
+          valA = a.precoBase || 0;
+          valB = b.precoBase || 0;
+          break;
+        case 'precoFinal':
+          valA = a.precoFinal || 0;
+          valB = b.precoFinal || 0;
+          break;
+        case 'ipi':
+          valA = a.ipi || 0;
+          valB = b.ipi || 0;
+          break;
+        case 'desconto':
+          valA = a.descontoPercentual || 0;
+          valB = b.descontoPercentual || 0;
+          break;
+        case 'categoria':
+          valA = a.categoria || '';
+          valB = b.categoria || '';
+          break;
+        case 'status':
+          valA = a.status || '';
+          valB = b.status || '';
+          break;
+        case 'qtdCaixa':
+          valA = a.qtdCaixa || 0;
+          valB = b.qtdCaixa || 0;
+          break;
+      }
+      
+      if (typeof valA === 'string') {
+        valA = valA.toLowerCase();
+        valB = valB.toLowerCase();
+      }
+      
+      if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+      if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
     });
-  }, [produtosPadronizados, busca, filtroFornecedor, filtroStatus, filtroCategoria]);
+  }, [produtosPadronizados, busca, filtroFornecedor, filtroStatus, filtroCategoria, filtroCampoFaltando, sortField, sortDirection]);
 
   useEffect(() => {
     setPaginaAtual(1);
-  }, [busca, filtroFornecedor, filtroStatus, filtroCategoria]);
+  }, [busca, filtroFornecedor, filtroStatus, filtroCategoria, filtroCampoFaltando, sortField, sortDirection]);
+
+  // Função para alternar ordenação
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  // Componente para header ordenável
+  const SortableHeader = ({ field, children, className }: { field: string; children: React.ReactNode; className?: string }) => {
+    const isActive = sortField === field;
+    return (
+      <TableHead 
+        className={cn("cursor-pointer hover:bg-muted/50 transition-colors select-none", className)} 
+        onClick={() => handleSort(field)}
+      >
+        <div className="flex items-center gap-1">
+          {children}
+          {isActive ? (
+            sortDirection === 'asc' ? <ArrowUp className="h-3.5 w-3.5 text-primary" /> : <ArrowDown className="h-3.5 w-3.5 text-primary" />
+          ) : (
+            <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground/40" />
+          )}
+        </div>
+      </TableHead>
+    );
+  };
 
   const totalPaginas = Math.ceil(produtosFiltrados.length / itensPorPagina);
   const produtosPaginados = produtosFiltrados.slice((paginaAtual - 1) * itensPorPagina, paginaAtual * itensPorPagina);
@@ -250,6 +370,22 @@ export default function BasePadronizada() {
                     {categorias.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                   </SelectContent>
                 </Select>
+                <Select value={filtroCampoFaltando} onValueChange={(v: any) => setFiltroCampoFaltando(v)}>
+                  <SelectTrigger className="w-full sm:w-52 bg-card">
+                    <Filter className="h-4 w-4 mr-2 text-muted-foreground" />
+                    <SelectValue placeholder="Dados faltando" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos os campos</SelectItem>
+                    <SelectItem value="codigo">Sem Código</SelectItem>
+                    <SelectItem value="nome">Sem Nome</SelectItem>
+                    <SelectItem value="preco">Sem Preço</SelectItem>
+                    <SelectItem value="ipi">Sem IPI</SelectItem>
+                    <SelectItem value="descricao">Sem Descrição</SelectItem>
+                    <SelectItem value="unidade">Sem Unidade</SelectItem>
+                    <SelectItem value="qtdCaixa">Sem Qtd/Caixa</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
@@ -261,15 +397,16 @@ export default function BasePadronizada() {
                       <TableHead className="w-10 pl-5">
                         <Checkbox checked={selecionados.length === produtosFiltrados.length && produtosFiltrados.length > 0} onCheckedChange={toggleAll} />
                       </TableHead>
-                      <TableHead>Código</TableHead>
-                      <TableHead>Produto</TableHead>
-                      <TableHead>Fornecedor</TableHead>
-                      <TableHead className="text-right">Preço Base</TableHead>
-                      <TableHead className="text-right">Desc %</TableHead>
-                      <TableHead className="text-right">Preço Final</TableHead>
-                      <TableHead className="text-right">IPI %</TableHead>
-                      <TableHead>Categoria</TableHead>
-                      <TableHead>Status</TableHead>
+                      <SortableHeader field="codigo">Código</SortableHeader>
+                      <SortableHeader field="nome">Produto</SortableHeader>
+                      <SortableHeader field="fornecedor">Fornecedor</SortableHeader>
+                      <SortableHeader field="precoBase" className="text-right">Preço Base</SortableHeader>
+                      <SortableHeader field="desconto" className="text-right">Desc %</SortableHeader>
+                      <SortableHeader field="precoFinal" className="text-right">Preço Final</SortableHeader>
+                      <SortableHeader field="ipi" className="text-right">IPI %</SortableHeader>
+                      <SortableHeader field="qtdCaixa">Informações Adicionais</SortableHeader>
+                      <SortableHeader field="categoria">Categoria</SortableHeader>
+                      <SortableHeader field="status">Status</SortableHeader>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -293,6 +430,11 @@ export default function BasePadronizada() {
                         <TableCell className="text-right text-sm font-bold tabular-nums">R$ {p.precoFinal.toFixed(2)}</TableCell>
                         <TableCell className="text-right text-sm text-muted-foreground tabular-nums">
                           {renderEditableCell(p.id, 'ipi', String(p.ipi))}
+                        </TableCell>
+                        <TableCell className="text-sm max-w-[150px]">
+                          <span className="text-xs text-muted-foreground block truncate" title={p.descricao}>
+                            {p.qtdCaixa ? `Cx c/ ${p.qtdCaixa} unidades` : '-'}
+                          </span>
                         </TableCell>
                         <TableCell>
                           {renderEditableCell(p.id, 'categoria', p.categoria, "text-xs px-2 py-0.5 rounded-md bg-muted text-muted-foreground")}

@@ -13,8 +13,12 @@ import { Progress } from "@/components/ui/progress";
 import { processarArquivoV2, ConversionResultV2 } from "@/core/engine";
 import { detectFileType } from "@/core/pipeline/fileDetector";
 import { ACCEPTED_FILE_TYPES } from "@/core/pipeline/fileDetector";
+import { importPipeline } from "@/core/pipeline";
 import { supabase } from "@/integrations/supabase/client";
 import { ImportMetadata } from "@/core/types/productPipeline";
+import { Image as ImageIcon, Download } from "lucide-react";
+import { buildAndDownloadZip } from "@/core/images/imageZipBuilder";
+import { ResultadoExtracaoImagens } from "@/core/images/imageTypes";
 
 export default function ConversaoProdutos() {
   const { fornecedores, addProdutosNormalizados, registrarHistorico, setDetectedHeaders } = useApp();
@@ -27,6 +31,8 @@ export default function ConversaoProdutos() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [resultData, setResultData] = useState<{ total: number; ok: number; pendentes: number; erros: number; duplicados: number; fileName: string; fornNome: string } | null>(null);
   const [importMeta, setImportMeta] = useState<ImportMetadata | null>(null);
+  const [imageResult, setImageResult] = useState<ResultadoExtracaoImagens | null>(null);
+  const [isZipping, setIsZipping] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
@@ -134,6 +140,12 @@ export default function ConversaoProdutos() {
         fileName: selectedFile.name,
         fornNome: result.metadata.fornecedorDetectado || result.metadata.fornecedorConfirmado || supplier.nome
       });
+
+      if (result.imageResults) {
+        setImageResult(result.imageResults);
+      } else {
+        setImageResult(null);
+      }
 
       setProgress(100);
       setState('done');
@@ -309,14 +321,61 @@ export default function ConversaoProdutos() {
                       </div>
                     )}
                   </div>
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" className="flex-1" onClick={() => navigate('/base')}>
+                  
+                  {/* Seção das Imagens */}
+                  {imageResult && imageResult.totalImagesFound > 0 && (
+                    <div className="rounded-xl border overflow-hidden mt-4">
+                      <div className="flex items-center justify-between p-3 bg-primary/5 border-b border-primary/10">
+                        <div className="flex items-center gap-2 text-sm">
+                           <ImageIcon className="h-4 w-4 text-primary" />
+                           <span className="font-semibold text-primary">Métricas de Imagens</span>
+                        </div>
+                        <Badge variant="outline">{imageResult.totalImagesFound} Mídias Encontradas</Badge>
+                      </div>
+                      <div className="flex items-center gap-2 text-sm p-3 bg-background border-b">
+                         <CheckCircle className="h-4 w-4 text-success" />
+                         <span className="font-medium">{imageResult.totalImagesMatched} Imagens Associadas (SKU)</span>
+                      </div>
+                      {imageResult.totalImagesUnmatched > 0 && (
+                        <div className="flex items-center gap-2 text-sm p-3 bg-muted/30">
+                           <AlertCircle className="h-4 w-4 text-muted-foreground" />
+                           <span className="font-medium text-muted-foreground">{imageResult.totalImagesUnmatched} Imagens Não Associadas</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="flex gap-2 pt-2">
+                    <Button variant="outline" size="sm" className="flex-1 border-primary/20 text-primary hover:bg-primary/5" onClick={() => navigate('/base')}>
                       Ver Base <ArrowRight className="h-3.5 w-3.5 ml-1" />
                     </Button>
                     <Button size="sm" className="flex-1 gradient-success text-primary-foreground font-semibold shadow-sm" onClick={() => navigate('/exportacoes')}>
                       Exportar Mercos <ArrowRight className="h-3.5 w-3.5 ml-1" />
                     </Button>
                   </div>
+                  
+                  {imageResult && imageResult.images.length > 0 && (
+                    <div className="flex pt-2">
+                      <Button 
+                        size="sm" 
+                        className="w-full gradient-primary text-primary-foreground shadow-sm"
+                        disabled={isZipping}
+                        onClick={async () => {
+                           setIsZipping(true);
+                           try {
+                             await buildAndDownloadZip(imageResult, resultData.fornNome);
+                           } catch(e) {
+                             toast.error("Erro ao gerar arquivo de Imagens.");
+                           } finally {
+                             setIsZipping(false);
+                           }
+                        }}
+                      >
+                        {isZipping ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
+                        Baixar Zip Imagens
+                      </Button>
+                    </div>
+                  )}
                 </>
               )}
             </CardContent>

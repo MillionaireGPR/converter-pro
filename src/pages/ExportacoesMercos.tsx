@@ -3,21 +3,122 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { useState, useMemo } from "react";
 import { useApp } from "@/context/AppContext";
-import { Download, CheckCircle, AlertTriangle, XCircle, Package, FileWarning } from "lucide-react";
+import { Download, CheckCircle, AlertTriangle, XCircle, Package, FileWarning, Search, Filter, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
+import { cn } from "@/lib/utils";
 import { ProdutoNormalizadoV2, MERCOS_EXPORT_COLUMNS } from "@/core/types/productPipeline";
 import { batchNormalizeToMercos } from "@/core/mercos/normalizeToMercos";
 import { generateMercosXLSX, generateErrorReport } from "@/core/mercos/exportMercos";
 
 export default function ExportacoesMercos() {
-  const { produtosPadronizados, exportacoesMercos, exportarMercos } = useApp();
+  const { produtosPadronizados, fornecedores, exportacoesMercos, exportarMercos } = useApp();
   const navigate = useNavigate();
   const [precoMode, setPrecoMode] = useState<'tabela' | 'desconto'>('desconto');
+  
+  // Filtros de coluna para identificar dados faltantes
+  const [busca, setBusca] = useState("");
+  const [filtroFornecedor, setFiltroFornecedor] = useState("todos");
+  const [filtroCampoFaltando, setFiltroCampoFaltando] = useState<"todos" | "codigo" | "nome" | "preco" | "ipi" | "descricao">("todos");
+  const [filtroStatus, setFiltroStatus] = useState<"todos" | "validado" | "erro" | "pendente">("todos");
+  
+  // Estados para ordenação
+  const [sortField, setSortField] = useState<string | null>(null);
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
-  const displayProducts = produtosPadronizados;
+  // Filtra produtos baseado nos filtros selecionados
+  const produtosFiltrados = useMemo(() => {
+    return produtosPadronizados.filter(p => {
+      const q = busca.toLowerCase().trim();
+      const matchBusca = !q || 
+                         (p.codigoFinal || p.codigoOriginal || '').toLowerCase().includes(q) || 
+                         (p.nome || '').toLowerCase().includes(q) ||
+                         (p.fornecedor || '').toLowerCase().includes(q);
+      
+      let matchFornecedor = true;
+      if (filtroFornecedor !== 'todos') {
+        matchFornecedor = (p.fornecedor || '').toLowerCase() === filtroFornecedor.toLowerCase() || 
+                          p.fornecedorId === filtroFornecedor;
+      }
+      
+      // Filtro por campo faltando
+      let matchCampoFaltando = true;
+      if (filtroCampoFaltando !== 'todos') {
+        switch (filtroCampoFaltando) {
+          case 'codigo':
+            matchCampoFaltando = !p.codigoFinal && !p.codigoOriginal;
+            break;
+          case 'nome':
+            matchCampoFaltando = !p.nome || p.nome.trim() === '';
+            break;
+          case 'preco':
+            matchCampoFaltando = !p.precoFinal || p.precoFinal <= 0;
+            break;
+          case 'ipi':
+            matchCampoFaltando = p.ipi === undefined || p.ipi === null;
+            break;
+          case 'descricao':
+            matchCampoFaltando = !p.descricao || p.descricao.trim() === '';
+            break;
+        }
+      }
+      
+      // Filtro por status
+      const matchStatus = filtroStatus === 'todos' || 
+                          (filtroStatus === 'validado' && p.status === 'validado') ||
+                          (filtroStatus === 'erro' && (p.status === 'erro' || p.status === 'incompleto')) ||
+                          (filtroStatus === 'pendente' && p.status === 'pendente');
+      
+      return matchBusca && matchFornecedor && matchCampoFaltando && matchStatus;
+    }).sort((a, b) => {
+      if (!sortField) return 0;
+      
+      let valA: any, valB: any;
+      
+      switch (sortField) {
+        case 'codigo':
+          valA = a.codigoFinal || a.codigoOriginal || '';
+          valB = b.codigoFinal || b.codigoOriginal || '';
+          break;
+        case 'nome':
+          valA = a.nome || '';
+          valB = b.nome || '';
+          break;
+        case 'fornecedor':
+          valA = a.fornecedor || '';
+          valB = b.fornecedor || '';
+          break;
+        case 'preco':
+          valA = precoMode === 'tabela' ? (a.precoBase || 0) : (a.precoFinal || 0);
+          valB = precoMode === 'tabela' ? (b.precoBase || 0) : (b.precoFinal || 0);
+          break;
+        case 'ipi':
+          valA = a.ipi || 0;
+          valB = b.ipi || 0;
+          break;
+        case 'status':
+          valA = a.status || '';
+          valB = b.status || '';
+          break;
+        default:
+          return 0;
+      }
+      
+      if (typeof valA === 'string') {
+        valA = valA.toLowerCase();
+        valB = valB.toLowerCase();
+      }
+      
+      if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+      if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [produtosPadronizados, busca, filtroFornecedor, filtroCampoFaltando, filtroStatus, sortField, sortDirection, precoMode]);
+
+  const displayProducts = produtosFiltrados;
 
   // Converte Produto (contexto) → ProdutoNormalizadoV2 para o pipeline Mercos
   const produtosV2: ProdutoNormalizadoV2[] = useMemo(() => {
@@ -91,6 +192,36 @@ export default function ExportacoesMercos() {
     toast.success(`Relatório de erros exportado (${issues.length} itens)`);
   };
 
+  // Função para alternar ordenação
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  // Componente para header ordenável
+  const SortableHeader = ({ field, children, className }: { field: string; children: React.ReactNode; className?: string }) => {
+    const isActive = sortField === field;
+    return (
+      <TableHead 
+        className={cn("cursor-pointer hover:bg-muted/50 transition-colors select-none", className)} 
+        onClick={() => handleSort(field)}
+      >
+        <div className="flex items-center gap-1">
+          {children}
+          {isActive ? (
+            sortDirection === 'asc' ? <ArrowUp className="h-3.5 w-3.5 text-primary" /> : <ArrowDown className="h-3.5 w-3.5 text-primary" />
+          ) : (
+            <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground/40" />
+          )}
+        </div>
+      </TableHead>
+    );
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -125,7 +256,63 @@ export default function ExportacoesMercos() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <>
+          {/* Filtros de colunas */}
+          <Card className="shadow-card">
+            <CardContent className="p-4">
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input 
+                    placeholder="Buscar por código ou nome..." 
+                    className="pl-9 bg-card" 
+                    value={busca} 
+                    onChange={e => setBusca(e.target.value)} 
+                  />
+                </div>
+                <Select value={filtroFornecedor} onValueChange={setFiltroFornecedor}>
+                  <SelectTrigger className="w-full sm:w-44 bg-card">
+                    <SelectValue placeholder="Fornecedor" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos fornecedores</SelectItem>
+                    {fornecedores.map(f => <SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={filtroStatus} onValueChange={(v: any) => setFiltroStatus(v)}>
+                  <SelectTrigger className="w-full sm:w-40 bg-card">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos status</SelectItem>
+                    <SelectItem value="validado">Validado</SelectItem>
+                    <SelectItem value="erro">Com Erro</SelectItem>
+                    <SelectItem value="pendente">Pendente</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={filtroCampoFaltando} onValueChange={(v: any) => setFiltroCampoFaltando(v)}>
+                  <SelectTrigger className="w-full sm:w-52 bg-card">
+                    <Filter className="h-4 w-4 mr-2 text-muted-foreground" />
+                    <SelectValue placeholder="Dados faltando" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos os campos</SelectItem>
+                    <SelectItem value="codigo">Sem Código</SelectItem>
+                    <SelectItem value="nome">Sem Nome</SelectItem>
+                    <SelectItem value="preco">Sem Preço</SelectItem>
+                    <SelectItem value="ipi">Sem IPI</SelectItem>
+                    <SelectItem value="descricao">Sem Descrição</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-2 mt-3 text-xs text-muted-foreground">
+                <Filter className="h-3.5 w-3.5" />
+                <span>Exibindo {displayProducts.length} produto(s) filtrado(s) de {produtosPadronizados.length} total</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <Card className="shadow-card">
             <CardHeader><CardTitle className="text-base">Checklist de Validação</CardTitle></CardHeader>
             <CardContent className="space-y-3">
@@ -181,12 +368,12 @@ export default function ExportacoesMercos() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Código do produto*</TableHead>
-                      <TableHead>Nome do produto*</TableHead>
-                      <TableHead className="text-right">Preço de Tabela*</TableHead>
-                      <TableHead className="text-right">IPI</TableHead>
+                      <SortableHeader field="codigo">Código do produto*</SortableHeader>
+                      <SortableHeader field="nome">Nome do produto*</SortableHeader>
+                      <SortableHeader field="preco" className="text-right">Preço de Tabela*</SortableHeader>
+                      <SortableHeader field="ipi" className="text-right">IPI</SortableHeader>
                       <TableHead>Informações adicionais</TableHead>
-                      <TableHead>Status</TableHead>
+                      <SortableHeader field="status">Status</SortableHeader>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -215,6 +402,7 @@ export default function ExportacoesMercos() {
             </CardContent>
           </Card>
         </div>
+        </>
       )}
     </div>
   );

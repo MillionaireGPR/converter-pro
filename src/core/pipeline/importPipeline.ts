@@ -31,7 +31,7 @@ import {
 } from '../normalizers/cleaners';
 
 // ===================================================================
-// LEITURA DE EXCEL / CSV
+// LEITURA DE EXCEL / CSV COM SUPORTE A CORES DE FONTE
 // ===================================================================
 
 interface SpreadsheetReadResult {
@@ -39,16 +39,272 @@ interface SpreadsheetReadResult {
   rows: Record<string, any>[];
   rows2D: any[][];
   headerRowIndex: number;
+  cellStyles?: Map<string, CellStyleInfo>; // Map de endereço (A1, B2) para estilo
 }
+
+export interface CellStyleInfo {
+  fontColor?: string;        // Cor da fonte em formato RGB ou ARGB
+  fontColorTheme?: number;   // Índice da cor do tema
+  fontColorIndexed?: number; // Índice da cor indexada
+  fillColor?: string;        // Cor de fundo
+  bold?: boolean;
+  italic?: boolean;
+  address?: string;          // Endereço da célula (ex: A1, B2)
+  row?: number;
+  col?: number;
+}
+
+/**
+ * Normaliza uma cor Excel para RGB
+ * Aceita: RGB, ARGB, theme, indexed
+ */
+export function normalizeExcelFontColor(
+  color: any,
+  themeColors?: string[]
+): { color: string; type: 'rgb' | 'theme' | 'indexed' | 'unknown'; original: any } {
+  if (!color) {
+    return { color: 'default', type: 'unknown', original: null };
+  }
+
+  // 1. RGB direto (FF0000 ou FFFF0000 com alpha)
+  if (color.rgb) {
+    const rgb = color.rgb;
+    // Remove canal alpha se presente (primeiros 2 caracteres)
+    const cleanRgb = rgb.length === 8 ? rgb.substring(2) : rgb;
+    return { color: `#${cleanRgb}`, type: 'rgb', original: color };
+  }
+
+  // 2. Cor do tema
+  if (color.theme !== undefined && themeColors) {
+    const themeIndex = color.theme;
+    const themeColor = themeColors[themeIndex];
+    if (themeColor) {
+      return { color: themeColor, type: 'theme', original: color };
+    }
+    // Fallback para cores de tema padrão conhecidas
+    const defaultThemes = [
+      '#000000', '#FFFFFF', '#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF',
+      '#800000', '#008000', '#000080', '#808000', '#800080', '#008080', '#C0C0C0', '#808080'
+    ];
+    return { color: defaultThemes[themeIndex] || '#000000', type: 'theme', original: color };
+  }
+
+  // 3. Cor indexada (paleta do Excel)
+  if (color.indexed !== undefined) {
+    const indexedColors = [
+      '#000000', '#FFFFFF', '#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF',
+      '#800000', '#008000', '#000080', '#808000', '#800080', '#008080', '#C0C0C0', '#808080',
+      '#9999FF', '#993366', '#FFFFCC', '#CCFFFF', '#660066', '#FF8080', '#0066CC', '#CCCCFF',
+      '#000080', '#FF00FF', '#FFFF00', '#00FFFF', '#800080', '#800000', '#008080', '#0000FF',
+      '#00CCFF', '#CCFFFF', '#CCFFCC', '#FFFF99', '#99CCFF', '#FF99CC', '#CC99FF', '#FFCC99',
+      '#3366FF', '#33CCCC', '#99CC00', '#FFCC00', '#FF9900', '#FF6600', '#666699', '#969696',
+      '#003366', '#339966', '#003300', '#333300', '#993300', '#993366', '#333399', '#333333'
+    ];
+    return { color: indexedColors[color.indexed] || '#000000', type: 'indexed', original: color };
+  }
+
+  return { color: 'default', type: 'unknown', original: color };
+}
+
+/**
+ * Detecta categoria visual baseado na cor da fonte
+ * REGRA REAL DA FAMÍLIA CLINK:
+ * - Vermelho = Promocional
+ * - Azul = Preço Fixo
+ * - Amarelo/Verde = Novidade/Reposição
+ * - Preto/Padrão = Normal
+ */
+export function detectVisualCategoryFromFontColor(
+  fontColor: string
+): 'promocional' | 'preco-fixo' | 'novidade-reposicao' | 'padrao' {
+  if (!fontColor || fontColor === 'default') return 'padrao';
+
+  const color = fontColor.toUpperCase().replace('#', '');
+
+  console.log(`[VisualRule] Analisando cor da fonte: ${fontColor} (normalizado: #${color})`);
+
+  // Função auxiliar para converter hex para RGB
+  const hexToRgb = (hex: string): { r: number; g: number; b: number } | null => {
+    const clean = hex.replace('#', '');
+    if (clean.length !== 6) return null;
+    return {
+      r: parseInt(clean.substring(0, 2), 16),
+      g: parseInt(clean.substring(2, 4), 16),
+      b: parseInt(clean.substring(4, 6), 16),
+    };
+  };
+
+  // Função para verificar se uma cor está próxima de outra (tolerância)
+  const isColorNear = (target: string, tolerance: number = 80): boolean => {
+    const targetRgb = hexToRgb(target);
+    const colorRgb = hexToRgb(color);
+    if (!targetRgb || !colorRgb) return false;
+
+    const diffR = Math.abs(targetRgb.r - colorRgb.r);
+    const diffG = Math.abs(targetRgb.g - colorRgb.g);
+    const diffB = Math.abs(targetRgb.b - colorRgb.b);
+
+    return diffR <= tolerance && diffG <= tolerance && diffB <= tolerance;
+  };
+
+  // 1. VERMELHO = Promocional
+  // Vermelho puro: FF0000, tons de vermelho: altos R, baixos G e B
+  const rgb = hexToRgb(color);
+  if (rgb) {
+    // Vermelho dominante: R > 150 e R > G + 50 e R > B + 50
+    if (rgb.r > 150 && rgb.r > rgb.g + 50 && rgb.r > rgb.b + 50) {
+      console.log(`[VisualRule] Cor identificada como VERMELHO (Promocional)`);
+      return 'promocional';
+    }
+
+    // Azul dominante: B > 150 e B > R + 50 e B > G + 50
+    if (rgb.b > 150 && rgb.b > rgb.r + 50 && rgb.b > rgb.g + 50) {
+      console.log(`[VisualRule] Cor identificada como AZUL (Preço Fixo)`);
+      return 'preco-fixo';
+    }
+
+    // Amarelo dominante: R > 150, G > 150, B < 100
+    if (rgb.r > 150 && rgb.g > 150 && rgb.b < 100) {
+      console.log(`[VisualRule] Cor identificada como AMARELO (Novidade/Reposição)`);
+      return 'novidade-reposicao';
+    }
+
+    // Verde dominante: G > 150 e G > R + 30 e G > B + 30
+    if (rgb.g > 150 && rgb.g > rgb.r + 30 && rgb.g > rgb.b + 30) {
+      console.log(`[VisualRule] Cor identificada como VERDE (Novidade/Reposição)`);
+      return 'novidade-reposicao';
+    }
+  }
+
+  // Fallback por cores exatas comuns
+  const redColors = ['FF0000', 'FF3333', 'FF4444', 'FF5555', 'FF6666', 'CC0000', 'DD0000', 'EE0000'];
+  const blueColors = ['0000FF', '3333FF', '4444FF', '5555FF', '6666FF', '0066CC', '0000CC', '0000DD'];
+  const yellowColors = ['FFFF00', 'FFFF33', 'FFFF44', 'FFCC00', 'FFDD00', 'FFEE00', 'CCCC00'];
+  const greenColors = ['00FF00', '33FF33', '44FF44', '00CC00', '00DD00', '00EE00'];
+
+  if (redColors.includes(color)) {
+    console.log(`[VisualRule] Cor identificada como VERMELHO exato (Promocional)`);
+    return 'promocional';
+  }
+  if (blueColors.includes(color)) {
+    console.log(`[VisualRule] Cor identificada como AZUL exato (Preço Fixo)`);
+    return 'preco-fixo';
+  }
+  if (yellowColors.includes(color) || greenColors.includes(color)) {
+    console.log(`[VisualRule] Cor identificada como AMARELO/VERDE exato (Novidade/Reposição)`);
+    return 'novidade-reposicao';
+  }
+
+  console.log(`[VisualRule] Cor não mapeada, usando Padrão`);
+  return 'padrao';
+}
+
+/**
+ * Extrai estilos de célula do worksheet
+ */
+function extractCellStyles(worksheet: XLSX.WorkSheet): Map<string, CellStyleInfo> {
+  const styles = new Map<string, CellStyleInfo>();
+
+  try {
+    // @ts-ignore - Acessar propriedades internas da worksheet
+    const cells = worksheet;
+
+    console.log(`[CellStyles DEBUG] Iniciando extração de estilos do worksheet`);
+
+    // Percorre todas as células do worksheet
+    for (const cellAddress in cells) {
+      // Pular propriedades especiais do SheetJS
+      if (cellAddress.startsWith('!')) continue;
+
+      // @ts-ignore
+      const cell = cells[cellAddress];
+      if (!cell || !cell.s) continue; // Sem estilo
+
+      const style = cell.s;
+      const styleInfo: CellStyleInfo = {
+        address: cellAddress,
+        bold: style.font?.bold,
+        italic: style.font?.italic,
+      };
+
+      // Extrair cor da fonte
+      if (style.font && style.font.color) {
+        const normalized = normalizeExcelFontColor(style.font.color);
+        styleInfo.fontColor = normalized.color;
+        styleInfo.fontColorTheme = style.font.color.theme;
+        styleInfo.fontColorIndexed = style.font.color.indexed;
+        
+        // Log para debug de cores
+        if (normalized.color !== 'default' && normalized.color !== '#000000') {
+          console.log(`[CellStyles DEBUG] Célula ${cellAddress}: fontColor original=${JSON.stringify(style.font.color)}, normalizado=${normalized.color}`);
+        }
+      }
+
+      // Extrair cor de fundo
+      if (style.fill && style.fill.fgColor) {
+        const normalized = normalizeExcelFontColor(style.fill.fgColor);
+        styleInfo.fillColor = normalized.color;
+      }
+
+      // Calcular linha e coluna
+      const match = cellAddress.match(/([A-Z]+)(\d+)/);
+      if (match) {
+        const col = match[1];
+        const row = parseInt(match[2], 10);
+        styleInfo.row = row;
+        styleInfo.col = col.charCodeAt(0) - 'A'.charCodeAt(0);
+      }
+
+      styles.set(cellAddress, styleInfo);
+    }
+
+    console.log(`[CellStyles] Extraídos ${styles.size} estilos de célula`);
+    
+    // Listar todas as células com cores não-padrão para debug
+    const coloredCells = Array.from(styles.values()).filter(s => s.fontColor && s.fontColor !== 'default' && s.fontColor !== '#000000');
+    console.log(`[CellStyles DEBUG] Células com cores especiais: ${coloredCells.length}`);
+    coloredCells.slice(0, 20).forEach(s => {
+      console.log(`[CellStyles DEBUG]   ${s.address}: fontColor=${s.fontColor}`);
+    });
+    
+  } catch (error) {
+    console.warn(`[CellStyles] Erro ao extrair estilos:`, error);
+  }
+
+  return styles;
+}
+
+/**
+ * Converte linhas de planilha em ProdutoBruto[]
+ */
+const rowsToProdutosBrutos = (rows: Record<string, any>[]): ProdutoBruto[] => {
+  return rows.map((row, idx) => ({
+    campos: { ...row },
+    linhaOrigem: idx,
+  }));
+};
 
 /**
  * Lê um arquivo Excel ou CSV e retorna dados estruturados.
  * Reutiliza a lógica de detecção de header que já existia.
+ * NOVO: Também extrai estilos de célula (cores de fonte) para classificação visual.
  */
 const readSpreadsheet = (data: ArrayBuffer, tipo: TipoArquivo): SpreadsheetReadResult => {
-  const workbook = XLSX.read(data, { type: 'array' });
+  // Opções de leitura - tentar capturar estilos se disponível
+  const readOptions: XLSX.ParsingOptions = {
+    type: 'array',
+    cellStyles: true,  // Tentar capturar estilos
+    cellNF: false,
+    cellDates: true,
+  };
+
+  const workbook = XLSX.read(data, readOptions);
   const sheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
+
+  // Extrair estilos de célula (cores de fonte)
+  const cellStyles = extractCellStyles(worksheet);
+  console.log(`[ReadSpreadsheet] Extraídos ${cellStyles.size} estilos de célula`);
 
   // Lê como array 2D para detecção de header
   const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
@@ -72,17 +328,9 @@ const readSpreadsheet = (data: ArrayBuffer, tipo: TipoArquivo): SpreadsheetReadR
     blankrows: false,
   }) as any[][];
 
-  return { headers, rows, rows2D, headerRowIndex };
-};
+  console.log(`[ReadSpreadsheet] Headers: ${headers.length}, Rows: ${rows.length}, Styles: ${cellStyles.size}`);
 
-/**
- * Converte linhas de planilha em ProdutoBruto[]
- */
-const rowsToProdutosBrutos = (rows: Record<string, any>[]): ProdutoBruto[] => {
-  return rows.map((row, idx) => ({
-    campos: { ...row },
-    linhaOrigem: idx,
-  }));
+  return { headers, rows, rows2D, headerRowIndex, cellStyles };
 };
 
 // ===================================================================
@@ -194,7 +442,21 @@ const normalizeExtracted = (
     const warnings = [...e.warnings];
 
     const codigo = sanitizeForExport(e.codigo || '');
-    const nome = sanitizeForExport(cleanDescription(e.descricao || ''));
+    
+    // NOVO: Preservar nome comercial da família CLINK se existir
+    // Verificar se é um produto da família CLINK com nomeComercial
+    const clinkProduct = e as any;
+    let nome: string;
+    
+    if (clinkProduct.nomeComercial && clinkProduct.nomeComercial.trim()) {
+      // Usar nome comercial já formatado (com sufixo ***PROMOCAO*** ou ***PRECO FIXO***)
+      nome = sanitizeForExport(clinkProduct.nomeComercial);
+      console.log(`[Normalize] Preservando nome comercial: ${codigo} = "${nome}"`);
+    } else {
+      // Fallback: limpar descrição normalmente
+      nome = sanitizeForExport(cleanDescription(e.descricao || ''));
+    }
+    
     const precoBase = e.preco || 0;
 
     // Validação
@@ -364,6 +626,19 @@ export const runImportPipeline = async (
     headers = spreadsheet.headers;
     brutos = rowsToProdutosBrutos(spreadsheet.rows);
 
+    // NOVO: Adicionar estilos de célula aos produtos brutos para classificação visual
+    // Isso permite que adapters da família CLINK detectem cores de fonte
+    if (spreadsheet.cellStyles && spreadsheet.cellStyles.size > 0) {
+      console.log(`[Pipeline] Adicionando ${spreadsheet.cellStyles.size} estilos de célula aos produtos brutos`);
+      brutos.forEach((bruto, idx) => {
+        // Calcular linha real na planilha (considerando header)
+        const linhaReal = spreadsheet.headerRowIndex + idx + 1; // 1-based para Excel
+        bruto.campos.__cellStyles = spreadsheet.cellStyles;
+        bruto.campos.__linhaReal = linhaReal;
+        bruto.campos.__headerRowIndex = spreadsheet.headerRowIndex;
+      });
+    }
+
     // Tenta detecção automática do fornecedor pelos headers e dados apenas se o usuário não tiver forçado um
     const userSelectedSupplier = !!(options.supplierId || options.supplierName);
     if (!userSelectedSupplier && !fornecedorConfirmado && brutos.length > 0) {
@@ -386,8 +661,18 @@ export const runImportPipeline = async (
   console.log(`[Pipeline] ${brutos.length} registros brutos extraídos. Adapter: ${adapter.nome}`);
 
   // 4. Extração usando o adapter
+  // NOVO: Passar informações de estilo de célula para adapters da família CLINK
   const extraidos = extractProducts(brutos, adapter, file.name);
   console.log(`[Pipeline] ${extraidos.length} produtos extraídos pelo adapter "${adapter.nome}"`);
+
+  // NOVO: Contagem de categorias visuais para métricas
+  const visualCategories = {
+    promocional: extraidos.filter(e => (e as any).visualCategory === 'promocional').length,
+    precoFixo: extraidos.filter(e => (e as any).visualCategory === 'preco-fixo').length,
+    novidadeReposicao: extraidos.filter(e => (e as any).visualCategory === 'novidade-reposicao').length,
+    padrao: extraidos.filter(e => !(e as any).visualCategory || (e as any).visualCategory === 'padrao').length,
+  };
+  console.log(`[Pipeline] Categorias visuais detectadas:`, visualCategories);
 
   // Determinar o nome e ID finais a serem salvos no banco
   // Prioridade: Fornecedor que o usuário selecionou explícito > Confirmado por alias > Adapter detectado
@@ -428,7 +713,7 @@ export const runImportPipeline = async (
 
   // 9. Metadados da importação
   const endTime = performance.now();
-  const metadata: ImportMetadata = {
+  const metadata: ImportMetadata & { visualCategories?: typeof visualCategories } = {
     tipoArquivo,
     tipoPDF: partialMetadata.tipoPDF,
     parserUsado,
@@ -442,9 +727,12 @@ export const runImportPipeline = async (
     fornecedorConfirmado: fornecedorConfirmado || options.supplierName,
     camposDetectados: headers,
     tempoProcessamentoMs: Math.round(endTime - startTime),
+    // NOVO: Métricas de categorização visual
+    visualCategories,
   };
 
   console.log(`[Pipeline] Concluído em ${metadata.tempoProcessamentoMs}ms. Stats:`, stats);
+  console.log(`[Pipeline] Total importado: ${stats.total} | Promocional: ${visualCategories.promocional} | Preço Fixo: ${visualCategories.precoFixo} | Novidade: ${visualCategories.novidadeReposicao} | Padrão: ${visualCategories.padrao}`);
 
   return {
     metadata,

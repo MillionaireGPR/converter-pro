@@ -77,7 +77,7 @@ describe('normalizeToMercos', () => {
     expect(mercos['Nome do produto (obrigatório)']).toBe('Caneca Porcelana');
     expect(mercos['Preço de Tabela (obrigatório)']).toBe(29.90);
     expect(mercos['IPI (opcional - não informar o símbolo %)']).toBe(5);
-    expect(String(mercos['Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)'])).toContain('CX: 24');
+    expect(String(mercos['Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)'])).toContain('Cx c/ 24 unidades');
   });
 
   it('4) campo IPI sem %', () => {
@@ -96,7 +96,7 @@ describe('normalizeToMercos', () => {
   it('5) informações adicionais contém CX quando existir', () => {
     const p = makeProduto({ quantidadeCaixa: 120 });
     const info = buildInformacoesAdicionais(p);
-    expect(info).toContain('CX: 120');
+    expect(info).toContain('Cx c/ 120 unidades');
   });
 
   it('7) exportação de item sem caixa', () => {
@@ -115,7 +115,7 @@ describe('normalizeToMercos', () => {
       cor: 'Branco',
     });
     const info = buildInformacoesAdicionais(p);
-    expect(info).toContain('CX: 48');
+    expect(info).toContain('Cx c/ 48 unidades');
     expect(info).toContain('10x20cm');
     expect(info).toContain('Aço inox');
     expect(info).toContain('Branco');

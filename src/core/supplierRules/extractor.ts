@@ -104,8 +104,17 @@ export const extractProducts = (
     let preco = toNum(findValue(campos, fa.preco));
     const precoPromocional = fa.precoPromocional ? toNum(findValue(campos, fa.precoPromocional)) : undefined;
 
+    // Se o smart PDF interpreter já calculou o preço (postProcess), usar diretamente
+    if (preco === 0 && campos['preco'] !== undefined && campos['preco'] !== null) {
+      const precoFromSmart = parseFloat(String(campos['preco']).replace(',', '.'));
+      if (!isNaN(precoFromSmart) && precoFromSmart > 0) {
+        preco = precoFromSmart;
+      }
+    }
+
     // Heurística de fallback para PDFs Tabulares (onde as chaves são col_0, col_1...) ou itens sem preço
-    if (preco === 0) {
+    // IMPORTANTE: Não rodar se campos['__postProcessed'] estiver true (já tratado pelo postProcess do fornecedor)
+    if (preco === 0 && !campos['__postProcessed']) {
       // 1. Procura primeiro nas strings puras algum padrão de moeda explícito
       const values = Object.values(campos).map(String);
       const precoMatch = values.find(v => /R?\$\s*[\d.,]+/.test(v) || /^[\d.,]+\s*$/.test(v));
@@ -121,7 +130,6 @@ export const extractProducts = (
           preco = numericValues[0];
           warnings.push('Preço extraído por heurística (único valor numérico)');
         } else if (numericValues.length > 1) {
-          // Em um PDF tabular genérico, o maior valor costuma ser o código (se for numérico) e o menor o preço
           preco = Math.min(...numericValues);
           warnings.push(`Múltiplos numéricos. Assumindo o menor como preço: ${preco}`);
         }
@@ -130,9 +138,12 @@ export const extractProducts = (
 
     // Heurística de fallback para Código em PDFs tabulares (col_X)
     let finalCodigo = codigo;
-    if (!finalCodigo) {
+    // Se postProcessed, usar o campo direto do smartPdfInterpreter
+    if (!finalCodigo && campos['codigo']) {
+      finalCodigo = toStr(campos['codigo']);
+    }
+    if (!finalCodigo && !campos['__postProcessed']) {
       const values = Object.values(campos).map(String);
-      // Tenta achar um código padrão (letras e números ou longo numérico) no início do array ou que não seja o preço
       const possibleCodes = values.filter(v => 
         /^[A-Z]{2,}\d{3,}$/i.test(v) || 
         /^\d{4,8}$/.test(v) || 
@@ -140,7 +151,6 @@ export const extractProducts = (
       );
       
       if (possibleCodes.length > 0) {
-        // Pega o primeiro que não tem espaços (códigos geralmente não têm espaço)
         finalCodigo = toStr(possibleCodes.find(c => !c.includes(' ')) || possibleCodes[0]);
         warnings.push('Código detectado por heurística visual');
       }
@@ -148,10 +158,12 @@ export const extractProducts = (
 
     // Heurística de fallback para Descrição em PDFs tabulares (col_X)
     let finalDescricao = descricao;
-    if (!finalDescricao) {
+    // Se postProcessed, usar o campo direto do smartPdfInterpreter
+    if (!finalDescricao && campos['descricao']) {
+      finalDescricao = toStr(campos['descricao']);
+    }
+    if (!finalDescricao && !campos['__postProcessed']) {
       const values = Object.values(campos).map(String);
-      // Pega o texto mais longo que não pareça apenas números/código
-      // Descrições geralmente têm espaços e várias letras
       const possibleDescList = values.filter(v => v.length > 8 && /[A-Za-z]{3,}/.test(v) && v.includes(' '));
       const possibleDesc = possibleDescList.sort((a, b) => b.length - a.length)[0];
       
@@ -159,7 +171,6 @@ export const extractProducts = (
         finalDescricao = toStr(possibleDesc);
         warnings.push('Descrição detectada por heurística');
       } else if (values.length > 0) {
-          // Último recurso: Junta tudo que for string longa
           const allStrs = values.filter(v => v.length > 5 && isNaN(Number(v.replace(/[^\d.-]/g, ''))));
           if(allStrs.length > 0) {
               finalDescricao = toStr(allStrs.join(' '));
@@ -170,16 +181,28 @@ export const extractProducts = (
 
     const unidade = (fa.unidade ? toStr(findValue(campos, fa.unidade)) : '') || adapter.defaultUnidade || 'UN';
     let quantidadeCaixa = toNum(findValue(campos, fa.quantidadeCaixa));
+    // Leitura direta do campo 'cx' se existir (preenchido pelo smartPdfInterpreter)
+    if (quantidadeCaixa <= 0 && campos['cx']) {
+      quantidadeCaixa = toNum(campos['cx']);
+    }
     if (quantidadeCaixa <= 0) quantidadeCaixa = adapter.defaultQuantidadeCaixa || 1;
 
     const embalagem = fa.embalagem ? toStr(findValue(campos, fa.embalagem)) : '';
-    const ncm = fa.ncm ? toStr(findValue(campos, fa.ncm)) : '';
-    const ipi = fa.ipi ? toNum(findValue(campos, fa.ipi)) : 0;
+    const ncm = fa.ncm ? toStr(findValue(campos, fa.ncm)) : (campos['ncm'] ? toStr(campos['ncm']) : '');
+    let ipi = fa.ipi ? toNum(findValue(campos, fa.ipi)) : 0;
+    // Leitura direta do campo 'ipi' se existir (preenchido pelo smartPdfInterpreter)
+    if (ipi <= 0 && campos['ipi']) {
+      ipi = toNum(campos['ipi']);
+    }
     const dimensoes = fa.dimensoes ? toStr(findValue(campos, fa.dimensoes)) : '';
     const material = fa.material ? toStr(findValue(campos, fa.material)) : '';
     const cor = fa.cor ? toStr(findValue(campos, fa.cor)) : '';
     const volume = fa.volume ? toStr(findValue(campos, fa.volume)) : '';
-    const observacoes = fa.observacoes ? toStr(findValue(campos, fa.observacoes)) : '';
+    let observacoes = fa.observacoes ? toStr(findValue(campos, fa.observacoes)) : '';
+    // Leitura direta do campo 'observacoes' (preenchido pelo postProcess)
+    if (!observacoes && campos['observacoes']) {
+      observacoes = toStr(campos['observacoes']);
+    }
 
     // Detecção de status de estoque
     const allText = Object.values(campos).filter(v => typeof v === 'string').join(' ');

@@ -1,5 +1,5 @@
 // ===================================================================
-// ADAPTER: CLINK
+// ADAPTER: FLASH
 // Herda da base da família CLINK com regras visuais e classificação
 // ===================================================================
 
@@ -12,10 +12,10 @@ import {
 } from './clink-family-base';
 import { ProdutoBruto } from '../types/productPipeline';
 
-export const clinkAdapter: SupplierAdapter = {
-  id: 'c0000000-0000-4000-a000-000000000000',
-  nome: 'Clink',
-  aliases: ['clink', 'clique', 'clik', 'click'],
+export const flashAdapter: SupplierAdapter = {
+  id: 'f0000000-0000-4000-a000-000000000000',
+  nome: 'Flash',
+  aliases: ['flash', 'flask', 'flasch'],
 
   fieldAliases: CLINK_FAMILY_FIELD_ALIASES,
 
@@ -26,12 +26,13 @@ export const clinkAdapter: SupplierAdapter = {
   exclusionRules: CLINK_FAMILY_EXCLUSION_RULES,
 
   detectionPatterns: [
-    'CLINK',
-    'Clink',
-    /clink/i,
-    /clique/i,
-    /clik/i,
-    /^CL[A-Z0-9]{3,}/i, // Códigos começando com CL
+    'FLASH',
+    'Flash',
+    /flash/i,
+    /flask/i,
+    /flasch/i,
+    /^FL[A-Z0-9]{3,}/i, // Códigos começando com FL
+    /^FS[A-Z0-9]{3,}/i, // Códigos começando com FS
   ],
 
   hasMultiplePriceTables: true,
@@ -41,6 +42,6 @@ export const clinkAdapter: SupplierAdapter = {
    * Função de extração customizada usando a base da família
    */
   extract: (brutos: ProdutoBruto[], adapter: SupplierAdapter): ClinkFamilyProduct[] => {
-    return extractClinkFamily(brutos, adapter, '', 'Clink');
+    return extractClinkFamily(brutos, adapter, '', 'Flash');
   },
 };

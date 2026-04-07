@@ -4,6 +4,10 @@ import { validarProduto as motorValidar } from "../core/validators";
 import { supabase } from "../integrations/supabase/client";
 import { toast } from "sonner";
 
+// ===== CONSTANTS =====
+const LOCAL_STORAGE_KEY = 'converter-pro-ultima-conversao';
+const LAST_CONVERSION_KEY = 'converter-pro-last-conversion-timestamp';
+
 // ===== TYPES =====
 
 export type StatusProduto = 'validado' | 'pendente' | 'erro' | 'incompleto';
@@ -251,6 +255,7 @@ interface AppContextType {
   updateProduto: (id: string, updates: Partial<Produto>) => Promise<void>;
   validarProdutos: (ids: string[]) => Promise<void>;
   aplicarDesconto: (ids: string[], percentual: number, campanha?: string, fornecedor?: string, descontoString?: string) => Promise<void>;
+  aplicarIpi: (ids: string[], ipi: number, fornecedor?: string, updatesIndividuais?: { id: string; ipi: number }[]) => Promise<void>;
   exportarMercos: (prods: Produto[]) => Promise<void>;
   gerarCatalogo: (cat: Omit<CatalogoGerado, 'id'>) => void;
   converterPedido: (destino: string, itens: PedidoItem[]) => void;
@@ -648,6 +653,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }));
 
     await addProdutos(mappedProds);
+    
+    // Salvar no cache local para persistir entre navegações
+    try {
+      const cacheData = {
+        produtos: mappedProds,
+        timestamp: new Date().toISOString(),
+        totalProdutos: mappedProds.length
+      };
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(cacheData));
+      localStorage.setItem(LAST_CONVERSION_KEY, new Date().toISOString());
+      console.log(`[Flow MVP] Última conversão salva no cache local: ${mappedProds.length} produtos`);
+    } catch (error) {
+      console.warn('[Flow MVP] Erro ao salvar cache local:', error);
+    }
   }, [addProdutos]);
 
   // === updateProduto ===
@@ -784,6 +803,46 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [produtosPadronizados, registrarHistorico]);
 
+  // === aplicarIpi ===
+  const aplicarIpi = useCallback(async (ids: string[], novoIpi: number, fornecedor?: string, updatesIndividuais?: { id: string; ipi: number }[]) => {
+    try {
+      // Se tiver updates individuais, usa eles; senão aplica o mesmo valor para todos
+      const updates = updatesIndividuais || ids.map(id => ({ id, ipi: novoIpi }));
+      
+      console.log(`[Flow MVP] Aplicando IPI em ${updates.length} itens.`, updatesIndividuais ? 'Com valores individuais' : `Valor único: ${novoIpi}%`);
+      
+      const results = await Promise.all(updates.map(async (update) => {
+        const p = produtosPadronizados.find(x => x.id === update.id);
+        if (!p) return null;
+
+        const { error } = await supabase.from('standardized_products').update({
+          ipi: update.ipi
+        }).eq('id', update.id);
+
+        if (error) console.warn(`[Flow MVP] Supabase falhou no IPI do item ${update.id}, usando fallback local.`);
+
+        return { ...p, ipi: update.ipi };
+      }));
+
+      const updatedProds = results.filter(Boolean) as Produto[];
+
+      setProdutosPadronizados(prev => prev.map(p => {
+        const upd = updatedProds.find(u => u.id === p.id);
+        return upd || p;
+      }));
+
+      await registrarHistorico({
+        arquivo: '-', fornecedor: fornecedor || 'Diversos', usuario: 'Admin', data: now(),
+        tipoConversao: updatesIndividuais ? 'Desconto no IPI em Massa' : 'Alteração de IPI em Massa', 
+        qtdItens: updates.length, 
+        status: 'concluído'
+      });
+    } catch (error) {
+      console.error("Erro ao aplicar IPI:", error);
+      toast.error("Erro ao salvar IPI.");
+    }
+  }, [produtosPadronizados, registrarHistorico]);
+
   // === exportarMercos ===
   const exportarMercos = useCallback(async (prods: Produto[]) => {
     const validProds = prods.filter(p => p.status !== 'erro' && p.codigoFinal);
@@ -905,7 +964,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       fornecedores, arquivos, produtosPadronizados, regrasMapeamento, descontos,
       exportacoesMercos, catalogosGerados, pedidosConvertidos, historico,
       dashboard, detectedHeaders, isLoading,
-      processarArquivo, addProdutos, addProdutosNormalizados, updateProduto, validarProdutos, aplicarDesconto,
+      processarArquivo, addProdutos, addProdutosNormalizados, updateProduto, validarProdutos, aplicarDesconto, aplicarIpi,
       exportarMercos, gerarCatalogo, converterPedido, registrarHistorico,
       updateFornecedor, removeFornecedor, addRegra, updateRegra, removeRegra, getFornecedorByName, seedSuppliers, limparBase,
       setDetectedHeaders

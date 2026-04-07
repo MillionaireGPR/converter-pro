@@ -6,6 +6,8 @@ describe('getAdapterById', () => {
     const adapter = getAdapterById('clink');
     expect(adapter).toBeDefined();
     expect(adapter?.nome).toBe('Clink');
+    // Clink usa UUID c0000000-0000-4000-a000-000000000000
+    expect(adapter?.id).toBe('c0000000-0000-4000-a000-000000000000');
   });
 
   it('encontra adapter pelo nome', () => {
@@ -17,7 +19,8 @@ describe('getAdapterById', () => {
   it('encontra adapter por alias', () => {
     const adapter = getAdapterById('nixhouse');
     expect(adapter).toBeDefined();
-    expect(adapter?.id).toBe('nix');
+    // Nix House agora usa UUID: nix-house-0000-4000-a000-000000000000
+    expect(adapter?.id).toBe('nix-house-0000-4000-a000-000000000000');
   });
 
   it('retorna undefined para ID desconhecido', () => {
@@ -32,7 +35,8 @@ describe('getAdapterById', () => {
 describe('getGenericAdapter', () => {
   it('retorna adapter genérico', () => {
     const adapter = getGenericAdapter();
-    expect(adapter.id).toBe('generic');
+    // UUID válido para evitar erro de FK no banco
+    expect(adapter.id).toBe('00000000-0000-4000-a000-000000000000');
     expect(adapter.nome).toBe('Genérico');
   });
 });
@@ -45,21 +49,24 @@ describe('getAllAdapters', () => {
 
   it('não inclui o genérico na lista', () => {
     const adapters = getAllAdapters();
-    expect(adapters.find(a => a.id === 'generic')).toBeUndefined();
+    // Genérico usa UUID 00000000-0000-4000-a000-000000000000
+    expect(adapters.find(a => a.id === '00000000-0000-4000-a000-000000000000')).toBeUndefined();
   });
 });
 
 describe('detectSupplier', () => {
   it('detecta Clink pelo nome no texto', () => {
     const result = detectSupplier('Tabela de preços CLINK 2024');
-    expect(result.adapter.id).toBe('clink');
+    // Clink usa UUID c0000000-0000-4000-a000-000000000000
+    expect(result.adapter.id).toBe('c0000000-0000-4000-a000-000000000000');
     expect(result.confianca).toBeGreaterThan(0);
     expect(result.metodo).toBe('nome');
   });
 
   it('detecta Nix pelo padrão de código', () => {
     const result = detectSupplier('Lista de produtos', [], ['NX001', 'NX002', 'NX003']);
-    expect(result.adapter.id).toBe('nix');
+    // Nix House agora usa UUID: nix-house-0000-4000-a000-000000000000
+    expect(result.adapter.id).toBe('nix-house-0000-4000-a000-000000000000');
     expect(result.confianca).toBeGreaterThan(0);
   });
 
@@ -75,7 +82,8 @@ describe('detectSupplier', () => {
 
   it('retorna genérico quando não detecta nenhum', () => {
     const result = detectSupplier('texto aleatório sem padrão');
-    expect(result.adapter.id).toBe('generic');
+    // Genérico usa UUID 00000000-0000-4000-a000-000000000000
+    expect(result.adapter.id).toBe('00000000-0000-4000-a000-000000000000');
     expect(result.confianca).toBe(0);
   });
 

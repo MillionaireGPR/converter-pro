@@ -10,6 +10,8 @@ import { bm36Adapter } from './bm36';
 import { neoFestasAdapter } from './neo-festas';
 import { goalKidsAdapter } from './goal-kids';
 import { clinkAdapter } from './clink';
+import { momentAdapter } from './moment';
+import { flashAdapter } from './flash';
 import { genericAdapter } from './generic';
 
 /** Lista completa de adapters registrados (ordem importa para detecção) */
@@ -20,6 +22,8 @@ const ADAPTERS: SupplierAdapter[] = [
   neoFestasAdapter,
   goalKidsAdapter,
   clinkAdapter,
+  momentAdapter,
+  flashAdapter,
 ];
 
 /** Busca um adapter pelo ID ou nome (case-insensitive) */

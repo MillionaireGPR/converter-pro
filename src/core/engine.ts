@@ -29,6 +29,7 @@ export interface ConversionResultV2 {
     pendentes: number;
     duplicados: number;
   };
+  imageResults?: import('./images/imageTypes').ResultadoExtracaoImagens | null;
 }
 
 /**
@@ -59,6 +60,15 @@ export const processarArquivoV2 = async (
   }
 
   const result: PipelineResult = await runImportPipeline(file, options);
+  
+  // Roda a extração de imagens paralelamente/logo após o pipeline base
+  let imageResults = null;
+  try {
+     const { runImageExtraction } = await import('./images/imageExtractionPipeline');
+     imageResults = await runImageExtraction(file, result.produtosNormalizados);
+  } catch(e) {
+     console.error("[Engine] Erro ao extrair imagens:", e);
+  }
 
   // Converte ProdutoNormalizadoV2 → ProdutoNormalizado (compatibilidade)
   const produtosCompat: ProdutoNormalizado[] = result.produtosNormalizados.map(p => ({
@@ -96,6 +106,7 @@ export const processarArquivoV2 = async (
       pendentes: result.stats.comWarning,
       duplicados: result.stats.duplicados,
     },
+    imageResults,
   };
 };
 

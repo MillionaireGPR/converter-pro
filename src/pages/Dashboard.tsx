@@ -1,4 +1,4 @@
-import { FileUp, Package, Download, BookOpen, Building2, AlertTriangle, TrendingUp, ShoppingCart, ArrowRight } from "lucide-react";
+import { FileUp, Package, Download, BookOpen, Building2, AlertTriangle, TrendingUp, ShoppingCart, ArrowRight, Upload, Wrench, FileCheck, Rocket, Lightbulb } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,83 @@ export default function Dashboard() {
           <FileUp className="h-4 w-4 mr-2" /> Novo Upload
         </Button>
       </div>
+
+      {/* Mini Tutorial - Passo a Passo */}
+      <Card className="shadow-card border-l-4 border-l-primary bg-gradient-to-r from-primary/5 to-transparent">
+        <CardHeader className="pb-2">
+          <div className="flex items-center gap-2">
+            <Lightbulb className="h-5 w-5 text-primary" />
+            <CardTitle className="text-base font-semibold">Como Usar o Converter-Pro em 4 Passos</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Passo 1 */}
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-card hover:bg-muted/30 transition-colors">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                <span className="text-sm font-bold text-primary">1</span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <Upload className="h-4 w-4 text-primary" />
+                  <span className="font-semibold text-sm">Envie</span>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Clique em "Novo Upload" e envie a planilha do fornecedor com os produtos.
+                </p>
+              </div>
+            </div>
+
+            {/* Passo 2 */}
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-card hover:bg-muted/30 transition-colors">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                <span className="text-sm font-bold text-primary">2</span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <Wrench className="h-4 w-4 text-primary" />
+                  <span className="font-semibold text-sm">Ajuste</span>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Vá em "Base Padronizada" e corrija códigos, preços ou dados que faltam.
+                </p>
+              </div>
+            </div>
+
+            {/* Passo 3 */}
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-card hover:bg-muted/30 transition-colors">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                <span className="text-sm font-bold text-primary">3</span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <FileCheck className="h-4 w-4 text-primary" />
+                  <span className="font-semibold text-sm">Verifique</span>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Em "Exportações Mercos" confira se tudo está certo antes de gerar o arquivo.
+                </p>
+              </div>
+            </div>
+
+            {/* Passo 4 */}
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-card hover:bg-muted/30 transition-colors">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                <span className="text-sm font-bold text-primary">4</span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <Rocket className="h-4 w-4 text-primary" />
+                  <span className="font-semibold text-sm">Pronto!</span>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Baixe a planilha pronta para o Mercos e importe no sistema. Sucesso!
+                </p>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard title="Arquivos Processados" value={dashboard.arquivosProcessados} icon={FileUp} trend={dashboard.arquivosProcessados > 0 ? `${dashboard.arquivosProcessados} processado(s)` : "Nenhum ainda"} trendUp={dashboard.arquivosProcessados > 0} accent />
