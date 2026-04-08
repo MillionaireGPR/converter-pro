@@ -7,6 +7,7 @@ import { toast } from "sonner";
 // ===== CONSTANTS =====
 const LOCAL_STORAGE_KEY = 'converter-pro-ultima-conversao';
 const LAST_CONVERSION_KEY = 'converter-pro-last-conversion-timestamp';
+const CONVERSOES_STORAGE_KEY = 'converter-pro-conversoes-salvas';
 
 // ===== TYPES =====
 
@@ -89,6 +90,22 @@ export interface OperacaoHistorico {
   tipoConversao: string;
   qtdItens: number;
   status: 'concluído' | 'erro' | 'processando';
+  produtos?: Produto[]; // Produtos salvos para reabrir
+  imagens?: { id: string; url: string; nome: string }[]; // URLs das imagens extraídas
+  headersDetectados?: string[]; // Headers do arquivo para regras
+}
+
+// Interface para conversões salvas no histórico
+export interface ConversaoSalva {
+  id: string;
+  arquivo: string;
+  fornecedor: string;
+  data: string;
+  produtos: Produto[];
+  imagens: { id: string; url: string; nome: string; temporaryId?: string }[];
+  headers: string[];
+  totalProdutos: number;
+  status: 'concluído' | 'erro';
 }
 
 export interface ExportacaoMercos {
@@ -248,6 +265,7 @@ interface AppContextType {
   catalogosGerados: CatalogoGerado[];
   pedidosConvertidos: PedidoConvertido[];
   historico: OperacaoHistorico[];
+  conversoesSalvas: ConversaoSalva[]; // Histórico completo de conversões
 
   // Computed
   dashboard: DashboardData;
@@ -275,6 +293,11 @@ interface AppContextType {
   getFornecedorByName: (nome: string) => Fornecedor | undefined;
   seedSuppliers: () => Promise<void>;
   limparBase: (fornecedorNome?: string) => Promise<void>;
+  // Novas ações para histórico de conversões
+  salvarConversao: (dados: Omit<ConversaoSalva, 'id' | 'data'>) => Promise<string>;
+  reabrirConversao: (id: string) => Promise<ConversaoSalva | null>;
+  excluirConversao: (id: string) => Promise<void>;
+  exportarImagensConversao: (id: string) => Promise<{ sucesso: boolean; zipBlob?: Blob; mensagem: string }>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -297,6 +320,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [catalogosGerados, setCatalogosGerados] = useState<CatalogoGerado[]>([]);
   const [pedidosConvertidos, setPedidosConvertidos] = useState<PedidoConvertido[]>([]);
   const [historico, setHistorico] = useState<OperacaoHistorico[]>([]);
+  const [conversoesSalvas, setConversoesSalvas] = useState<ConversaoSalva[]>([]);
   const [detectedHeaders, setDetectedHeaders] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -394,6 +418,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
           { id: "00000000-0000-4000-a000-000000000003", nome: "Tramontina", tipoArquivo: "Excel", frequencia: "Semanal", descontoPadrao: 0, ipiPadrao: 0, ultimoProcessamento: "", totalProdutos: 0, status: "ativo" }
         ]);
       } finally {
+        // 4. Carregar conversões salvas do localStorage
+        try {
+          const conversoesSalvasRaw = localStorage.getItem(CONVERSOES_STORAGE_KEY);
+          if (conversoesSalvasRaw) {
+            const conversoes = JSON.parse(conversoesSalvasRaw);
+            setConversoesSalvas(conversoes);
+            console.log(`[Flow MVP] Carregadas ${conversoes.length} conversões do histórico local`);
+          }
+        } catch (e) {
+          console.warn('[Flow MVP] Erro ao carregar conversões do localStorage:', e);
+        }
         setIsLoading(false);
       }
     }
@@ -452,6 +487,156 @@ export function AppProvider({ children }: { children: ReactNode }) {
       toast.error("Erro ao salvar histórico.");
     }
   }, []);
+
+  // === salvarConversao ===
+  const salvarConversao = useCallback(async (dados: Omit<ConversaoSalva, 'id' | 'data'>): Promise<string> => {
+    try {
+      const id = genId();
+      const novaConversao: ConversaoSalva = {
+        ...dados,
+        id,
+        data: now(),
+      };
+
+      // Salvar no estado
+      setConversoesSalvas(prev => {
+        const atualizado = [novaConversao, ...prev].slice(0, 50); // Manter apenas últimas 50
+        // Persistir no localStorage
+        try {
+          localStorage.setItem(CONVERSOES_STORAGE_KEY, JSON.stringify(atualizado));
+        } catch (e) {
+          console.warn('[Flow MVP] Erro ao salvar conversões no localStorage:', e);
+        }
+        return atualizado;
+      });
+
+      console.log(`[Flow MVP] Conversão salva: ${id} - ${dados.arquivo} (${dados.totalProdutos} produtos)`);
+      toast.success(`Conversão salva no histórico: ${dados.arquivo}`);
+      return id;
+    } catch (error) {
+      console.error("Erro ao salvar conversão:", error);
+      toast.error("Erro ao salvar conversão no histórico");
+      throw error;
+    }
+  }, []);
+
+  // === reabrirConversao ===
+  const reabrirConversao = useCallback(async (id: string): Promise<ConversaoSalva | null> => {
+    try {
+      const conversao = conversoesSalvas.find(c => c.id === id);
+      if (!conversao) {
+        toast.error("Conversão não encontrada no histórico");
+        return null;
+      }
+
+      // Carregar produtos da conversão para o estado atual
+      if (conversao.produtos && conversao.produtos.length > 0) {
+        setProdutosPadronizados(prev => {
+          // Evitar duplicatas
+          const existingIds = new Set(prev.map(p => p.id));
+          const novosProdutos = conversao.produtos.filter(p => !existingIds.has(p.id));
+          return [...novosProdutos, ...prev];
+        });
+      }
+
+      // Atualizar headers detectados
+      if (conversao.headers && conversao.headers.length > 0) {
+        setDetectedHeaders(conversao.headers);
+      }
+
+      console.log(`[Flow MVP] Conversão reaberta: ${id} - ${conversao.arquivo} (${conversao.totalProdutos} produtos)`);
+      toast.success(`Conversão reaberta: ${conversao.arquivo}`);
+      return conversao;
+    } catch (error) {
+      console.error("Erro ao reabrir conversão:", error);
+      toast.error("Erro ao reabrir conversão");
+      return null;
+    }
+  }, [conversoesSalvas]);
+
+  // === excluirConversao ===
+  const excluirConversao = useCallback(async (id: string): Promise<void> => {
+    try {
+      setConversoesSalvas(prev => {
+        const atualizado = prev.filter(c => c.id !== id);
+        // Atualizar localStorage
+        try {
+          localStorage.setItem(CONVERSOES_STORAGE_KEY, JSON.stringify(atualizado));
+        } catch (e) {
+          console.warn('[Flow MVP] Erro ao atualizar conversões no localStorage:', e);
+        }
+        return atualizado;
+      });
+
+      console.log(`[Flow MVP] Conversão excluída: ${id}`);
+      toast.success("Conversão removida do histórico");
+    } catch (error) {
+      console.error("Erro ao excluir conversão:", error);
+      toast.error("Erro ao excluir conversão");
+      throw error;
+    }
+  }, []);
+
+  // === exportarImagensConversao ===
+  const exportarImagensConversao = useCallback(async (id: string): Promise<{ sucesso: boolean; zipBlob?: Blob; mensagem: string }> => {
+    try {
+      const conversao = conversoesSalvas.find(c => c.id === id);
+      if (!conversao) {
+        return { sucesso: false, mensagem: "Conversão não encontrada" };
+      }
+
+      if (!conversao.imagens || conversao.imagens.length === 0) {
+        return { sucesso: false, mensagem: "Nenhuma imagem disponível nesta conversão" };
+      }
+
+      // Importar JSZip dinamicamente
+      const JSZip = (await import('jszip')).default;
+      const zip = new JSZip();
+      const pastaImagens = zip.folder('imagens');
+
+      let sucessos = 0;
+      let falhas = 0;
+
+      // Adicionar cada imagem ao ZIP
+      for (const img of conversao.imagens) {
+        try {
+          if (img.url && img.url.startsWith('data:')) {
+            // Extrair dados base64
+            const base64Data = img.url.split(',')[1];
+            if (base64Data && pastaImagens) {
+              pastaImagens.file(img.nome, base64Data, { base64: true });
+              sucessos++;
+            }
+          } else if (img.url && img.url.startsWith('blob:')) {
+            // Fetch blob URL
+            const response = await fetch(img.url);
+            const blob = await response.blob();
+            if (pastaImagens) {
+              pastaImagens.file(img.nome, blob);
+              sucessos++;
+            }
+          }
+        } catch (e) {
+          console.warn(`[Flow MVP] Erro ao adicionar imagem ${img.nome}:`, e);
+          falhas++;
+        }
+      }
+
+      if (sucessos === 0) {
+        return { sucesso: false, mensagem: "Nenhuma imagem pôde ser exportada" };
+      }
+
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      return {
+        sucesso: true,
+        zipBlob,
+        mensagem: `${sucessos} imagens exportadas com sucesso${falhas > 0 ? ` (${falhas} falhas)` : ''}`
+      };
+    } catch (error) {
+      console.error("Erro ao exportar imagens:", error);
+      return { sucesso: false, mensagem: "Erro ao criar arquivo ZIP" };
+    }
+  }, [conversoesSalvas]);
 
   // === processarArquivo ===
   const processarArquivo = useCallback((fornecedorId: string, tipoArquivo: string) => {
@@ -993,12 +1178,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   return (
     <AppContext.Provider value={{
       fornecedores, arquivos, produtosPadronizados, regrasMapeamento, descontos,
-      exportacoesMercos, catalogosGerados, pedidosConvertidos, historico,
+      exportacoesMercos, catalogosGerados, pedidosConvertidos, historico, conversoesSalvas,
       dashboard, detectedHeaders, isLoading,
       processarArquivo, addProdutos, addProdutosNormalizados, updateProduto, validarProdutos, aplicarDesconto, aplicarIpi,
       exportarMercos, gerarCatalogo, converterPedido, registrarHistorico,
       updateFornecedor, removeFornecedor, addRegra, updateRegra, removeRegra, getFornecedorByName, seedSuppliers, limparBase,
-      setDetectedHeaders
+      setDetectedHeaders,
+      salvarConversao, reabrirConversao, excluirConversao, exportarImagensConversao
     }}>
       {children}
     </AppContext.Provider>

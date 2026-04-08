@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { Upload, FileSpreadsheet, FileText, CheckCircle, AlertCircle, ArrowRight, Loader2, File as FileIcon, Info } from "lucide-react";
+import { Upload, FileSpreadsheet, FileText, CheckCircle, AlertCircle, ArrowRight, Loader2, File as FileIcon, Info, History, Image, RotateCcw, Trash2, Clock, Package } from "lucide-react";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useApp, Produto } from "@/context/AppContext";
 import { toast } from "sonner";
@@ -21,7 +21,7 @@ import { buildAndDownloadZip } from "@/core/images/imageZipBuilder";
 import { ResultadoExtracaoImagens } from "@/core/images/imageTypes";
 
 export default function ConversaoProdutos() {
-  const { fornecedores, addProdutosNormalizados, registrarHistorico, setDetectedHeaders } = useApp();
+  const { fornecedores, addProdutosNormalizados, registrarHistorico, setDetectedHeaders, salvarConversao, conversoesSalvas, reabrirConversao, excluirConversao } = useApp();
   const [fornecedor, setFornecedor] = useState("");
   const [novoFornecedor, setNovoFornecedor] = useState("");
   const [tipoArquivo, setTipoArquivo] = useState("");
@@ -33,8 +33,107 @@ export default function ConversaoProdutos() {
   const [importMeta, setImportMeta] = useState<ImportMetadata | null>(null);
   const [imageResult, setImageResult] = useState<ResultadoExtracaoImagens | null>(null);
   const [isZipping, setIsZipping] = useState(false);
+  const [reabrindoId, setReabrindoId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+
+  // Pegar últimas 5 conversões
+  const ultimasConversoes = conversoesSalvas.slice(0, 5);
+
+  // Handler para reabrir conversão do histórico
+  const handleReabrirDoHistorico = async (conversaoId: string) => {
+    setReabrindoId(conversaoId);
+    try {
+      await reabrirConversao(conversaoId);
+      toast.success("Conversão carregada! Redirecionando...");
+      navigate('/base');
+    } catch (error) {
+      toast.error("Erro ao reabrir conversão");
+    } finally {
+      setReabrindoId(null);
+    }
+  };
+
+  // Handler para baixar imagens da conversão
+  const handleBaixarImagensHistorico = async (conversaoId: string, nomeArquivo: string) => {
+    const conversao = conversoesSalvas.find(c => c.id === conversaoId);
+    if (!conversao || !conversao.imagens || conversao.imagens.length === 0) {
+      toast.error("Nenhuma imagem disponível para esta conversão");
+      return;
+    }
+
+    setIsZipping(true);
+    try {
+      const JSZip = (await import('jszip')).default;
+      const { saveAs } = await import('file-saver');
+      const zip = new JSZip();
+      
+      // Criar pasta com nome do arquivo
+      const folderName = nomeArquivo.replace(/\.[^/.]+$/, "");
+      const folder = zip.folder(folderName);
+      
+      if (!folder) throw new Error("Erro ao criar pasta no ZIP");
+
+      // Adicionar cada imagem - converte base64 direto para blob
+      let adicionadas = 0;
+      for (const img of conversao.imagens) {
+        if (img.url && img.url.startsWith('data:')) {
+          try {
+            // Converter dataURL (base64) direto para blob
+            const base64Data = img.url.split(',')[1];
+            if (base64Data) {
+              const byteCharacters = atob(base64Data);
+              const byteArrays = [];
+              for (let i = 0; i < byteCharacters.length; i++) {
+                byteArrays.push(byteCharacters.charCodeAt(i));
+              }
+              const byteArray = new Uint8Array(byteArrays);
+              const blob = new Blob([byteArray], { type: 'image/jpeg' });
+              folder.file(img.nome, blob);
+              adicionadas++;
+            }
+          } catch (e) {
+            console.warn(`Não foi possível processar imagem ${img.nome}:`, e);
+          }
+        } else if (img.url) {
+          // Se não for dataURL, tenta fetch
+          try {
+            const response = await fetch(img.url);
+            const blob = await response.blob();
+            folder.file(img.nome, blob);
+            adicionadas++;
+          } catch (e) {
+            console.warn(`Não foi possível baixar imagem ${img.nome}:`, e);
+          }
+        }
+      }
+
+      if (adicionadas === 0) {
+        toast.error("Nenhuma imagem pôde ser baixada");
+        return;
+      }
+
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      saveAs(zipBlob, `${folderName}_imagens.zip`);
+      toast.success(`${adicionadas} imagens baixadas!`);
+    } catch (error) {
+      console.error("Erro ao criar ZIP:", error);
+      toast.error("Erro ao gerar arquivo ZIP");
+    } finally {
+      setIsZipping(false);
+    }
+  };
+
+  // Handler para excluir conversão
+  const handleExcluirConversaoHistorico = async (conversaoId: string) => {
+    if (!confirm("Tem certeza que deseja excluir esta conversão do histórico?")) return;
+    try {
+      await excluirConversao(conversaoId);
+      toast.success("Conversão removida do histórico");
+    } catch (error) {
+      toast.error("Erro ao excluir conversão");
+    }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -120,7 +219,49 @@ export default function ConversaoProdutos() {
       await addProdutosNormalizados(result.produtos);
       setProgress(85);
 
-      // Registra histórico
+      // Preparar dados da conversão para salvar no histórico
+      // CORREÇÃO: Usar result.imageResults.images (ImagemAssociadaProduto)
+      const imagensParaSalvar = result.imageResults?.images?.map(img => ({
+        id: img.sku,
+        nome: img.imageFileNameFinal,
+        url: img.imageDataUrl || '',
+        temporaryId: img.sku
+      })) || [];
+
+      // Mapear produtos normalizados para o formato de conversão
+      const produtosParaSalvar: Produto[] = result.produtos.map(p => ({
+        id: p.codigo || p.codigoOriginal,
+        fornecedor: supplier.nome,
+        codigoOriginal: p.codigoOriginal,
+        codigoFinal: p.codigo || p.codigoOriginal,
+        nome: p.nome,
+        descricao: p.descricaoComplementar || '',
+        precoBase: p.precoBase,
+        descontoPercentual: p.descontoPercentual || 0,
+        precoFinal: p.precoFinal,
+        ipi: p.ipi || 0,
+        unidade: p.unidade,
+        qtdCaixa: p.quantidadeCaixa,
+        categoria: p.categoria || '',
+        embalagem: p.embalagem || '',
+        status: p.status as any,
+        erros: p.erros || [],
+        imagemUrl: p.imagemUrl || '',
+        temImagem: !!p.imagemUrl,
+      }));
+
+      // Salvar conversão completa no histórico (localStorage)
+      await salvarConversao({
+        arquivo: selectedFile.name,
+        fornecedor: supplier.nome,
+        produtos: produtosParaSalvar,
+        imagens: imagensParaSalvar,
+        headers: result.metadata.camposDetectados,
+        totalProdutos: result.produtos.length,
+        status: 'concluído'
+      });
+
+      // Registra histórico no banco
       await registrarHistorico({
         arquivo: selectedFile.name,
         fornecedor: supplier.nome,
@@ -166,12 +307,12 @@ export default function ConversaoProdutos() {
         <p className="text-sm text-muted-foreground mt-1">Envie arquivos de fornecedores para processamento automático</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card className="shadow-card">
-          <CardHeader><CardTitle className="text-base font-semibold">Upload de Arquivo</CardTitle></CardHeader>
-          <CardContent className="space-y-5">
+<div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Coluna da Esquerda: Upload */}
+        <Card className="shadow-card lg:col-span-2">
+          <CardContent className="space-y-4">
             <div
-              className={`border-2 border-dashed rounded-xl p-10 text-center transition-all cursor-pointer ${
+              className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer ${
                 dragOver ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40 hover:bg-accent/30'
               } ${selectedFile ? 'border-success/50 bg-success/5' : ''}`}
               onDragOver={e => { e.preventDefault(); setDragOver(true); }}
@@ -195,13 +336,13 @@ export default function ConversaoProdutos() {
                 accept={ACCEPTED_FILE_TYPES} 
                 className="hidden" 
               />
-              <div className={`w-14 h-14 rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-sm ${selectedFile ? 'bg-success text-success-foreground' : 'gradient-primary text-primary-foreground'}`}>
-                {selectedFile ? <FileSpreadsheet className="h-6 w-6" /> : <Upload className="h-6 w-6" />}
+              <div className={`w-12 h-12 rounded-xl mx-auto mb-3 flex items-center justify-center shadow-sm ${selectedFile ? 'bg-success text-success-foreground' : 'gradient-primary text-primary-foreground'}`}>
+                {selectedFile ? <FileSpreadsheet className="h-5 w-5" /> : <Upload className="h-5 w-5" />}
               </div>
               <p className="text-sm font-semibold text-foreground">
-                {selectedFile ? selectedFile.name : 'Arraste o arquivo ou clique para selecionar'}
+                {selectedFile ? selectedFile.name : 'Arraste ou clique para selecionar'}
               </p>
-              <p className="text-xs text-muted-foreground mt-1.5">
+              <p className="text-xs text-muted-foreground mt-1">
                 {selectedFile ? `${(selectedFile.size / 1024).toFixed(1)} KB` : '.xlsx, .xls, .csv, .pdf — máx 50MB'}
               </p>
             </div>
@@ -380,6 +521,93 @@ export default function ConversaoProdutos() {
               )}
             </CardContent>
           </Card>
+        )}
+
+        {/* Coluna da Direita: Histórico (apenas quando idle) */}
+        {state === 'idle' && ultimasConversoes.length > 0 && (
+          <div className="space-y-4">
+            <Card className="shadow-card border-l-2 border-l-primary">
+              <CardHeader className="py-3 px-4">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <History className="h-4 w-4 text-primary" />
+                  Últimas Conversões
+                  <Badge variant="secondary" className="ml-auto text-[10px]">{ultimasConversoes.length}</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="divide-y divide-border">
+                  {ultimasConversoes.map((conversao) => (
+                    <div 
+                      key={conversao.id} 
+                      className="px-3 py-2 flex items-center gap-2 hover:bg-accent/30 transition-colors group"
+                    >
+                      {/* Info compacta */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium truncate" title={conversao.arquivo}>
+                          {conversao.arquivo.length > 25 ? conversao.arquivo.substring(0, 22) + '...' : conversao.arquivo}
+                        </p>
+                        <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                          <span>{conversao.fornecedor}</span>
+                          <span>•</span>
+                          <span>{conversao.totalProdutos} prod</span>
+                          {conversao.imagens && conversao.imagens.length > 0 && (
+                            <>
+                              <span>•</span>
+                              <span className="text-primary">{conversao.imagens.length} img</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {/* Ações compactas */}
+                      <div className="flex items-center gap-0.5">
+                        {/* Botão Reabrir */}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => handleReabrirDoHistorico(conversao.id)}
+                          disabled={reabrindoId === conversao.id}
+                          title="Reabrir base"
+                        >
+                          {reabrindoId === conversao.id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <RotateCcw className="h-3 w-3" />
+                          )}
+                        </Button>
+                        
+                        {/* Botão Baixar Imagens */}
+                        {conversao.imagens && conversao.imagens.length > 0 && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-primary"
+                            onClick={() => handleBaixarImagensHistorico(conversao.id, conversao.arquivo)}
+                            disabled={isZipping}
+                            title={`Baixar ${conversao.imagens.length} imagens`}
+                          >
+                            <Image className="h-3 w-3" />
+                          </Button>
+                        )}
+                        
+                        {/* Botão Excluir */}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-destructive/70 hover:text-destructive"
+                          onClick={() => handleExcluirConversaoHistorico(conversao.id)}
+                          title="Excluir"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         )}
       </div>
     </div>
