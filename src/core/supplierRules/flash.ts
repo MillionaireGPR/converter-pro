@@ -15,7 +15,7 @@ import { ProdutoBruto } from '../types/productPipeline';
 export const flashAdapter: SupplierAdapter = {
   id: 'f0000000-0000-4000-a000-000000000000',
   nome: 'Flash',
-  aliases: ['flash', 'flask', 'flasch'],
+  aliases: ['flash', 'flask', 'flasch', 'flash goods', 'flashgoods', 'flash good'],
 
   fieldAliases: CLINK_FAMILY_FIELD_ALIASES,
 
