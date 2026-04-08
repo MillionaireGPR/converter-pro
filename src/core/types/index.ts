@@ -21,6 +21,11 @@ export interface ProdutoNormalizado {
   erros: string[];
   imagemUrl?: string;
   temImagem?: boolean;
+  // Campos visuais
+  visualCategory?: string;
+  isPromotional?: boolean;
+  isFixedPrice?: boolean;
+  informacoesAdicionais?: string;
 }
 
 export interface SupplierConfig {

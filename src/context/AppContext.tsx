@@ -48,6 +48,11 @@ export interface Produto {
   precoFinal: number;
   ipi: number;
   unidade: string;
+  // Campos visuais (família CLINK/FLASH/MOMENT)
+  visualCategory?: 'promocional' | 'preco-fixo' | 'novidade-reposicao' | 'padrao';
+  isPromotional?: boolean;
+  isFixedPrice?: boolean;
+  additionalInfo?: string;
   qtdCaixa: number;
   categoria: string;
   embalagem: string;
@@ -346,7 +351,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
               status: p.status as any,
               erros: (p.errors as any) || [],
               imagemUrl: p.image_url || '',
-              temImagem: p.has_image || false
+              temImagem: p.has_image || false,
+              // Campos visuais reidratados do banco
+              visualCategory: (p as any).visual_category || undefined,
+              isPromotional: (p as any).is_promotional || false,
+              isFixedPrice: (p as any).is_fixed_price || false,
+              additionalInfo: (p as any).additional_info || '',
             };
           }));
         }
@@ -543,27 +553,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return {
           supplier_id: sId,
           supplier_name: p.fornecedor,
-        original_code: p.codigoOriginal,
-        final_code: p.codigoFinal,
-        name: p.nome,
-        description: p.descricao,
-        base_price: p.precoBase,
-        discount_percent: p.descontoPercentual,
-        final_price: p.precoFinal,
-        ipi: p.ipi,
-        unit: p.unidade,
-        box_qty: p.qtdCaixa,
-        categoria: p.categoria,
-        embalagem: p.embalagem,
-        status: p.status,
-        errors: p.erros as any,
-        image_url: p.imagemUrl || null,
-          has_image: p.temImagem || false
+          original_code: p.codigoOriginal,
+          final_code: p.codigoFinal,
+          name: p.nome,
+          description: p.descricao,
+          base_price: p.precoBase,
+          discount_percent: p.descontoPercentual,
+          final_price: p.precoFinal,
+          ipi: p.ipi,
+          unit: p.unidade,
+          box_qty: p.qtdCaixa,
+          categoria: p.categoria,
+          embalagem: p.embalagem,
+          status: p.status,
+          errors: p.erros as any,
+          image_url: p.imagemUrl || null,
+          has_image: p.temImagem || false,
+          // Campos visuais
+          visual_category: p.visualCategory || null,
+          is_promotional: p.isPromotional || false,
+          is_fixed_price: p.isFixedPrice || false,
+          additional_info: p.additionalInfo || null,
         };
       });
 
       console.log(`[Flow MVP] Tentando salvar ${inserts.length} produtos no Supabase...`);
-      const { data, error } = await supabase.from('standardized_products').insert(inserts).select();
+      const { data, error } = await (supabase.from('standardized_products') as any).insert(inserts).select();
       
       if (error) {
         console.error(`[Flow MVP] Falha no Supabase. Usando Fallback Local para ${prods.length} itens.`, error);
@@ -578,6 +593,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           fornecedorId: p.supplier_id || undefined,
           codigoOriginal: p.original_code,
           codigoFinal: p.final_code || '',
+          visualCategory: (p as any).visual_category || undefined,
+          isPromotional: (p as any).is_promotional || false,
+          isFixedPrice: (p as any).is_fixed_price || false,
+          additionalInfo: (p as any).additional_info || '',
           nome: p.name,
           descricao: p.description || '',
           precoBase: p.base_price || 0,
@@ -629,13 +648,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // === addProdutosNormalizados ===
   const addProdutosNormalizados = useCallback(async (prods: ProdutoNormalizado[]) => {
     console.log(`[Flow MVP] Recebidos ${prods.length} produtos do motor para normalização visual.`);
-    const mappedProds: Produto[] = prods.map(p => ({
+    const mappedProds: Produto[] = prods.map(p => {
+      // Extrair campos visuais do produto (gerados pela família CLINK)
+      const anyProd = p as any;
+      return {
       id: genId(),
       fornecedor: p.fornecedor,
       fornecedorId: p.fornecedorId,
       codigoOriginal: p.codigoOriginal,
       codigoFinal: p.codigo,
-      nome: p.nome,
+      nome: p.nome,  // Já contém ***PROMOCAO*** ou ***PRECO FIXO*** se aplicável
       descricao: p.descricaoComplementar || '',
       precoBase: p.precoBase,
       descontoPercentual: p.descontoPercentual || 0,
@@ -648,9 +670,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       embalagem: p.embalagem || '',
       status: p.status as StatusProduto,
       erros: p.erros || [],
+      // Campos visuais mapeados do pipeline CLINK
+      visualCategory: anyProd.visualCategory || anyProd.visual_category || undefined,
+      isPromotional: anyProd.isPromotional || false,
+      isFixedPrice: anyProd.isFixedPrice || false,
+      additionalInfo: anyProd.informacoesAdicionais || anyProd.additionalInfo || '',
       imagemUrl: p.imagemUrl || '',
-      temImagem: p.temImagem || false
-    }));
+      temImagem: p.temImagem || false,
+      };
+    });
 
     await addProdutos(mappedProds);
     
@@ -681,7 +709,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
 
       console.log(`[Flow MVP] Atualizando produto ${id}:`, updates);
-      const { error } = await supabase.from('standardized_products').update({
+      const { error } = await (supabase.from('standardized_products') as any).update({
         final_code: updated.codigoFinal,
         name: updated.nome,
         description: updated.descricao,
@@ -694,9 +722,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         categoria: updated.categoria,
         embalagem: updated.embalagem,
         status: updated.status,
-        errors: updated.erros as any,
+        errors: updated.erros,
         image_url: updated.imagemUrl || null,
-        has_image: updated.temImagem || false
+        has_image: updated.temImagem || false,
+        visual_category: updated.visualCategory || null,
+        is_promotional: updated.isPromotional || false,
+        is_fixed_price: updated.isFixedPrice || false,
+        additional_info: updated.additionalInfo || null,
       }).eq('id', id);
 
       if (error) {
@@ -737,9 +769,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const finalStatus = result.status as StatusProduto;
         const finalCode = result.status === 'validado' ? (p.codigoFinal || p.codigoOriginal) : p.codigoFinal;
 
-        const { error } = await supabase.from('standardized_products').update({
+        const { error } = await (supabase.from('standardized_products') as any).update({
           status: finalStatus,
-          errors: result.erros as any,
+          errors: result.erros,
           final_code: finalCode
         }).eq('id', id);
 

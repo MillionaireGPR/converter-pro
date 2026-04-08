@@ -65,9 +65,25 @@ export const processarArquivoV2 = async (
   let imageResults = null;
   try {
      const { runImageExtraction } = await import('./images/imageExtractionPipeline');
-     imageResults = await runImageExtraction(file, result.produtosNormalizados);
+     
+     // Timeout de segurança de 30s para não travar a aplicação, especialmente com PDFs
+     const TIMEOUT_MS = 30000;
+     console.log(`[Engine] Iniciando extração de imagens com timeout de ${TIMEOUT_MS}ms...`);
+     
+     imageResults = await Promise.race([
+       runImageExtraction(file, result.produtosNormalizados),
+       new Promise<null>((resolve) => 
+         setTimeout(() => {
+           console.warn(`[Engine] Timeout na extração de imagens após ${TIMEOUT_MS}ms`);
+           resolve(null);
+         }, TIMEOUT_MS)
+       )
+     ]);
+     
   } catch(e) {
      console.error("[Engine] Erro ao extrair imagens:", e);
+  } finally {
+     console.log("[Engine] Etapa de extração de imagens finalizada.");
   }
 
   // Converte ProdutoNormalizadoV2 → ProdutoNormalizado (compatibilidade)
@@ -92,6 +108,10 @@ export const processarArquivoV2 = async (
     erros: p.erros,
     imagemUrl: p.imagemUrl,
     temImagem: p.temImagem,
+    visualCategory: p.visualCategory,
+    isPromotional: p.isPromotional,
+    isFixedPrice: p.isFixedPrice,
+    informacoesAdicionais: p.informacoesAdicionais,
   }));
 
   return {

@@ -87,13 +87,24 @@ const createEmptyMercosRow = (): ProdutoMercos => {
 export const normalizeToMercos = (p: ProdutoNormalizadoV2): ProdutoMercos => {
   const row = createEmptyMercosRow();
 
-  row['Código do produto (recomendado)'] = sanitizeForExport(p.codigo || p.codigoOriginal || '');
-  row['Nome do produto (obrigatório)'] = sanitizeForExport(normalizeSpaces(p.nome || ''));
-  row['Preço de Tabela (obrigatório)'] = formatDecimal(p.precoFinal > 0 ? p.precoFinal : p.precoBase, 2);
-  row['IPI (opcional - não informar o símbolo %)'] =
-    p.ipi !== undefined && p.ipi !== null && p.ipi > 0 ? formatDecimal(p.ipi, 2) : '';
-  row['Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)'] =
-    buildInformacoesAdicionais(p);
+  const finalCode = sanitizeForExport(p.codigo || p.codigoOriginal || '');
+  const finalName = sanitizeForExport(normalizeSpaces(p.nome || ''));
+  const finalPrice = formatDecimal(p.precoFinal > 0 ? p.precoFinal : p.precoBase, 2);
+  const finalIpi = p.ipi !== undefined && p.ipi !== null && p.ipi > 0 ? formatDecimal(p.ipi, 2) : '';
+  
+  // Garantir que additional_info da etapa visual venha se existir
+  const builtAdicionais = buildInformacoesAdicionais(p);
+  const finalAddInfo = p.informacoesAdicionais 
+    ? `${p.informacoesAdicionais} | ${builtAdicionais}`.replace(/\|\s*$/, '').trim() 
+    : builtAdicionais;
+
+  row['Código do produto (recomendado)'] = finalCode;
+  row['Nome do produto (obrigatório)'] = finalName;
+  row['Preço de Tabela (obrigatório)'] = finalPrice;
+  row['IPI (opcional - não informar o símbolo %)'] = finalIpi;
+  row['Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)'] = finalAddInfo;
+
+  console.log(`[Mercos Export] sku=${finalCode} nomeFinal="${finalName}" preco=${finalPrice} ipi=${finalIpi || 0}`);
 
   return row;
 };

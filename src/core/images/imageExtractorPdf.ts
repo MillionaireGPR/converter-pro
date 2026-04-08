@@ -21,7 +21,7 @@ export const extractImagesFromPdf = async (
 ): Promise<ImagemExtraida[]> => {
   const images: ImagemExtraida[] = [];
   const startTime = Date.now();
-  const TIMEOUT_MS = 60000; // 60 segundos timeout total
+  const TIMEOUT_MS = 120000; // 120 segundos timeout total
   
   try {
     console.log(`[ImageExtractorPdf] Iniciando extração de imagens do PDF: ${fileName}`);
@@ -54,7 +54,7 @@ export const extractImagesFromPdf = async (
           if (ops.fnArray[j] === pdfjs.OPS.paintImageXObject) {
             const objId = ops.argsArray[j][0];
             
-            // NOVO: Timeout por imagem individual (5 segundos)
+            // NOVO: Timeout por imagem individual (3 segundos)
             const imgData = await Promise.race([
               new Promise<any>((resolve) => {
                 try {
@@ -67,7 +67,7 @@ export const extractImagesFromPdf = async (
                 setTimeout(() => {
                   console.warn(`[ImageExtractorPdf] Timeout ao carregar imagem ${objId} na página ${pageNum}`);
                   resolve(null);
-                }, 5000)
+                }, 3000)
               )
             ]);
             

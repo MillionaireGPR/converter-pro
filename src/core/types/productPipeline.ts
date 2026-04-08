@@ -144,6 +144,11 @@ export interface ProdutoNormalizadoV2 {
   paginaOrigem?: number;
   linhaOrigem?: number;
   confiancaExtracao?: number;
+  // Campos visuais
+  visualCategory?: string;
+  isPromotional?: boolean;
+  isFixedPrice?: boolean;
+  informacoesAdicionais?: string;
 }
 
 /**

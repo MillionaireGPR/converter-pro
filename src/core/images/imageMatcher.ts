@@ -5,9 +5,10 @@ import { ProdutoNormalizadoV2 } from '../types/productPipeline';
 const MIN_CONFIDENCE_THRESHOLD = 0.70; // Mínimo 70% de confiança para aceitar match
 const CONFIDENCE_EXCEL_EXACT = 0.95;   // Match exato por linha Excel
 const CONFIDENCE_EXCEL_FUZZY = 0.85;   // Match aproximado por linha Excel  
-const CONFIDENCE_PDF_SEQUENCE = 0.60;  // Match sequencial PDF (descontado)
+const CONFIDENCE_PDF_SEQUENCE = 0.75;  // Match sequencial PDF (elevado para confiança)
+const CONFIDENCE_NAME_MATCH = 1.0;     // O arquivo já tem o SKU no nome
 
-type MatchType = 'excel-exact' | 'excel-fuzzy' | 'pdf-sequence' | 'rejected';
+type MatchType = 'excel-exact' | 'excel-fuzzy' | 'pdf-sequence' | 'name-match' | 'rejected';
 
 interface MatchCandidate {
   image: ImagemExtraida;
@@ -18,6 +19,13 @@ interface MatchCandidate {
 }
 
 const calculateMatchScore = (img: ImagemExtraida, prod: ProdutoNormalizadoV2): { score: number; type: MatchType; reason?: string } => {
+  const finalCode = (prod.codigo || prod.codigoOriginal || '').toLowerCase().trim();
+  const normalizedFileName = (img.originalName || '').toLowerCase().trim();
+  
+  if (finalCode && normalizedFileName && normalizedFileName.includes(finalCode)) {
+    return { score: CONFIDENCE_NAME_MATCH, type: 'name-match', reason: 'SKU encontrado no nome do arquivo' };
+  }
+
   if (img.sourceType === 'excel' && typeof img.sourceIndex === 'number') {
     if (prod.linhaOrigem === img.sourceIndex) {
       return { score: CONFIDENCE_EXCEL_EXACT, type: 'excel-exact', reason: 'Linha exata' };
