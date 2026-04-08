@@ -307,7 +307,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setIsLoading(true);
         
         // 1. Fornecedores
-        const { data: fornData, error: fornError } = await supabase.from('suppliers').select('*');
+        const { data: fornData, error: fornError } = await (supabase.from('suppliers') as any).select('*');
         if (fornError) throw fornError;
         if (fornData) {
           setFornecedores(fornData.map(f => ({
@@ -324,7 +324,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
 
         // 2. Produtos
-        const { data: prodData, error: prodError } = await supabase.from('standardized_products').select('*');
+        const { data: prodData, error: prodError } = await (supabase.from('standardized_products') as any).select('*');
         if (prodError) throw prodError;
         if (prodData) {
           setProdutosPadronizados(prodData.map(p => {
@@ -362,7 +362,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
 
         // 3. Histórico
-        const { data: histData, error: histError } = await supabase.from('export_history').select('*').order('date', { ascending: false });
+        const { data: histData, error: histError } = await (supabase.from('export_history') as any).select('*').order('date', { ascending: false });
         if (histError) throw histError;
         if (histData) {
           setHistorico(histData.map(h => {
@@ -424,7 +424,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // === registrarHistorico ===
   const registrarHistorico = useCallback(async (op: Omit<OperacaoHistorico, 'id'>) => {
     try {
-      const { data, error } = await supabase.from('export_history').insert({
+      const { data, error } = await (supabase.from('export_history') as any).insert({
         filename: op.arquivo,
         supplier_name: op.fornecedor,
         user_name: op.usuario,
@@ -490,16 +490,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
         { name: 'Irwin', file_type: 'Excel', frequency: 'Mensal', default_discount: 12, default_ipi: 8, status: 'ativo' },
       ];
 
-      const { data: existing } = await supabase.from('suppliers').select('name');
-      const existingNames = existing?.map(s => s.name) || [];
+      const { data: existing } = await (supabase.from('suppliers') as any).select('name');
+      const existingNames = existing?.map((s: any) => s.name) || [];
       const toInsert = defaultSuppliers.filter(s => !existingNames.includes(s.name));
       
       if (toInsert.length > 0) {
-        const { error } = await supabase.from('suppliers').insert(toInsert);
+        const { error } = await (supabase.from('suppliers') as any).insert(toInsert);
         if (error) throw error;
       }
 
-      const { data: updatedForns } = await supabase.from('suppliers').select('*');
+      const { data: updatedForns } = await (supabase.from('suppliers') as any).select('*');
       if (updatedForns) {
         setFornecedores(updatedForns.map(f => ({
           id: f.id, nome: f.name, tipoArquivo: f.file_type || 'Excel', frequencia: f.frequency || 'Semanal',
@@ -533,8 +533,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       console.log(`[Flow MVP] Limpando produtos antigos do fornecedor:`, fornecedoresEnvolvidos);
 
       // 2. Limpa o banco de dados e o estado
-      const { error: delError } = await supabase
-        .from('standardized_products')
+      const { error: delError } = await (supabase.from('standardized_products') as any)
         .delete()
         .in('supplier_name', fornecedoresEnvolvidos);
         
@@ -622,7 +621,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       for (const [name, count] of fornMap.entries()) {
         const f = fornecedores.find(x => x.nome === name);
         if (f && isUUID(f.id)) {
-          await supabase.from('suppliers').update({ 
+          await (supabase.from('suppliers') as any).update({ 
             total_products: f.totalProdutos + count,
             last_processed: new Date().toISOString()
           }).eq('id', f.id);
@@ -630,7 +629,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
 
       // Recarrega fornecedores para garantir sincronia
-      const { data: updatedForns } = await supabase.from('suppliers').select('*');
+      const { data: updatedForns } = await (supabase.from('suppliers') as any).select('*');
       if (updatedForns) {
         setFornecedores(updatedForns.map(f => ({
           id: f.id, nome: f.name, tipoArquivo: f.file_type || 'Excel', frequencia: f.frequency || 'Semanal',
@@ -804,7 +803,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!p) return null;
         const precoFinal = +(p.precoBase * (1 - percentual / 100)).toFixed(2);
         
-        const { error } = await supabase.from('standardized_products').update({
+        const { error } = await (supabase.from('standardized_products') as any).update({
           discount_percent: percentual,
           final_price: precoFinal
         }).eq('id', id);
@@ -847,7 +846,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const p = produtosPadronizados.find(x => x.id === update.id);
         if (!p) return null;
 
-        const { error } = await supabase.from('standardized_products').update({
+        const { error } = await (supabase.from('standardized_products') as any).update({
           ipi: update.ipi
         }).eq('id', update.id);
 
@@ -909,12 +908,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setIsLoading(true);
       if (fornecedorNome) {
         console.log(`[Flow MVP] Limpando base apenas para o fornecedor: ${fornecedorNome}`);
-        const { error } = await supabase.from('standardized_products').delete().eq('supplier_name', fornecedorNome);
+        const { error } = await (supabase.from('standardized_products') as any).delete().eq('supplier_name', fornecedorNome);
         if (error) throw error;
         setProdutosPadronizados(prev => prev.filter(p => p.fornecedor !== fornecedorNome));
       } else {
         console.log(`[Flow MVP] Limpando toda a base de produtos.`);
-        const { error } = await supabase.from('standardized_products').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        const { error } = await (supabase.from('standardized_products') as any).delete().neq('id', '00000000-0000-0000-0000-000000000000');
         if (error) throw error;
         setProdutosPadronizados([]);
       }
@@ -930,7 +929,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // === Fornecedor/Regra CRUD ===
   const updateFornecedor = useCallback(async (id: string, updates: Partial<Fornecedor>) => {
     try {
-      const { error } = await supabase.from('suppliers').update({
+      const { error } = await (supabase.from('suppliers') as any).update({
         name: updates.nome,
         file_type: updates.tipoArquivo,
         frequency: updates.frequencia,
@@ -964,7 +963,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       if (deleteData) {
         // 1. Remove produtos (por ID ou Nome para segurança)
-        await supabase.from('standardized_products').delete().or(`supplier_id.eq.${id},supplier_name.eq.${f.nome}`);
+        await (supabase.from('standardized_products') as any).delete().or(`supplier_id.eq.${id},supplier_name.eq.${f.nome}`);
         setProdutosPadronizados(prev => prev.filter(p => p.fornecedorId !== id && p.fornecedor !== f.nome));
         
         // 2. Remove regras
@@ -972,7 +971,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
 
       // 3. Remove fornecedor
-      const { error } = await supabase.from('suppliers').delete().eq('id', id);
+      const { error } = await (supabase.from('suppliers') as any).delete().eq('id', id);
       if (error) throw error;
 
       setFornecedores(prev => prev.filter(x => x.id !== id));

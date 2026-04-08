@@ -3,7 +3,7 @@
 // Schema fixo, colunas estáveis, ordem imutável.
 // ===================================================================
 
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 import {
   ProdutoMercos,
   MERCOS_EXPORT_COLUMNS,

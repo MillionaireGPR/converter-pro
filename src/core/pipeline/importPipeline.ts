@@ -3,7 +3,7 @@
 // Orquestra: detecção → leitura → extração → normalização → validação
 // ===================================================================
 
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 import {
   TipoArquivo,
   ImportMetadata,
@@ -75,18 +75,26 @@ export function normalizeExcelFontColor(
   }
 
   // 2. Cor do tema
-  if (color.theme !== undefined && themeColors) {
+  if (color.theme !== undefined) {
     const themeIndex = color.theme;
-    const themeColor = themeColors[themeIndex];
-    if (themeColor) {
-      return { color: themeColor, type: 'theme', original: color };
+    
+    // Tentar resolver pelo tema do workbook primeiro
+    if (themeColors && themeColors[themeIndex]) {
+      const resolved = themeColors[themeIndex];
+      console.log(`[FontColor] Tema ${themeIndex} resolvido via workbook: ${resolved}`);
+      return { color: resolved, type: 'theme', original: color };
     }
-    // Fallback para cores de tema padrão conhecidas
+    
+    // Fallback para cores de tema padrão do Office
+    // Ordem padrão: lt1(white), dk1(black), lt2, dk2, accent1-6, hlink, folHlink
     const defaultThemes = [
-      '#000000', '#FFFFFF', '#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF',
-      '#800000', '#008000', '#000080', '#808000', '#800080', '#008080', '#C0C0C0', '#808080'
+      '#FFFFFF', '#000000', '#E7E6E6', '#44546A',
+      '#4472C4', '#ED7D31', '#A5A5A5', '#FFC000',
+      '#5B9BD5', '#70AD47', '#0563C1', '#954F72'
     ];
-    return { color: defaultThemes[themeIndex] || '#000000', type: 'theme', original: color };
+    const resolved = defaultThemes[themeIndex] || '#000000';
+    console.log(`[FontColor] Tema ${themeIndex} resolvido via default: ${resolved}`);
+    return { color: resolved, type: 'theme', original: color };
   }
 
   // 3. Cor indexada (paleta do Excel)
@@ -200,75 +208,94 @@ export function detectVisualCategoryFromFontColor(
 }
 
 /**
- * Extrai estilos de célula do worksheet
+ * Extrai estilos de célula usando ExcelJS (lê cores de fonte corretamente)
+ * SheetJS/xlsx-js-style armazena cell.s como índice numérico ao ler arquivos existentes.
+ * ExcelJS é a única biblioteca confiável para ler cores de fonte no browser.
  */
-function extractCellStyles(worksheet: XLSX.WorkSheet): Map<string, CellStyleInfo> {
+async function extractCellStylesWithExcelJS(fileData: ArrayBuffer): Promise<Map<string, CellStyleInfo>> {
   const styles = new Map<string, CellStyleInfo>();
 
   try {
-    // @ts-ignore - Acessar propriedades internas da worksheet
-    const cells = worksheet;
-
-    console.log(`[CellStyles DEBUG] Iniciando extração de estilos do worksheet`);
-
-    // Percorre todas as células do worksheet
-    for (const cellAddress in cells) {
-      // Pular propriedades especiais do SheetJS
-      if (cellAddress.startsWith('!')) continue;
-
-      // @ts-ignore
-      const cell = cells[cellAddress];
-      if (!cell || !cell.s) continue; // Sem estilo
-
-      const style = cell.s;
-      const styleInfo: CellStyleInfo = {
-        address: cellAddress,
-        bold: style.font?.bold,
-        italic: style.font?.italic,
-      };
-
-      // Extrair cor da fonte
-      if (style.font && style.font.color) {
-        const normalized = normalizeExcelFontColor(style.font.color);
-        styleInfo.fontColor = normalized.color;
-        styleInfo.fontColorTheme = style.font.color.theme;
-        styleInfo.fontColorIndexed = style.font.color.indexed;
-        
-        // Log para debug de cores
-        if (normalized.color !== 'default' && normalized.color !== '#000000') {
-          console.log(`[CellStyles DEBUG] Célula ${cellAddress}: fontColor original=${JSON.stringify(style.font.color)}, normalizado=${normalized.color}`);
-        }
-      }
-
-      // Extrair cor de fundo
-      if (style.fill && style.fill.fgColor) {
-        const normalized = normalizeExcelFontColor(style.fill.fgColor);
-        styleInfo.fillColor = normalized.color;
-      }
-
-      // Calcular linha e coluna
-      const match = cellAddress.match(/([A-Z]+)(\d+)/);
-      if (match) {
-        const col = match[1];
-        const row = parseInt(match[2], 10);
-        styleInfo.row = row;
-        styleInfo.col = col.charCodeAt(0) - 'A'.charCodeAt(0);
-      }
-
-      styles.set(cellAddress, styleInfo);
+    // Importar ExcelJS dinamicamente para não bloquear o bundle
+    const ExcelJS = await import('exceljs');
+    const workbook = new ExcelJS.default.Workbook();
+    
+    // Ler o arquivo com ExcelJS
+    await workbook.xlsx.load(fileData);
+    
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet) {
+      console.warn('[CellStyles ExcelJS] Nenhuma worksheet encontrada');
+      return styles;
     }
 
-    console.log(`[CellStyles] Extraídos ${styles.size} estilos de célula`);
+    console.log(`[CellStyles ExcelJS] Lendo estilos de ${worksheet.rowCount} linhas x ${worksheet.columnCount} colunas`);
     
-    // Listar todas as células com cores não-padrão para debug
-    const coloredCells = Array.from(styles.values()).filter(s => s.fontColor && s.fontColor !== 'default' && s.fontColor !== '#000000');
-    console.log(`[CellStyles DEBUG] Células com cores especiais: ${coloredCells.length}`);
-    coloredCells.slice(0, 20).forEach(s => {
-      console.log(`[CellStyles DEBUG]   ${s.address}: fontColor=${s.fontColor}`);
+    let cellCount = 0;
+    let withFontColor = 0;
+    let specialColors = 0;
+
+    worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+        cellCount++;
+        
+        const colLetter = String.fromCharCode(64 + colNumber); // 1=A, 2=B, etc.
+        const cellAddress = `${colLetter}${rowNumber}`;
+        
+        const styleInfo: CellStyleInfo = {
+          address: cellAddress,
+          row: rowNumber,
+          col: colNumber - 1, // 0-based
+          bold: cell.font?.bold || false,
+          italic: cell.font?.italic || false,
+        };
+
+        // Extrair cor da fonte via ExcelJS
+        if (cell.font && cell.font.color) {
+          withFontColor++;
+          const fontColor = cell.font.color;
+          
+          // ExcelJS retorna cor como { argb: 'FFFF0000', theme: 4, tint: -0.25 }
+          let resolvedColor = 'default';
+          
+          if (fontColor.argb) {
+            // ARGB: primeiros 2 chars são alpha, restante é RGB
+            const argb = fontColor.argb;
+            const rgb = argb.length === 8 ? argb.substring(2) : argb;
+            resolvedColor = `#${rgb}`;
+          } else if (fontColor.theme !== undefined && fontColor.theme !== null) {
+            // Cor do tema — ExcelJS resolve automaticamente via workbook.theme
+            // Mas se a cor não veio em argb, precisamos resolver manualmente
+            const defaultThemes = [
+              '#FFFFFF', '#000000', '#E7E6E6', '#44546A',
+              '#4472C4', '#ED7D31', '#A5A5A5', '#FFC000',
+              '#5B9BD5', '#70AD47', '#0563C1', '#954F72'
+            ];
+            resolvedColor = defaultThemes[fontColor.theme] || '#000000';
+          }
+          
+          styleInfo.fontColor = resolvedColor;
+          styleInfo.fontColorTheme = fontColor.theme;
+          
+          // Log para debug — cores especiais (não preto, não padrão)
+          const colorUpper = resolvedColor.toUpperCase().replace('#', '');
+          if (resolvedColor !== 'default' && colorUpper !== '000000' && colorUpper !== 'FFFFFF') {
+            specialColors++;
+            if (specialColors <= 30) {
+              console.log(`[CellStyles ExcelJS] Cor especial em ${cellAddress}: argb=${fontColor.argb || 'n/a'} theme=${fontColor.theme ?? 'n/a'} → ${resolvedColor}`);
+            }
+          }
+        }
+
+        styles.set(cellAddress, styleInfo);
+      });
     });
-    
+
+    console.log(`[CellStyles ExcelJS] Resumo: ${cellCount} células, ${withFontColor} com cor de fonte, ${specialColors} cores especiais`);
+    console.log(`[CellStyles ExcelJS] Extraídos ${styles.size} estilos de célula`);
+
   } catch (error) {
-    console.warn(`[CellStyles] Erro ao extrair estilos:`, error);
+    console.warn(`[CellStyles ExcelJS] Erro ao extrair estilos:`, error);
   }
 
   return styles;
@@ -287,13 +314,12 @@ const rowsToProdutosBrutos = (rows: Record<string, any>[]): ProdutoBruto[] => {
 /**
  * Lê um arquivo Excel ou CSV e retorna dados estruturados.
  * Reutiliza a lógica de detecção de header que já existia.
- * NOVO: Também extrai estilos de célula (cores de fonte) para classificação visual.
+ * NOVO: Usa ExcelJS para extrair cores de fonte (SheetJS não lê estilos corretamente)
  */
-const readSpreadsheet = (data: ArrayBuffer, tipo: TipoArquivo): SpreadsheetReadResult => {
-  // Opções de leitura - tentar capturar estilos se disponível
+const readSpreadsheet = async (data: ArrayBuffer, tipo: TipoArquivo): Promise<SpreadsheetReadResult> => {
+  // Opções de leitura do SheetJS (para dados)
   const readOptions: XLSX.ParsingOptions = {
     type: 'array',
-    cellStyles: true,  // Tentar capturar estilos
     cellNF: false,
     cellDates: true,
   };
@@ -302,9 +328,11 @@ const readSpreadsheet = (data: ArrayBuffer, tipo: TipoArquivo): SpreadsheetReadR
   const sheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
 
-  // Extrair estilos de célula (cores de fonte)
-  const cellStyles = extractCellStyles(worksheet);
-  console.log(`[ReadSpreadsheet] Extraídos ${cellStyles.size} estilos de célula`);
+  // Extrair estilos de célula (cores de fonte) via ExcelJS
+  // ExcelJS é a única lib que lê cores de fonte corretamente de arquivos existentes
+  console.log(`[ReadSpreadsheet] Extraindo estilos de célula via ExcelJS...`);
+  const cellStyles = await extractCellStylesWithExcelJS(data);
+  console.log(`[ReadSpreadsheet] Extraídos ${cellStyles.size} estilos de célula via ExcelJS`);
 
   // Lê como array 2D para detecção de header
   const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
@@ -331,6 +359,7 @@ const readSpreadsheet = (data: ArrayBuffer, tipo: TipoArquivo): SpreadsheetReadR
   console.log(`[ReadSpreadsheet] Headers: ${headers.length}, Rows: ${rows.length}, Styles: ${cellStyles.size}`);
 
   return { headers, rows, rows2D, headerRowIndex, cellStyles };
+
 };
 
 // ===================================================================
@@ -622,7 +651,7 @@ export const runImportPipeline = async (
   } else {
     // Excel / CSV
     parserUsado = 'xlsx-direto';
-    const spreadsheet = readSpreadsheet(fileData, tipoArquivo);
+    const spreadsheet = await readSpreadsheet(fileData, tipoArquivo);
     headers = spreadsheet.headers;
     brutos = rowsToProdutosBrutos(spreadsheet.rows);
 
@@ -632,7 +661,9 @@ export const runImportPipeline = async (
       console.log(`[Pipeline] Adicionando ${spreadsheet.cellStyles.size} estilos de célula aos produtos brutos`);
       brutos.forEach((bruto, idx) => {
         // Calcular linha real na planilha (considerando header)
-        const linhaReal = spreadsheet.headerRowIndex + idx + 1; // 1-based para Excel
+        // headerRowIndex é 0-based no array, Excel é 1-based,
+        // e os dados começam na linha DEPOIS do header (+2 = +1 para 1-based, +1 para pular header)
+        const linhaReal = spreadsheet.headerRowIndex + idx + 2;
         bruto.campos.__cellStyles = spreadsheet.cellStyles;
         bruto.campos.__linhaReal = linhaReal;
         bruto.campos.__headerRowIndex = spreadsheet.headerRowIndex;
