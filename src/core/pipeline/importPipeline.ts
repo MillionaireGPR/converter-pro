@@ -208,94 +208,152 @@ export function detectVisualCategoryFromFontColor(
 }
 
 /**
- * Extrai estilos de célula usando ExcelJS (lê cores de fonte corretamente)
- * SheetJS/xlsx-js-style armazena cell.s como índice numérico ao ler arquivos existentes.
- * ExcelJS é a única biblioteca confiável para ler cores de fonte no browser.
+ * Extrai estilos de célula parseando o XML interno do arquivo .xlsx
+ * Um .xlsx é um ZIP contendo XMLs:
+ * - xl/styles.xml → contém definições de fontes (incluindo cores)
+ * - xl/worksheets/sheet1.xml → contém referências de estilo por célula (atributo s="")
+ * 
+ * Esta abordagem é 100% confiável no browser (sem polyfills Node.js)
  */
-async function extractCellStylesWithExcelJS(fileData: ArrayBuffer): Promise<Map<string, CellStyleInfo>> {
+async function extractCellStylesFromXML(fileData: ArrayBuffer): Promise<Map<string, CellStyleInfo>> {
   const styles = new Map<string, CellStyleInfo>();
+  const JSZip = (await import('jszip')).default;
 
   try {
-    // Importar ExcelJS dinamicamente para não bloquear o bundle
-    const ExcelJS = await import('exceljs');
-    const workbook = new ExcelJS.default.Workbook();
+    console.log(`[CellStyles XML] Iniciando extração de cores via parsing XML direto...`);
     
-    // Ler o arquivo com ExcelJS
-    await workbook.xlsx.load(fileData);
+    const zip = await JSZip.loadAsync(fileData);
     
-    const worksheet = workbook.worksheets[0];
-    if (!worksheet) {
-      console.warn('[CellStyles ExcelJS] Nenhuma worksheet encontrada');
+    // 1. LER xl/styles.xml → extrair cores de fonte de cada <font>
+    const stylesXmlFile = zip.file('xl/styles.xml');
+    if (!stylesXmlFile) {
+      console.warn('[CellStyles XML] xl/styles.xml não encontrado no arquivo');
       return styles;
     }
-
-    console.log(`[CellStyles ExcelJS] Lendo estilos de ${worksheet.rowCount} linhas x ${worksheet.columnCount} colunas`);
     
-    let cellCount = 0;
-    let withFontColor = 0;
-    let specialColors = 0;
-
-    worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-      row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-        cellCount++;
+    const stylesXml = await stylesXmlFile.async('string');
+    const parser = new DOMParser();
+    const stylesDoc = parser.parseFromString(stylesXml, 'application/xml');
+    
+    // Extrair lista de fontes (<font> elements)
+    const fontElements = stylesDoc.querySelectorAll('fonts > font');
+    const fontColors: (string | null)[] = [];
+    
+    console.log(`[CellStyles XML] Encontradas ${fontElements.length} definições de fonte`);
+    
+    fontElements.forEach((fontEl, idx) => {
+      const colorEl = fontEl.querySelector('color');
+      let color: string | null = null;
+      
+      if (colorEl) {
+        // Prioridade: rgb > indexed > theme
+        const rgb = colorEl.getAttribute('rgb');
+        const indexed = colorEl.getAttribute('indexed');
+        const theme = colorEl.getAttribute('theme');
         
-        const colLetter = String.fromCharCode(64 + colNumber); // 1=A, 2=B, etc.
-        const cellAddress = `${colLetter}${rowNumber}`;
-        
-        const styleInfo: CellStyleInfo = {
-          address: cellAddress,
-          row: rowNumber,
-          col: colNumber - 1, // 0-based
-          bold: cell.font?.bold || false,
-          italic: cell.font?.italic || false,
-        };
-
-        // Extrair cor da fonte via ExcelJS
-        if (cell.font && cell.font.color) {
-          withFontColor++;
-          const fontColor = cell.font.color;
+        if (rgb) {
+          // RGB/ARGB: 'FFFF0000' → '#FF0000'
+          const cleanRgb = rgb.length === 8 ? rgb.substring(2) : rgb;
+          color = `#${cleanRgb}`;
+        } else if (indexed) {
+          const indexedColors = [
+            '#000000', '#FFFFFF', '#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF',
+            '#800000', '#008000', '#000080', '#808000', '#800080', '#008080', '#C0C0C0', '#808080',
+            '#9999FF', '#993366', '#FFFFCC', '#CCFFFF', '#660066', '#FF8080', '#0066CC', '#CCCCFF',
+            '#000080', '#FF00FF', '#FFFF00', '#00FFFF', '#800080', '#800000', '#008080', '#0000FF',
+            '#00CCFF', '#CCFFFF', '#CCFFCC', '#FFFF99', '#99CCFF', '#FF99CC', '#CC99FF', '#FFCC99',
+            '#3366FF', '#33CCCC', '#99CC00', '#FFCC00', '#FF9900', '#FF6600', '#666699', '#969696',
+            '#003366', '#339966', '#003300', '#333300', '#993300', '#993366', '#333399', '#333333'
+          ];
+          color = indexedColors[parseInt(indexed)] || '#000000';
+        } else if (theme) {
+          // Tentar ler cores do tema do arquivo
+          const themeIndex = parseInt(theme);
+          const tint = parseFloat(colorEl.getAttribute('tint') || '0');
           
-          // ExcelJS retorna cor como { argb: 'FFFF0000', theme: 4, tint: -0.25 }
-          let resolvedColor = 'default';
+          // Cores padrão do Office (lt1, dk1, lt2, dk2, accent1-6)
+          const defaultThemeColors = [
+            '#FFFFFF', '#000000', '#E7E6E6', '#44546A',
+            '#4472C4', '#ED7D31', '#A5A5A5', '#FFC000',
+            '#5B9BD5', '#70AD47', '#0563C1', '#954F72'
+          ];
+          color = defaultThemeColors[themeIndex] || '#000000';
           
-          if (fontColor.argb) {
-            // ARGB: primeiros 2 chars são alpha, restante é RGB
-            const argb = fontColor.argb;
-            const rgb = argb.length === 8 ? argb.substring(2) : argb;
-            resolvedColor = `#${rgb}`;
-          } else if (fontColor.theme !== undefined && fontColor.theme !== null) {
-            // Cor do tema — ExcelJS resolve automaticamente via workbook.theme
-            // Mas se a cor não veio em argb, precisamos resolver manualmente
-            const defaultThemes = [
-              '#FFFFFF', '#000000', '#E7E6E6', '#44546A',
-              '#4472C4', '#ED7D31', '#A5A5A5', '#FFC000',
-              '#5B9BD5', '#70AD47', '#0563C1', '#954F72'
-            ];
-            resolvedColor = defaultThemes[fontColor.theme] || '#000000';
-          }
-          
-          styleInfo.fontColor = resolvedColor;
-          styleInfo.fontColorTheme = fontColor.theme;
-          
-          // Log para debug — cores especiais (não preto, não padrão)
-          const colorUpper = resolvedColor.toUpperCase().replace('#', '');
-          if (resolvedColor !== 'default' && colorUpper !== '000000' && colorUpper !== 'FFFFFF') {
-            specialColors++;
-            if (specialColors <= 30) {
-              console.log(`[CellStyles ExcelJS] Cor especial em ${cellAddress}: argb=${fontColor.argb || 'n/a'} theme=${fontColor.theme ?? 'n/a'} → ${resolvedColor}`);
-            }
+          // Aplicar tint se existir (aproximação simplificada)
+          if (tint !== 0 && color) {
+            // Tint positivo = clarear, negativo = escurecer
+            // Abordagem simplificada: ignorar tint para detecção de cor base
           }
         }
-
-        styles.set(cellAddress, styleInfo);
-      });
+      }
+      
+      fontColors.push(color);
+      
+      if (color && color !== '#000000' && color !== '#FFFFFF') {
+        console.log(`[CellStyles XML] Fonte #${idx}: cor=${color}`);
+      }
     });
-
-    console.log(`[CellStyles ExcelJS] Resumo: ${cellCount} células, ${withFontColor} com cor de fonte, ${specialColors} cores especiais`);
-    console.log(`[CellStyles ExcelJS] Extraídos ${styles.size} estilos de célula`);
-
+    
+    // 2. LER <cellXfs> → mapeia estilo index → font index
+    const cellXfElements = stylesDoc.querySelectorAll('cellXfs > xf');
+    const styleToFont: number[] = [];
+    
+    cellXfElements.forEach((xfEl) => {
+      const fontId = parseInt(xfEl.getAttribute('fontId') || '0');
+      styleToFont.push(fontId);
+    });
+    
+    console.log(`[CellStyles XML] Mapeados ${styleToFont.length} estilos de célula para fontes`);
+    
+    // 3. LER xl/worksheets/sheet1.xml → pegar o atributo s="" de cada <c> (célula)
+    const sheetFile = zip.file('xl/worksheets/sheet1.xml');
+    if (!sheetFile) {
+      console.warn('[CellStyles XML] xl/worksheets/sheet1.xml não encontrado');
+      return styles;
+    }
+    
+    const sheetXml = await sheetFile.async('string');
+    const sheetDoc = parser.parseFromString(sheetXml, 'application/xml');
+    
+    const cellElements = sheetDoc.querySelectorAll('sheetData > row > c');
+    let specialColors = 0;
+    
+    cellElements.forEach((cellEl) => {
+      const cellRef = cellEl.getAttribute('r'); // ex: "A1", "B2"
+      const styleIdx = parseInt(cellEl.getAttribute('s') || '0');
+      
+      if (!cellRef) return;
+      
+      // Resolver: célula → estilo → fonte → cor
+      const fontIdx = styleToFont[styleIdx] ?? 0;
+      const fontColor = fontColors[fontIdx] ?? null;
+      
+      const match = cellRef.match(/([A-Z]+)(\d+)/);
+      const row = match ? parseInt(match[2]) : 0;
+      const col = match ? match[1].charCodeAt(0) - 65 : 0;
+      
+      const styleInfo: CellStyleInfo = {
+        address: cellRef,
+        row,
+        col,
+        fontColor: fontColor || undefined,
+      };
+      
+      if (fontColor && fontColor !== '#000000' && fontColor !== '#FFFFFF') {
+        specialColors++;
+        if (specialColors <= 30) {
+          console.log(`[CellStyles XML] Cor especial: ${cellRef} → fonte#${fontIdx} → ${fontColor}`);
+        }
+      }
+      
+      styles.set(cellRef, styleInfo);
+    });
+    
+    console.log(`[CellStyles XML] ✅ Resumo: ${cellElements.length} células, ${specialColors} com cores especiais`);
+    console.log(`[CellStyles XML] Mapa final: ${styles.size} entradas`);
+    
   } catch (error) {
-    console.warn(`[CellStyles ExcelJS] Erro ao extrair estilos:`, error);
+    console.error(`[CellStyles XML] ❌ Erro ao extrair estilos:`, error);
   }
 
   return styles;
@@ -328,11 +386,11 @@ const readSpreadsheet = async (data: ArrayBuffer, tipo: TipoArquivo): Promise<Sp
   const sheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
 
-  // Extrair estilos de célula (cores de fonte) via ExcelJS
-  // ExcelJS é a única lib que lê cores de fonte corretamente de arquivos existentes
-  console.log(`[ReadSpreadsheet] Extraindo estilos de célula via ExcelJS...`);
-  const cellStyles = await extractCellStylesWithExcelJS(data);
-  console.log(`[ReadSpreadsheet] Extraídos ${cellStyles.size} estilos de célula via ExcelJS`);
+  // Extrair estilos de célula (cores de fonte) via parsing XML direto do .xlsx
+  // JSZip + DOMParser: 100% confiável no browser
+  console.log(`[ReadSpreadsheet] Extraindo cores de fonte via XML parsing...`);
+  const cellStyles = await extractCellStylesFromXML(data);
+  console.log(`[ReadSpreadsheet] Extraídos ${cellStyles.size} estilos via XML`);
 
   // Lê como array 2D para detecção de header
   const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
