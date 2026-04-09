@@ -104,6 +104,7 @@ export const matchImagesToProducts = (images: ImagemExtraida[], produtos: Produt
         sourcePage: bestMatch.image.sourcePage,
         confidence: bestMatch.score,
         imageBlob: bestMatch.image.imageBlob,
+        imageDataUrl: bestMatch.image.imageDataUrl,
       });
       usedImages.add(img.temporaryId);
       usedProducts.add(prod.codigo || prod.codigoOriginal);
@@ -162,6 +163,7 @@ export const matchImagesToProducts = (images: ImagemExtraida[], produtos: Produt
             sourcePage: img.sourcePage,
             confidence: Math.max(0.50, score),
             imageBlob: img.imageBlob,
+            imageDataUrl: img.imageDataUrl,
           });
           usedImages.add(img.temporaryId);
           usedProducts.add(prod.codigo || prod.codigoOriginal);

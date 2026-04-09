@@ -117,29 +117,103 @@ export default function DescontosCatalogos() {
     if (!valido) { toast.error("Formato de desconto inválido."); return; }
     if (!produtosFiltrados.length) { toast.error("Sem produtos."); return; }
     try {
-      console.log(`[Flow MVP] Gerando PDF simples jspdf...`);
+      console.log(`[Flow MVP] Gerando PDF com opções:`, { usarPrecoFinal, mostrarDesconto, ipiModo });
       const doc = new jsPDF();
       doc.setFontSize(16);
       doc.text(`Catálogo Comercial - ${campanha}`, 14, 20);
       doc.setFontSize(10);
       doc.text(`Fornecedor: ${fornNome || 'Todos'} | Itens: ${produtosFiltrados.length}`, 14, 28);
       
-      const head = [['Código', 'Produto', 'Preço Original', 'Desconto', 'Preço Final', 'Fornecedor']];
+      // Construir head dinamicamente baseado nas opções
+      let head: string[] = ['Código', 'Produto'];
+      
+      if (usarPrecoFinal) {
+        // Modo preço final apenas: mostra só preço final e IPI se somar
+        if (ipiModo === 'somar') {
+          head = head.concat(['Preço Final', 'IPI', 'Total c/ IPI', 'Fornecedor']);
+        } else {
+          head = head.concat(['Preço Final', 'Fornecedor']);
+        }
+      } else {
+        // Modo normal: pode mostrar ou não desconto
+        if (mostrarDesconto) {
+          head = head.concat(['Preço Original', 'Desconto', 'Preço Final']);
+        } else {
+          head = head.concat(['Preço']);
+        }
+        
+        // Adicionar IPI se necessário
+        if (ipiModo === 'somar') {
+          head.push('IPI');
+          head.push('Total');
+        }
+        
+        head.push('Fornecedor');
+      }
+      
       const body = produtosFiltrados.map(p => {
-        const pf = usarPrecoFinal ? p.precoFinal : +(p.precoBase * (1 - descNum / 100)).toFixed(2);
-        return [
+        // Calcular preço base com desconto
+        let precoComDesconto = +(p.precoBase * (1 - descNum / 100)).toFixed(2);
+        
+        // Se usar preço final do produto (já salvo), usa ele
+        if (usarPrecoFinal && p.precoFinal) {
+          precoComDesconto = p.precoFinal;
+        }
+        
+        // Calcular IPI se modo 'somar'
+        const ipiPercentual = p.ipi || 0;
+        const valorIPI = ipiModo === 'somar' ? +(precoComDesconto * (ipiPercentual / 100)).toFixed(2) : 0;
+        const precoTotal = +(precoComDesconto + valorIPI).toFixed(2);
+        
+        // Montar linha dinamicamente
+        let row: string[] = [
           p.codigoFinal || p.codigoOriginal,
-          p.nome.substring(0, 45),
-          `R$ ${p.precoBase.toFixed(2)}`,
-          `${descontoString}%`,
-          `R$ ${pf.toFixed(2)}`,
-          p.fornecedor
-        ]
+          p.nome.substring(0, 45)
+        ];
+        
+        if (usarPrecoFinal) {
+          // Preço final apenas
+          if (ipiModo === 'somar') {
+            row = row.concat([
+              `R$ ${precoComDesconto.toFixed(2)}`,
+              `${ipiPercentual}%`,
+              `R$ ${precoTotal.toFixed(2)}`,
+              p.fornecedor
+            ]);
+          } else {
+            row = row.concat([
+              `R$ ${precoComDesconto.toFixed(2)}`,
+              p.fornecedor
+            ]);
+          }
+        } else {
+          // Modo completo
+          if (mostrarDesconto) {
+            row = row.concat([
+              `R$ ${p.precoBase.toFixed(2)}`,
+              `${descontoString}%`,
+              `R$ ${precoComDesconto.toFixed(2)}`
+            ]);
+          } else {
+            row = row.concat([
+              `R$ ${precoComDesconto.toFixed(2)}`
+            ]);
+          }
+          
+          if (ipiModo === 'somar') {
+            row.push(`${ipiPercentual}%`);
+            row.push(`R$ ${precoTotal.toFixed(2)}`);
+          }
+          
+          row.push(p.fornecedor);
+        }
+        
+        return row;
       });
 
       autoTable(doc, {
         startY: 35,
-        head: head,
+        head: [head],
         body: body,
         styles: { fontSize: 8, cellPadding: 2 },
         headStyles: { fillColor: [41, 128, 185] }
