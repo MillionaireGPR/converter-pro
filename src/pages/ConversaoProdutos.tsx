@@ -56,11 +56,27 @@ export default function ConversaoProdutos() {
 
   // Handler para baixar imagens da conversão
   const handleBaixarImagensHistorico = async (conversaoId: string, nomeArquivo: string) => {
+    console.log('[DownloadImagens] Iniciando download para conversão:', conversaoId);
+    
     const conversao = conversoesSalvas.find(c => c.id === conversaoId);
+    console.log('[DownloadImagens] Conversão encontrada:', conversao ? 'SIM' : 'NÃO');
+    console.log('[DownloadImagens] Total de imagens na conversão:', conversao?.imagens?.length || 0);
+    
     if (!conversao || !conversao.imagens || conversao.imagens.length === 0) {
       toast.error("Nenhuma imagem disponível para esta conversão");
       return;
     }
+
+    // Log detalhado das imagens
+    conversao.imagens.forEach((img, idx) => {
+      console.log(`[DownloadImagens] Imagem ${idx}:`, {
+        id: img.id,
+        nome: img.nome,
+        temUrl: !!img.url,
+        urlInicio: img.url ? img.url.substring(0, 50) + '...' : 'SEM URL',
+        ehDataUrl: img.url?.startsWith('data:') || false
+      });
+    });
 
     setIsZipping(true);
     try {
@@ -76,49 +92,87 @@ export default function ConversaoProdutos() {
 
       // Adicionar cada imagem - converte base64 direto para blob
       let adicionadas = 0;
-      for (const img of conversao.imagens) {
-        if (img.url && img.url.startsWith('data:')) {
+      let erros = 0;
+      
+      for (let i = 0; i < conversao.imagens.length; i++) {
+        const img = conversao.imagens[i];
+        console.log(`[DownloadImagens] Processando imagem ${i + 1}/${conversao.imagens.length}: ${img.nome}`);
+        
+        if (!img.url) {
+          console.warn(`[DownloadImagens] Imagem ${img.nome} sem URL`);
+          erros++;
+          continue;
+        }
+        
+        // Verificar se é dataURL (base64)
+        if (img.url.startsWith('data:')) {
           try {
-            // Converter dataURL (base64) direto para blob
-            const base64Data = img.url.split(',')[1];
-            if (base64Data) {
-              const byteCharacters = atob(base64Data);
-              const byteArrays = [];
-              for (let i = 0; i < byteCharacters.length; i++) {
-                byteArrays.push(byteCharacters.charCodeAt(i));
-              }
-              const byteArray = new Uint8Array(byteArrays);
-              const blob = new Blob([byteArray], { type: 'image/jpeg' });
-              folder.file(img.nome, blob);
-              adicionadas++;
+            console.log(`[DownloadImagens] Convertendo dataURL para blob...`);
+            
+            // Extrair o tipo MIME e os dados base64
+            const matches = img.url.match(/^data:([A-Za-z-+/]+);base64,(.+)$/);
+            
+            if (!matches || matches.length !== 3) {
+              console.warn(`[DownloadImagens] Formato dataURL inválido para ${img.nome}`);
+              erros++;
+              continue;
             }
+            
+            const mimeType = matches[1];
+            const base64Data = matches[2];
+            
+            console.log(`[DownloadImagens] MIME type: ${mimeType}, tamanho base64: ${base64Data.length}`);
+            
+            // Converter base64 para Uint8Array de forma mais eficiente
+            const byteCharacters = atob(base64Data);
+            const byteNumbers = new Array(byteCharacters.length);
+            
+            for (let j = 0; j < byteCharacters.length; j++) {
+              byteNumbers[j] = byteCharacters.charCodeAt(j);
+            }
+            
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: mimeType });
+            
+            folder.file(img.nome, blob);
+            adicionadas++;
+            console.log(`[DownloadImagens] Imagem ${img.nome} adicionada com sucesso`);
           } catch (e) {
-            console.warn(`Não foi possível processar imagem ${img.nome}:`, e);
+            console.error(`[DownloadImagens] Erro ao processar imagem ${img.nome}:`, e);
+            erros++;
           }
-        } else if (img.url) {
+        } else {
           // Se não for dataURL, tenta fetch
+          console.log(`[DownloadImagens] Tentando fetch para URL: ${img.url.substring(0, 50)}...`);
           try {
             const response = await fetch(img.url);
             const blob = await response.blob();
             folder.file(img.nome, blob);
             adicionadas++;
+            console.log(`[DownloadImagens] Imagem ${img.nome} baixada via fetch`);
           } catch (e) {
-            console.warn(`Não foi possível baixar imagem ${img.nome}:`, e);
+            console.error(`[DownloadImagens] Erro ao baixar imagem ${img.nome}:`, e);
+            erros++;
           }
         }
       }
 
+      console.log(`[DownloadImagens] Resumo: ${adicionadas} adicionadas, ${erros} erros`);
+
       if (adicionadas === 0) {
-        toast.error("Nenhuma imagem pôde ser baixada");
+        toast.error(`Nenhuma imagem pôde ser baixada. ${erros} imagens com erro.`);
         return;
       }
 
+      console.log('[DownloadImagens] Gerando ZIP...');
       const zipBlob = await zip.generateAsync({ type: 'blob' });
+      console.log(`[DownloadImagens] ZIP gerado: ${zipBlob.size} bytes`);
+      
       saveAs(zipBlob, `${folderName}_imagens.zip`);
-      toast.success(`${adicionadas} imagens baixadas!`);
+      toast.success(`${adicionadas} imagens baixadas! ${erros > 0 ? `(${erros} com erro)` : ''}`);
     } catch (error) {
-      console.error("Erro ao criar ZIP:", error);
-      toast.error("Erro ao gerar arquivo ZIP");
+      console.error("[DownloadImagens] Erro ao criar ZIP:", error);
+      toast.error("Erro ao gerar arquivo ZIP: " + (error instanceof Error ? error.message : 'Erro desconhecido'));
     } finally {
       setIsZipping(false);
     }

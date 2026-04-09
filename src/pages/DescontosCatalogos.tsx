@@ -30,6 +30,9 @@ export default function DescontosCatalogos() {
   
   // Estado para DESCONTO no IPI (percentual de redução)
   const [descontoIpi, setDescontoIpi] = useState("");
+  
+  // Estado para modo de IPI: 'incluso' = já está no preço, 'somar' = adicionar ao preço
+  const [ipiModo, setIpiModo] = useState<'incluso' | 'somar'>('incluso');
 
   const forn = fornecedores.find(f => f.id === fornecedor);
   const fornNome = forn?.nome;
@@ -255,13 +258,79 @@ export default function DescontosCatalogos() {
 
               <div className="rounded-xl border p-3 space-y-3">
                 <div className="flex items-center justify-between">
-                  <label className="text-sm text-muted-foreground">Usar preço final</label>
-                  <Switch checked={usarPrecoFinal} onCheckedChange={setUsarPrecoFinal} />
+                  <div className="flex flex-col">
+                    <label className="text-sm font-medium">Usar apenas preço final</label>
+                    <span className="text-[10px] text-muted-foreground">Oculta preço original e desconto</span>
+                  </div>
+                  <Switch 
+                    checked={usarPrecoFinal} 
+                    onCheckedChange={(checked) => {
+                      setUsarPrecoFinal(checked);
+                      // Se ativar "usar preço final", desativa "mostrar desconto"
+                      if (checked) setMostrarDesconto(false);
+                    }} 
+                  />
                 </div>
                 <div className="flex items-center justify-between">
-                  <label className="text-sm text-muted-foreground">Mostrar desconto</label>
-                  <Switch checked={mostrarDesconto} onCheckedChange={setMostrarDesconto} />
+                  <div className="flex flex-col">
+                    <label className="text-sm font-medium">Mostrar desconto</label>
+                    <span className="text-[10px] text-muted-foreground">Exibe % de desconto e preço riscado</span>
+                  </div>
+                  <Switch 
+                    checked={mostrarDesconto} 
+                    onCheckedChange={(checked) => {
+                      setMostrarDesconto(checked);
+                      // Se ativar "mostrar desconto", desativa "usar preço final"
+                      if (checked) setUsarPrecoFinal(false);
+                    }} 
+                  />
                 </div>
+              </div>
+
+              {/* Opções de IPI */}
+              <div className="rounded-xl border border-amber-200/50 bg-amber-50/30 dark:bg-amber-950/10 p-3 space-y-3">
+                <label className="text-sm font-medium flex items-center gap-2 text-amber-700 dark:text-amber-400">
+                  <Percent className="h-3.5 w-3.5" />
+                  Tratamento do IPI
+                </label>
+                
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="ipiModo"
+                      value="incluso"
+                      checked={ipiModo === 'incluso'}
+                      onChange={() => setIpiModo('incluso')}
+                      className="w-4 h-4 text-amber-500 border-amber-300 focus:ring-amber-500"
+                    />
+                    <div className="flex flex-col">
+                      <span className="text-sm">IPI já incluso no preço</span>
+                      <span className="text-[10px] text-muted-foreground">O valor do IPI já está calculado no preço final</span>
+                    </div>
+                  </label>
+                  
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="ipiModo"
+                      value="somar"
+                      checked={ipiModo === 'somar'}
+                      onChange={() => setIpiModo('somar')}
+                      className="w-4 h-4 text-amber-500 border-amber-300 focus:ring-amber-500"
+                    />
+                    <div className="flex flex-col">
+                      <span className="text-sm">Somar IPI ao preço final</span>
+                      <span className="text-[10px] text-muted-foreground">Adiciona o valor do IPI ao preço com desconto</span>
+                    </div>
+                  </label>
+                </div>
+                
+                {ipiModo === 'somar' && (
+                  <div className="text-[11px] bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300 p-2 rounded">
+                    <strong>Exemplo:</strong> Produto R$ 100 + 10% IPI = <strong>R$ 110,00 final</strong>
+                  </div>
+                )}
               </div>
 
               <div className="gradient-primary rounded-xl p-4 text-primary-foreground space-y-1.5">
