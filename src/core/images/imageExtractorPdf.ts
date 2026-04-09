@@ -106,6 +106,16 @@ export const extractImagesFromPdf = async (
                   }
                   
                   if (blob) {
+                    // Converter blob para dataURL para poder salvar no histórico
+                    const arrayBuffer = await blob.arrayBuffer();
+                    const bytes = new Uint8Array(arrayBuffer);
+                    let binary = '';
+                    for (let i = 0; i < bytes.byteLength; i++) {
+                      binary += String.fromCharCode(bytes[i]);
+                    }
+                    const base64 = btoa(binary);
+                    const imageDataUrl = `data:image/jpeg;base64,${base64}`;
+                    
                     images.push({
                       originalName: imgId,
                       temporaryId: imgId,
@@ -113,6 +123,7 @@ export const extractImagesFromPdf = async (
                       sourcePage: pageNum,
                       sourceIndex: images.length,
                       imageBlob: blob,
+                      imageDataUrl: imageDataUrl,
                       width: imgData.width,
                       height: imgData.height,
                       confidence: 90

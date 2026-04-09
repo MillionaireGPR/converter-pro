@@ -76,6 +76,17 @@ export const extractImagesFromExcel = async (
        const cleanFileName = relativePath.split('/').pop() || '';
        const tempName = `${fileName}_img${i + 1}.${extension}`;
        const sourceRow = anchorMap[relativePath];
+       
+       // Converter blob para dataURL
+       const arrayBuffer = await blob.arrayBuffer();
+       const bytes = new Uint8Array(arrayBuffer);
+       let binary = '';
+       for (let j = 0; j < bytes.byteLength; j++) {
+         binary += String.fromCharCode(bytes[j]);
+       }
+       const base64 = btoa(binary);
+       const mimeType = extension === 'png' ? 'image/png' : extension === 'webp' ? 'image/webp' : 'image/jpeg';
+       const imageDataUrl = `data:${mimeType};base64,${base64}`;
 
        images.push({
          originalName: cleanFileName,
@@ -83,6 +94,7 @@ export const extractImagesFromExcel = async (
          sourceType: 'excel',
          sourceIndex: sourceRow, // Índice de linha exata da planilha
          imageBlob: blob,
+         imageDataUrl: imageDataUrl,
          confidence: sourceRow ? 95 : 40 // Baixa confiança se a imagem ta boiando de forma não ancorada
        });
     }
