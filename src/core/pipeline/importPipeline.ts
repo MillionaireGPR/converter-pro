@@ -586,6 +586,12 @@ const normalizeExtracted = (
       paginaOrigem: e.paginaOrigem,
       linhaOrigem: e.linhaOrigem,
       confiancaExtracao: e.confiancaExtracao,
+      // CAMPOS VISUAIS (propagar da família CLINK)
+      visualCategory: (e as any).visualCategory,
+      isPromotional: (e as any).isPromotional,
+      isFixedPrice: (e as any).isFixedPrice,
+      bloqueiaDesconto: (e as any).bloqueiaDesconto,
+      informacoesAdicionais: (e as any).informacoesAdicionais,
     };
   });
 };

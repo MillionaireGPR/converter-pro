@@ -282,16 +282,41 @@ export function extractCaixa(texto: string): number | undefined {
 
 /**
  * Extrai IPI de texto (remove símbolo %)
+ * REGRAS DE VALIDAÇÃO:
+ * - Apenas valores entre 0 e 100 (porcentagem válida)
+ * - Ignorar números muito grandes (não são IPI)
+ * - Priorizar números próximos de palavras como "ipi", "aliquota", "%"
  */
 export function extractIpi(texto: string): number | undefined {
   if (!texto) return undefined;
 
   const cleaned = texto.replace(/%/g, '').trim();
-  const match = cleaned.match(/(\d+(?:[.,]\d+)?)/);
-
-  if (match && match[1]) {
-    const valor = parseFloat(match[1].replace(',', '.'));
-    if (!isNaN(valor) && valor >= 0) {
+  
+  // Buscar padrões específicos: "ipi X", "aliquota X", "% X", "X%" onde X é o valor
+  const patterns = [
+    /(?:ipi|aliquota|alíquota|imposto)\s*:?\s*(\d+(?:[.,]\d+)?)/i,
+    /(\d+(?:[.,]\d+)?)\s*%/,
+    /%\s*(\d+(?:[.,]\d+)?)/,
+  ];
+  
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern);
+    if (match && match[1]) {
+      const valor = parseFloat(match[1].replace(',', '.'));
+      // Validar que é uma porcentagem razoável de IPI (0-100)
+      if (!isNaN(valor) && valor >= 0 && valor <= 100) {
+        console.log(`[extractIpi] IPI extraído via pattern: ${valor}% de "${texto.substring(0, 50)}..."`);
+        return valor;
+      }
+    }
+  }
+  
+  // Fallback: pegar qualquer número, mas apenas se for razoável como IPI (0-100)
+  const generalMatch = cleaned.match(/(\d+(?:[.,]\d+)?)/);
+  if (generalMatch && generalMatch[1]) {
+    const valor = parseFloat(generalMatch[1].replace(',', '.'));
+    if (!isNaN(valor) && valor >= 0 && valor <= 100) {
+      console.log(`[extractIpi] IPI extraído via fallback: ${valor}% de "${texto.substring(0, 50)}..."`);
       return valor;
     }
   }
