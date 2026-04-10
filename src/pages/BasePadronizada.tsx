@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useApp } from "@/context/AppContext";
-import { Search, Download, Tag, CheckCircle, Package, AlertTriangle, FileSpreadsheet, BookOpen, AlertCircle, Trash2, Filter, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { Search, Download, Tag, CheckCircle, Package, AlertTriangle, FileSpreadsheet, BookOpen, AlertCircle, Trash2, Filter, ArrowUpDown, ArrowUp, ArrowDown, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
@@ -406,6 +406,7 @@ export default function BasePadronizada() {
                       <SortableHeader field="ipi" className="text-right">IPI %</SortableHeader>
                       <SortableHeader field="qtdCaixa">Informações Adicionais</SortableHeader>
                       <SortableHeader field="categoria">Categoria</SortableHeader>
+                      <TableHead className="text-center">Bloqueio</TableHead>
                       <SortableHeader field="status">Status</SortableHeader>
                     </TableRow>
                   </TableHeader>
@@ -438,6 +439,17 @@ export default function BasePadronizada() {
                         </TableCell>
                         <TableCell>
                           {renderEditableCell(p.id, 'categoria', p.categoria, "text-xs px-2 py-0.5 rounded-md bg-muted text-muted-foreground")}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {p.bloqueiaDesconto ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                              <Lock className="h-3 w-3" /> SIM
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400">
+                              NÃO
+                            </span>
+                          )}
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">

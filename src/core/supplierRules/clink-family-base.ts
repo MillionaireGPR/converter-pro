@@ -20,7 +20,7 @@ export interface ClinkFamilyProduct extends ProdutoExtraido {
   visualColorNormalized?: string; // Cor normalizada
   isPromotional?: boolean;
   isFixedPrice?: boolean;
-  bloqueiaDescontoExtra?: boolean; // NOVO: Preço fixo bloqueia desconto adicional
+  bloqueiaDesconto?: boolean; // Promocional/Preço Fixo bloqueiam desconto futuro
   descontoAutomatico?: number;
   multiplo?: number;
   priceSource?: 'preco' | 'precoEspecial' | 'precoFinal' | 'precoPromocional';
@@ -329,57 +329,59 @@ export function detectPriceType(
 }
 
 /**
- * Calcula desconto automático baseado na categoria visual
- * REGRAS DE NEGÓCIO CORRETAS:
- * - PROMOCIONAL: aplica 30% sobre a tabela, permite negociação adicional
- * - PREÇO FIXO: aplica 30% sobre a tabela, BLOQUEIA desconto adicional
- * - NOVIDADE: sem desconto automático
- * - PADRÃO: fluxo normal
+ * Classifica o produto pela categoria visual e define bloqueio de desconto
+ * REGRAS DE NEGÓCIO CORRETAS (ATUALIZADO):
+ * - PROMOCIONAL: NÃO altera preço, BLOQUEIA desconto futuro
+ * - PREÇO FIXO: NÃO altera preço, BLOQUEIA desconto futuro
+ * - NOVIDADE: sem bloqueio, permite desconto
+ * - PADRÃO: sem bloqueio, permite desconto
+ * 
+ * PROMOÇÃO e PREÇO FIXO são regras de BLOQUEIO, não regras de preço.
  */
 export function calcularDescontoAutomatico(
   categoriaVisual: VisualCategory,
   precoBase: number
 ): { 
   desconto: number; 
-  bloqueiaDescontoExtra: boolean;
+  bloqueiaDesconto: boolean;
   motivo: string;
   precoCalculado: number;
 } {
   
   switch (categoriaVisual) {
     case 'promocional':
-      // Promocional: 30% desconto, permite negociação adicional
+      // Promocional: NÃO altera preço, BLOQUEIA desconto futuro
       return {
-        desconto: 30,
-        bloqueiaDescontoExtra: false,
-        motivo: 'Item promocional (fonte vermelha) - 30% aplicado, permite negociação adicional',
-        precoCalculado: +(precoBase * 0.7).toFixed(2) // 30% de desconto
+        desconto: 0,
+        bloqueiaDesconto: true,
+        motivo: 'Item promocional (fonte vermelha) - preço original mantido, desconto bloqueado',
+        precoCalculado: precoBase
       };
 
     case 'preco-fixo':
-      // Preço Fixo: 30% desconto, BLOQUEIA desconto adicional
+      // Preço Fixo: NÃO altera preço, BLOQUEIA desconto futuro
       return {
-        desconto: 30,
-        bloqueiaDescontoExtra: true, // BLOQUEIA desconto extra
-        motivo: 'Item preço fixo (fonte azul) - 30% aplicado, desconto adicional bloqueado',
-        precoCalculado: +(precoBase * 0.7).toFixed(2) // 30% de desconto
+        desconto: 0,
+        bloqueiaDesconto: true,
+        motivo: 'Item preço fixo (fonte azul) - preço original mantido, desconto bloqueado',
+        precoCalculado: precoBase
       };
 
     case 'novidade-reposicao':
-      // Novidade: sem desconto automático
+      // Novidade: sem bloqueio, permite desconto
       return {
         desconto: 0,
-        bloqueiaDescontoExtra: false,
-        motivo: 'Item novidade/reposição (fonte amarela/verde) - sem desconto automático',
+        bloqueiaDesconto: false,
+        motivo: 'Item novidade/reposição (fonte amarela/verde) - permite desconto',
         precoCalculado: precoBase
       };
 
     case 'padrao':
     default:
-      // Padrão: segue fluxo normal (pode aplicar desconto padrão do fornecedor depois)
+      // Padrão: segue fluxo normal (pode aplicar desconto do fornecedor)
       return {
         desconto: 0,
-        bloqueiaDescontoExtra: false,
+        bloqueiaDesconto: false,
         motivo: 'Item padrão (fonte preta) - segue fluxo normal de desconto',
         precoCalculado: precoBase
       };
@@ -394,7 +396,7 @@ export function buildInformacoesAdicionais(
   multiplo?: number,
   categoriaVisual?: VisualCategory,
   observacoes?: string,
-  descontoInfo?: { desconto: number; bloqueiaDescontoExtra: boolean }
+  descontoInfo?: { desconto: number; bloqueiaDesconto: boolean }
 ): string {
   const partes: string[] = [];
 
@@ -408,14 +410,14 @@ export function buildInformacoesAdicionais(
     partes.push(`Múltiplo: ${multiplo}`);
   }
 
-  // 3. Categoria visual e desconto
+  // 3. Categoria visual
   if (categoriaVisual) {
     switch (categoriaVisual) {
       case 'promocional':
-        partes.push('Promocional -30%');
+        partes.push('Promocional (desconto bloqueado)');
         break;
       case 'preco-fixo':
-        partes.push('Preço Fixo -30% (sem desc extra)');
+        partes.push('Preço Fixo (desconto bloqueado)');
         break;
       case 'novidade-reposicao':
         partes.push('Novidade');
@@ -671,12 +673,12 @@ export function extractClinkFamily(
     // === REGRAS DE NEGÓCIO CORRETAS ===
     const descontoInfo = calcularDescontoAutomatico(visualCategory, precoBase);
     const descontoAutomatico = descontoInfo.desconto;
-    const bloqueiaDescontoExtra = descontoInfo.bloqueiaDescontoExtra;
+    const bloqueiaDesconto = descontoInfo.bloqueiaDesconto;
     const precoFinalCalculado = descontoInfo.precoCalculado;
 
     // Log de debug para cada item
     if (visualCategory !== 'padrao') {
-      console.log(`[ClinkFamily] codigo=${codigo} categoria=${visualCategory} desconto=${descontoAutomatico}% bloqueiaExtra=${bloqueiaDescontoExtra} precoBase=${precoBase} precoFinal=${precoFinalCalculado}`);
+      console.log(`[ClinkFamily] codigo=${codigo} categoria=${visualCategory} desconto=${descontoAutomatico}% bloqueiaDesconto=${bloqueiaDesconto} precoBase=${precoBase} precoFinal=${precoFinalCalculado}`);
     }
 
     // === INFORMAÇÕES ADICIONAIS ===
@@ -747,7 +749,7 @@ export function extractClinkFamily(
       // NOVO: Flags de regras de negócio
       isPromotional: visualCategory === 'promocional',
       isFixedPrice: visualCategory === 'preco-fixo',
-      bloqueiaDescontoExtra,
+      bloqueiaDesconto,
       descontoAutomatico,
       // NOVO: Nome comercial para Mercos
       nomeComercial,

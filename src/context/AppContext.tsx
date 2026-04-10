@@ -53,6 +53,7 @@ export interface Produto {
   visualCategory?: 'promocional' | 'preco-fixo' | 'novidade-reposicao' | 'padrao';
   isPromotional?: boolean;
   isFixedPrice?: boolean;
+  bloqueiaDesconto?: boolean;
   additionalInfo?: string;
   qtdCaixa: number;
   categoria: string;
@@ -380,6 +381,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
               visualCategory: (p as any).visual_category || undefined,
               isPromotional: (p as any).is_promotional || false,
               isFixedPrice: (p as any).is_fixed_price || false,
+              bloqueiaDesconto: (p as any).bloqueia_desconto || false,
               additionalInfo: (p as any).additional_info || '',
             };
           }));
@@ -757,6 +759,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           visual_category: p.visualCategory || null,
           is_promotional: p.isPromotional || false,
           is_fixed_price: p.isFixedPrice || false,
+          bloqueia_desconto: p.bloqueiaDesconto || false,
           additional_info: p.additionalInfo || null,
         };
       });
@@ -780,6 +783,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           visualCategory: (p as any).visual_category || undefined,
           isPromotional: (p as any).is_promotional || false,
           isFixedPrice: (p as any).is_fixed_price || false,
+          bloqueiaDesconto: (p as any).bloqueia_desconto || false,
           additionalInfo: (p as any).additional_info || '',
           nome: p.name,
           descricao: p.description || '',
@@ -858,6 +862,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       visualCategory: anyProd.visualCategory || anyProd.visual_category || undefined,
       isPromotional: anyProd.isPromotional || false,
       isFixedPrice: anyProd.isFixedPrice || false,
+      bloqueiaDesconto: anyProd.bloqueiaDesconto || anyProd.bloqueia_desconto || false,
       additionalInfo: anyProd.informacoesAdicionais || anyProd.additionalInfo || '',
       imagemUrl: p.imagemUrl || '',
       temImagem: p.temImagem || false,
@@ -912,6 +917,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         visual_category: updated.visualCategory || null,
         is_promotional: updated.isPromotional || false,
         is_fixed_price: updated.isFixedPrice || false,
+        bloqueia_desconto: updated.bloqueiaDesconto || false,
         additional_info: updated.additionalInfo || null,
       }).eq('id', id);
 
@@ -982,21 +988,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // === aplicarDesconto ===
   const aplicarDesconto = useCallback(async (ids: string[], percentual: number, campanha?: string, fornecedor?: string, descontoString?: string) => {
     try {
-      console.log(`[Flow MVP] Aplicando desconto de ${percentual}% (${descontoString || 'Simples'}) em ${ids.length} itens.`);
+      console.log(`[DiscountEngine] Iniciando aplicação de desconto de ${percentual}% (${descontoString || 'Simples'}) em ${ids.length} itens.`);
+      
+      let bloqueados = 0;
+      let aplicados = 0;
+      
       const results = await Promise.all(ids.map(async (id) => {
         const p = produtosPadronizados.find(x => x.id === id);
         if (!p) return null;
+        
+        // REGRA CRÍTICA: Se bloqueiaDesconto, NÃO aplicar desconto
+        if (p.bloqueiaDesconto) {
+          bloqueados++;
+          console.log(`[DiscountEngine] SKU=${p.codigoFinal || p.codigoOriginal} bloqueado=true desconto_aplicado=0 motivo="${p.visualCategory || 'bloqueado'}"`);
+          // Manter preço original, apenas registrar que foi bloqueado
+          return { ...p, descontoPercentual: 0, descontoString: 'BLOQUEADO', precoFinal: p.precoBase };
+        }
+        
+        // Produto normal: aplicar desconto
+        aplicados++;
         const precoFinal = +(p.precoBase * (1 - percentual / 100)).toFixed(2);
+        console.log(`[DiscountEngine] SKU=${p.codigoFinal || p.codigoOriginal} bloqueado=false desconto_aplicado=${percentual}% precoBase=${p.precoBase} precoFinal=${precoFinal}`);
         
         const { error } = await (supabase.from('standardized_products') as any).update({
           discount_percent: percentual,
           final_price: precoFinal
         }).eq('id', id);
 
-        if (error) console.warn(`[Flow MVP] Supabase falhou no desconto do item ${id}, usando fallback local.`);
+        if (error) console.warn(`[DiscountEngine] Supabase falhou no desconto do item ${id}, usando fallback local.`);
 
         return { ...p, descontoPercentual: percentual, descontoString, precoFinal };
       }));
+
+      console.log(`[DiscountEngine] Resumo: ${aplicados} aplicados, ${bloqueados} bloqueados de ${ids.length} total`);
 
       const updatedProds = results.filter(Boolean) as Produto[];
 
@@ -1006,12 +1030,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }));
 
       setDescontos(prev => [...prev, {
-        id: genId(), fornecedor: fornecedor || 'Diversos', campanha: campanha || `Desconto ${percentual}%`, percentual, produtosAfetados: ids.length, data: now()
+        id: genId(), fornecedor: fornecedor || 'Diversos', campanha: campanha || `Desconto ${percentual}%`, percentual, produtosAfetados: aplicados, data: now()
       }]);
+      
+      // Avisar o usuário sobre bloqueios
+      if (bloqueados > 0) {
+        toast.info(`${bloqueados} produto(s) com desconto BLOQUEADO (Promoção/Preço Fixo). ${aplicados} receberam desconto.`);
+      }
 
       await registrarHistorico({ 
         arquivo: '-', fornecedor: fornecedor || 'Diversos', usuario: 'Admin', data: now(), 
-        tipoConversao: 'Aplicação de Desconto', qtdItens: ids.length, status: 'concluído' 
+        tipoConversao: 'Aplicação de Desconto', qtdItens: aplicados, status: 'concluído' 
       });
     } catch (error) {
       console.error("Erro ao aplicar desconto:", error);

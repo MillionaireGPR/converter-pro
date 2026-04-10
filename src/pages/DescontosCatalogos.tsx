@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useApp } from "@/context/AppContext";
-import { Eye, FileDown, FileSpreadsheet, Save, Tag, Sparkles, Package, Percent } from "lucide-react";
+import { Eye, FileDown, FileSpreadsheet, Save, Tag, Sparkles, Package, Percent, Lock, Filter } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import jsPDF from "jspdf";
@@ -33,14 +33,37 @@ export default function DescontosCatalogos() {
   
   // Estado para modo de IPI: 'incluso' = já está no preço, 'somar' = adicionar ao preço
   const [ipiModo, setIpiModo] = useState<'incluso' | 'somar'>('incluso');
+  
+  // Filtros de categoria visual
+  const [filtroVisual, setFiltroVisual] = useState<'todos' | 'promocional' | 'preco-fixo' | 'liberados' | 'bloqueados'>('todos');
 
   const forn = fornecedores.find(f => f.id === fornecedor);
   const fornNome = forn?.nome;
   
   // Filtra por ID ou por NOME (caso o banco não tenha retornado o ID corretamente)
-  const produtosFiltrados = forn 
+  const produtosPorFornecedor = forn 
     ? produtosPadronizados.filter(p => p.fornecedorId === forn.id || p.fornecedor.toLowerCase() === forn.nome.toLowerCase()) 
     : produtosPadronizados;
+    
+  // Aplicar filtro visual por cima
+  const produtosFiltrados = produtosPorFornecedor.filter(p => {
+    switch (filtroVisual) {
+      case 'promocional': return p.visualCategory === 'promocional';
+      case 'preco-fixo': return p.visualCategory === 'preco-fixo';
+      case 'liberados': return !p.bloqueiaDesconto;
+      case 'bloqueados': return !!p.bloqueiaDesconto;
+      default: return true;
+    }
+  });
+  
+  // Contadores para os filtros
+  const contadores = {
+    total: produtosPorFornecedor.length,
+    promocionais: produtosPorFornecedor.filter(p => p.visualCategory === 'promocional').length,
+    precoFixo: produtosPorFornecedor.filter(p => p.visualCategory === 'preco-fixo').length,
+    bloqueados: produtosPorFornecedor.filter(p => !!p.bloqueiaDesconto).length,
+    liberados: produtosPorFornecedor.filter(p => !p.bloqueiaDesconto).length,
+  };
 
   const fornecedoresComProdutos = fornecedores.filter(f => 
     produtosPadronizados.some(p => p.fornecedorId === f.id || p.fornecedor.toLowerCase() === f.nome.toLowerCase())
@@ -152,11 +175,14 @@ export default function DescontosCatalogos() {
       }
       
       const body = produtosFiltrados.map(p => {
-        // Calcular preço base com desconto
-        let precoComDesconto = +(p.precoBase * (1 - descNum / 100)).toFixed(2);
+        // REGRA CRÍTICA: Produtos bloqueados NÃO recebem desconto
+        const isBloqueado = !!p.bloqueiaDesconto;
         
-        // Se usar preço final do produto (já salvo), usa ele
-        if (usarPrecoFinal && p.precoFinal) {
+        // Calcular preço base com desconto (se não bloqueado)
+        let precoComDesconto = isBloqueado ? p.precoBase : +(p.precoBase * (1 - descNum / 100)).toFixed(2);
+        
+        // Se usar preço final do produto (já salvo), usa ele (se não bloqueado)
+        if (!isBloqueado && usarPrecoFinal && p.precoFinal) {
           precoComDesconto = p.precoFinal;
         }
         
@@ -164,6 +190,9 @@ export default function DescontosCatalogos() {
         const ipiPercentual = p.ipi || 0;
         const valorIPI = ipiModo === 'somar' ? +(precoComDesconto * (ipiPercentual / 100)).toFixed(2) : 0;
         const precoTotal = +(precoComDesconto + valorIPI).toFixed(2);
+        
+        // Log de segurança
+        console.log(`[DiscountEngine] PDF SKU=${p.codigoFinal || p.codigoOriginal} bloqueado=${isBloqueado} desconto_aplicado=${isBloqueado ? 0 : descNum}%`);
         
         // Montar linha dinamicamente
         let row: string[] = [
@@ -237,14 +266,16 @@ export default function DescontosCatalogos() {
     try {
       console.log(`[Flow MVP] Gerando Excel com XLSX...`);
       const dataToExport = produtosFiltrados.map(p => {
-        const pf = usarPrecoFinal ? p.precoFinal : +(p.precoBase * (1 - descNum / 100)).toFixed(2);
+        const isBloqueado = !!p.bloqueiaDesconto;
+        const pf = isBloqueado ? p.precoBase : (usarPrecoFinal ? p.precoFinal : +(p.precoBase * (1 - descNum / 100)).toFixed(2));
         return {
           "Código": p.codigoFinal || p.codigoOriginal,
           "Produto": p.nome,
           "Preço Original": Number(p.precoBase).toFixed(2),
-          "Desconto Aplicado": `${descontoString}%`,
+          "Desconto Aplicado": isBloqueado ? "BLOQUEADO" : `${descontoString}%`,
           "Preço Final": Number(pf).toFixed(2),
           "IPI": p.ipi || 0,
+          "Bloqueia Desconto": isBloqueado ? "SIM" : "NÃO",
           "Fornecedor": p.fornecedor
         };
       });
@@ -554,16 +585,29 @@ export default function DescontosCatalogos() {
                 <div className="p-5 bg-card">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {produtosFiltrados.map(p => {
-                      const pf = usarPrecoFinal ? p.precoFinal : +(p.precoBase * (1 - descNum / 100)).toFixed(2);
+                      const isBloqueado = !!p.bloqueiaDesconto;
+                      const pf = isBloqueado ? p.precoBase : (usarPrecoFinal ? p.precoFinal : +(p.precoBase * (1 - descNum / 100)).toFixed(2));
                       return (
-                        <div key={p.id} className="border rounded-xl p-4 bg-card">
-                          <p className="font-mono text-[10px] text-primary/60 font-medium">{p.codigoFinal || p.codigoOriginal}</p>
+                        <div key={p.id} className={`border rounded-xl p-4 bg-card ${isBloqueado ? 'border-amber-200 dark:border-amber-800/50' : ''}`}>
+                          <div className="flex items-start justify-between">
+                            <p className="font-mono text-[10px] text-primary/60 font-medium">{p.codigoFinal || p.codigoOriginal}</p>
+                            {p.visualCategory === 'promocional' && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-500 text-white">PROMOÇÃO</span>
+                            )}
+                            {p.visualCategory === 'preco-fixo' && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-500 text-white">PREÇO FIXO</span>
+                            )}
+                          </div>
                           <p className="text-sm font-bold mt-1 text-foreground leading-tight">{p.nome}</p>
                           <p className="text-[11px] text-muted-foreground mt-1">{p.descricao}</p>
                           <div className="flex items-baseline gap-2 mt-3 pt-3 border-t">
-                            {mostrarDesconto && <span className="text-xs line-through text-muted-foreground">R$ {p.precoBase.toFixed(2)}</span>}
+                            {mostrarDesconto && !isBloqueado && <span className="text-xs line-through text-muted-foreground">R$ {p.precoBase.toFixed(2)}</span>}
                             <span className="text-lg font-extrabold text-primary">R$ {pf.toFixed(2)}</span>
-                            {mostrarDesconto && <span className="text-[10px] font-semibold bg-success/10 text-success px-1.5 py-0.5 rounded-md">-{descontoString}%</span>}
+                            {isBloqueado ? (
+                              <span className="text-[10px] font-semibold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><Lock className="h-2.5 w-2.5" /> s/ desconto</span>
+                            ) : mostrarDesconto && (
+                              <span className="text-[10px] font-semibold bg-success/10 text-success px-1.5 py-0.5 rounded-md">-{descontoString}%</span>
+                            )}
                           </div>
                           {(p.ipi > 0) && (
                             <p className="text-[10px] text-amber-600 mt-1 font-medium">IPI: {p.ipi}%</p>
@@ -578,35 +622,110 @@ export default function DescontosCatalogos() {
                 </div>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <Table className="premium-table">
-                  <TableHeader>
-                    <TableRow className="border-b-0">
-                      <TableHead>Código</TableHead>
-                      <TableHead>Produto</TableHead>
-                      <TableHead className="text-right">Preço Original</TableHead>
-                      <TableHead className="text-right">Desconto</TableHead>
-                      <TableHead className="text-right">Preço Final</TableHead>
-                      <TableHead className="text-center">IPI %</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {produtosFiltrados.map(p => (
-                      <TableRow key={p.id}>
-                        <TableCell className="font-mono text-xs text-primary/80 font-medium">{p.codigoFinal || p.codigoOriginal}</TableCell>
-                        <TableCell className="text-sm font-medium">{p.nome}</TableCell>
-                        <TableCell className="text-right text-sm tabular-nums text-muted-foreground">R$ {p.precoBase.toFixed(2)}</TableCell>
-                        <TableCell className="text-right text-sm text-primary font-semibold tabular-nums">{descontoString}%</TableCell>
-                        <TableCell className="text-right text-sm font-bold tabular-nums">R$ {(usarPrecoFinal ? p.precoFinal : p.precoBase * (1 - descNum / 100)).toFixed(2)}</TableCell>
-                        <TableCell className="text-center text-sm tabular-nums">
-                          <span className={`px-2 py-0.5 rounded-md text-xs font-semibold ${p.ipi > 0 ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' : 'text-muted-foreground'}`}>
-                            {p.ipi > 0 ? `${p.ipi}%` : '-'}
-                          </span>
-                        </TableCell>
+              <div className="space-y-3">
+                {/* Filtros de categoria visual */}
+                <div className="flex flex-wrap gap-2 items-center">
+                  <Filter className="h-3.5 w-3.5 text-muted-foreground" />
+                  <button
+                    onClick={() => setFiltroVisual('todos')}
+                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${filtroVisual === 'todos' ? 'bg-primary text-primary-foreground' : 'bg-muted hover:bg-muted/80'}`}
+                  >
+                    Todos ({contadores.total})
+                  </button>
+                  {contadores.promocionais > 0 && (
+                    <button
+                      onClick={() => setFiltroVisual('promocional')}
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${filtroVisual === 'promocional' ? 'bg-red-500 text-white' : 'bg-red-50 text-red-700 hover:bg-red-100 dark:bg-red-950/30 dark:text-red-400'}`}
+                    >
+                      Promoção ({contadores.promocionais})
+                    </button>
+                  )}
+                  {contadores.precoFixo > 0 && (
+                    <button
+                      onClick={() => setFiltroVisual('preco-fixo')}
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${filtroVisual === 'preco-fixo' ? 'bg-blue-500 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/30 dark:text-blue-400'}`}
+                    >
+                      Preço Fixo ({contadores.precoFixo})
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setFiltroVisual('liberados')}
+                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${filtroVisual === 'liberados' ? 'bg-green-500 text-white' : 'bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950/30 dark:text-green-400'}`}
+                  >
+                    Liberados ({contadores.liberados})
+                  </button>
+                  {contadores.bloqueados > 0 && (
+                    <button
+                      onClick={() => setFiltroVisual('bloqueados')}
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${filtroVisual === 'bloqueados' ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-950/30 dark:text-amber-400'}`}
+                    >
+                      <Lock className="h-3 w-3 inline mr-1" />Bloqueados ({contadores.bloqueados})
+                    </button>
+                  )}
+                </div>
+                
+                <div className="overflow-x-auto">
+                  <Table className="premium-table">
+                    <TableHeader>
+                      <TableRow className="border-b-0">
+                        <TableHead>Código</TableHead>
+                        <TableHead>Produto</TableHead>
+                        <TableHead className="text-right">Preço Original</TableHead>
+                        <TableHead className="text-right">Desconto</TableHead>
+                        <TableHead className="text-right">Preço Final</TableHead>
+                        <TableHead className="text-center">IPI %</TableHead>
+                        <TableHead className="text-center">Status</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {produtosFiltrados.map(p => {
+                        const isBloqueado = !!p.bloqueiaDesconto;
+                        const pf = isBloqueado ? p.precoBase : (usarPrecoFinal ? p.precoFinal : p.precoBase * (1 - descNum / 100));
+                        return (
+                          <TableRow key={p.id} className={isBloqueado ? 'bg-amber-50/50 dark:bg-amber-950/10' : ''}>
+                            <TableCell className="font-mono text-xs text-primary/80 font-medium">{p.codigoFinal || p.codigoOriginal}</TableCell>
+                            <TableCell className="text-sm font-medium">
+                              <div className="flex items-center gap-1.5">
+                                {p.visualCategory === 'promocional' && (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-500 text-white">PROMO</span>
+                                )}
+                                {p.visualCategory === 'preco-fixo' && (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-500 text-white">FIXO</span>
+                                )}
+                                {p.nome}
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right text-sm tabular-nums text-muted-foreground">R$ {p.precoBase.toFixed(2)}</TableCell>
+                            <TableCell className="text-right text-sm font-semibold tabular-nums">
+                              {isBloqueado ? (
+                                <span className="text-amber-600 flex items-center justify-end gap-1"><Lock className="h-3 w-3" />BLOQ</span>
+                              ) : (
+                                <span className="text-primary">{descontoString}%</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right text-sm font-bold tabular-nums">R$ {pf.toFixed(2)}</TableCell>
+                            <TableCell className="text-center text-sm tabular-nums">
+                              <span className={`px-2 py-0.5 rounded-md text-xs font-semibold ${p.ipi > 0 ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' : 'text-muted-foreground'}`}>
+                                {p.ipi > 0 ? `${p.ipi}%` : '-'}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-center">
+                              {isBloqueado ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                                  <Lock className="h-3 w-3" /> SIM
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400">
+                                  NÃO
+                                </span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
             )}
           </CardContent>

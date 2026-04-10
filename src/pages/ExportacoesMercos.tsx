@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { useState, useMemo } from "react";
 import { useApp } from "@/context/AppContext";
-import { Download, CheckCircle, AlertTriangle, XCircle, Package, FileWarning, Search, Filter, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { Download, CheckCircle, AlertTriangle, XCircle, Package, FileWarning, Search, Filter, ArrowUpDown, ArrowUp, ArrowDown, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
@@ -370,28 +370,68 @@ export default function ExportacoesMercos() {
                     <TableRow>
                       <SortableHeader field="codigo">Código do produto*</SortableHeader>
                       <SortableHeader field="nome">Nome do produto*</SortableHeader>
+                      <TableHead className="text-center">Categoria</TableHead>
                       <SortableHeader field="preco" className="text-right">Preço de Tabela*</SortableHeader>
                       <SortableHeader field="ipi" className="text-right">IPI</SortableHeader>
                       <TableHead>Informações adicionais</TableHead>
+                      <TableHead className="text-center">Bloqueio</TableHead>
                       <SortableHeader field="status">Status</SortableHeader>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {mercosResult.validos.slice(0, 50).map((p, idx) => (
-                      <TableRow key={idx}>
-                        <TableCell className="font-mono text-xs">{p['Código do produto (recomendado)']}</TableCell>
-                        <TableCell className="text-sm max-w-[240px] truncate">{p['Nome do produto (obrigatório)']}</TableCell>
-                        <TableCell className="text-right text-sm">R$ {Number(p['Preço de Tabela (obrigatório)'] || 0).toFixed(2)}</TableCell>
-                        <TableCell className="text-right text-sm">{p['IPI (opcional - não informar o símbolo %)'] || '-'}</TableCell>
-                        <TableCell className="text-xs max-w-[220px] truncate">{p['Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)'] || '-'}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="text-[10px] bg-success/10 text-success border-success/20"><CheckCircle className="h-3 w-3 mr-1" />OK</Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {mercosResult.validos.slice(0, 50).map((p, idx) => {
+                      // Buscar produto original para ter acesso aos campos de bloqueio
+                      const produtoOriginal = produtosFiltrados.find(prod => 
+                        (prod.codigoFinal || prod.codigoOriginal) === p['Código do produto (recomendado)']
+                      );
+                      const isBloqueado = produtoOriginal?.bloqueiaDesconto || false;
+                      const visualCat = produtoOriginal?.visualCategory;
+                      return (
+                        <TableRow key={idx} className={isBloqueado ? 'bg-amber-50/50 dark:bg-amber-950/10' : ''}>
+                          <TableCell className="font-mono text-xs">{p['Código do produto (recomendado)']}</TableCell>
+                          <TableCell className="text-sm max-w-[240px] truncate">
+                            <div className="flex items-center gap-1.5">
+                              {visualCat === 'promocional' && (
+                                <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-red-500 text-white">PROMO</span>
+                              )}
+                              {visualCat === 'preco-fixo' && (
+                                <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-blue-500 text-white">FIXO</span>
+                              )}
+                              {p['Nome do produto (obrigatório)']}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {visualCat === 'promocional' && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">PROMOÇÃO</span>
+                            )}
+                            {visualCat === 'preco-fixo' && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">PREÇO FIXO</span>
+                            )}
+                            {visualCat !== 'promocional' && visualCat !== 'preco-fixo' && '-'}
+                          </TableCell>
+                          <TableCell className="text-right text-sm">R$ {Number(p['Preço de Tabela (obrigatório)'] || 0).toFixed(2)}</TableCell>
+                          <TableCell className="text-right text-sm">{p['IPI (opcional - não informar o símbolo %)'] || '-'}</TableCell>
+                          <TableCell className="text-xs max-w-[220px] truncate">{p['Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)'] || '-'}</TableCell>
+                          <TableCell className="text-center">
+                            {isBloqueado ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                                <Lock className="h-3 w-3" /> SIM
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400">
+                                NÃO
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="text-[10px] bg-success/10 text-success border-success/20"><CheckCircle className="h-3 w-3 mr-1" />OK</Badge>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                     {mercosResult.validos.length > 50 && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-3">
+                        <TableCell colSpan={8} className="text-center text-xs text-muted-foreground py-3">
                           ...e mais {mercosResult.validos.length - 50} produtos (exibindo primeiros 50)
                         </TableCell>
                       </TableRow>

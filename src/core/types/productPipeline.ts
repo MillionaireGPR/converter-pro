@@ -148,6 +148,7 @@ export interface ProdutoNormalizadoV2 {
   visualCategory?: string;
   isPromotional?: boolean;
   isFixedPrice?: boolean;
+  bloqueiaDesconto?: boolean;
   informacoesAdicionais?: string;
 }
 

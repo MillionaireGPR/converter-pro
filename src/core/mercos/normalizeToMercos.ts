@@ -19,6 +19,7 @@ import { sanitizeForExport, normalizeSpaces } from '../normalizers/cleaners';
  * 2) embalagem
  * 3) medida/volume
  * 4) material/cor
+ * 5) categoria visual e bloqueio de desconto
  *
  * Regras:
  * - evita duplicatas
@@ -51,6 +52,15 @@ export const buildInformacoesAdicionais = (p: ProdutoNormalizadoV2): string => {
   pushUnique(p.cor);
   pushUnique(p.observacoes);
   pushUnique(p.descricaoComplementar);
+
+  // Adicionar categoria visual e status de bloqueio
+  if (p.visualCategory === 'promocional') {
+    pushUnique('PROMOÇÃO (desconto bloqueado)');
+  } else if (p.visualCategory === 'preco-fixo') {
+    pushUnique('PREÇO FIXO (desconto bloqueado)');
+  } else if (p.visualCategory === 'novidade-reposicao') {
+    pushUnique('Novidade/Reposição');
+  }
 
   return sanitizeForExport(normalizeSpaces(parts.join(' | ')));
 };
@@ -89,7 +99,16 @@ export const normalizeToMercos = (p: ProdutoNormalizadoV2): ProdutoMercos => {
 
   const finalCode = sanitizeForExport(p.codigo || p.codigoOriginal || '');
   const finalName = sanitizeForExport(normalizeSpaces(p.nome || ''));
-  const finalPrice = formatDecimal(p.precoFinal > 0 ? p.precoFinal : p.precoBase, 2);
+  
+  // REGRA: Se bloqueiaDesconto, usar preço base (sem desconto aplicado)
+  const isBloqueado = p.bloqueiaDesconto || p.visualCategory === 'promocional' || p.visualCategory === 'preco-fixo';
+  const finalPrice = formatDecimal(
+    isBloqueado 
+      ? (p.precoBase > 0 ? p.precoBase : 0)
+      : (p.precoFinal > 0 ? p.precoFinal : p.precoBase), 
+    2
+  );
+  
   const finalIpi = p.ipi !== undefined && p.ipi !== null && p.ipi > 0 ? formatDecimal(p.ipi, 2) : '';
   
   // Garantir que additional_info da etapa visual venha se existir
@@ -104,7 +123,7 @@ export const normalizeToMercos = (p: ProdutoNormalizadoV2): ProdutoMercos => {
   row['IPI (opcional - não informar o símbolo %)'] = finalIpi;
   row['Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)'] = finalAddInfo;
 
-  console.log(`[Mercos Export] sku=${finalCode} nomeFinal="${finalName}" preco=${finalPrice} ipi=${finalIpi || 0}`);
+  console.log(`[Mercos Export] sku=${finalCode} nomeFinal="${finalName}" preco=${finalPrice} ipi=${finalIpi || 0} bloqueado=${isBloqueado}`);
 
   return row;
 };

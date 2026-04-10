@@ -25,6 +25,7 @@ export interface ProdutoNormalizado {
   visualCategory?: string;
   isPromotional?: boolean;
   isFixedPrice?: boolean;
+  bloqueiaDesconto?: boolean;
   informacoesAdicionais?: string;
 }
 
