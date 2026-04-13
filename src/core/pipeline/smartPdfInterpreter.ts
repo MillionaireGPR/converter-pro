@@ -1,12 +1,13 @@
 import { ProdutoBruto } from '../types/productPipeline';
 import { PdfTemplate } from '../pdfTemplates/types';
+import { PdfPageData } from './pdfParser';
 
 /**
  * Motor semântico para interpretar páginas de PDF e convertê-las em blocos de ProdutoBruto.
  * Tenta usar um template se fornecido, senão aplica heurísticas genéricas baseadas na estrutura de catálogos.
  */
 export const interpretPdfSemantically = (
-  pages: { pageNum: number; text: string }[],
+  pages: PdfPageData[],
   template?: PdfTemplate
 ): ProdutoBruto[] => {
   const produtos: ProdutoBruto[] = [];
@@ -26,15 +27,29 @@ export const interpretPdfSemantically = (
       for (let i = 0; i < blocks.length; i++) {
         const block = blocks[i];
         const campos = applyTemplateExtractors(block, template);
-        if (Object.keys(campos).length > 1) {
-          produtos.push({
+          const prod: ProdutoBruto = {
             campos,
             linhaOrigem: i,
             paginaOrigem: page.pageNum,
             textoBruto: block.trim(),
-          });
+          };
+
+          // NOVO: Buscar coordenadas do SKU no mapa da página
+          if (campos['codigo']) {
+            const item = page.items.find(it => it.str.includes(campos['codigo']));
+            if (item) {
+              prod.spatialContext = {
+                x: item.x,
+                y: item.y,
+                width: item.w,
+                height: item.h,
+                page: page.pageNum
+              };
+            }
+          }
+          
+          produtos.push(prod);
         }
-      }
       
       // ── GIRA: Reparação de IPI por página (grid-layout PDF) ──
       // No layout em grid, PDF.js lê TP codes na linha 1 e IPI na linha 3.
@@ -92,12 +107,26 @@ export const interpretPdfSemantically = (
         
         if (blockText.length > 10) {
           const campos = extractFieldsByHeuristics(blockText, codeMatches[i].code);
-          produtos.push({
+          const prod: ProdutoBruto = {
             campos,
             linhaOrigem: i,
             paginaOrigem: page.pageNum,
             textoBruto: blockText,
-          });
+          };
+
+          // Buscar coordenadas do SKU
+          const item = page.items.find(it => it.str.includes(codeMatches[i].code));
+          if (item) {
+            prod.spatialContext = {
+              x: item.x,
+              y: item.y,
+              width: item.w,
+              height: item.h,
+              page: page.pageNum
+            };
+          }
+
+          produtos.push(prod);
         }
       }
     } else {
@@ -131,6 +160,8 @@ export const interpretPdfSemantically = (
 
   return produtos;
 };
+
+// === FUNÇÕES AUXILIARES ===
 
 /**
  * Extrai campos de um bloco de texto usando os regex definidos no template do fornecedor.

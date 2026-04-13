@@ -41,18 +41,43 @@ export const extractImagesFromPdf = async (
         console.log(`[ImageExtractorPdf] Processando página ${pageNum}/${doc.numPages}`);
         const page = await doc.getPage(pageNum);
         const ops = await page.getOperatorList();
+        const viewport = page.getViewport({ scale: 1.0 });
+        
+        // Rastreador de Matriz de Transformação (CTM)
+        let CTM = [1, 0, 0, 1, 0, 0];
+        const transformStack: any[] = [];
         
         let pageImageCount = 0;
         
         for (let j = 0; j < ops.fnArray.length; j++) {
-          // Verificar timeout a cada 100 operações
-          if (j % 100 === 0 && Date.now() - startTime > TIMEOUT_MS) {
-            console.warn(`[ImageExtractorPdf] Timeout durante processamento de operações`);
-            break;
+          const fn = ops.fnArray[j];
+          const args = ops.argsArray[j];
+
+          // Rastrear transformações e estado gráfico
+          if (fn === pdfjs.OPS.transform) {
+            const m = args;
+            CTM = [
+              CTM[0] * m[0] + CTM[2] * m[1],
+              CTM[1] * m[0] + CTM[3] * m[1],
+              CTM[0] * m[2] + CTM[2] * m[3],
+              CTM[1] * m[2] + CTM[3] * m[3],
+              CTM[0] * m[4] + CTM[2] * m[5] + CTM[4],
+              CTM[1] * m[4] + CTM[3] * m[5] + CTM[5]
+            ];
+          } else if (fn === pdfjs.OPS.save) {
+            transformStack.push([...CTM]);
+          } else if (fn === pdfjs.OPS.restore) {
+            if (transformStack.length > 0) CTM = transformStack.pop();
           }
-          
-          if (ops.fnArray[j] === pdfjs.OPS.paintImageXObject) {
-            const objId = ops.argsArray[j][0];
+
+          if (fn === pdfjs.OPS.paintImageXObject) {
+            const objId = args[0];
+            
+            // Posição atual baseada no CTM
+            const x = CTM[4];
+            const y = CTM[5];
+            const w = Math.abs(CTM[0]); // Aproximação da largura escalada
+            const h = Math.abs(CTM[3]); // Aproximação da altura escalada
             
             // NOVO: Timeout por imagem individual (3 segundos)
             const imgData = await Promise.race([
@@ -126,7 +151,10 @@ export const extractImagesFromPdf = async (
                       imageDataUrl: imageDataUrl,
                       width: imgData.width,
                       height: imgData.height,
-                      confidence: 90
+                      confidence: 90,
+                      spatialContext: {
+                        x, y, width: w, height: h, page: pageNum
+                      }
                     });
                     pageImageCount++;
                   }

@@ -115,16 +115,88 @@ export function normalizeExcelFontColor(
 }
 
 /**
+ * Detecta categoria visual baseado na COR DE FUNDO (background) da célula
+ * REGRA REAL DA FAMÍLIA CLINK:
+ * - Amarelo/Laranja = Novidade
+ * - Verde = Reposição
+ * - Preto/Padrão = Normal
+ */
+export function detectVisualCategoryFromBackgroundColor(
+  fillColor: string
+): 'novidade' | 'reposicao' | 'padrao' {
+  if (!fillColor || fillColor === 'default') return 'padrao';
+
+  const color = fillColor.toUpperCase().replace('#', '');
+
+  console.log(`[VisualRule BG] Analisando cor de fundo: ${fillColor} (normalizado: #${color})`);
+
+  // Função auxiliar para converter hex para RGB
+  const hexToRgb = (hex: string): { r: number; g: number; b: number } | null => {
+    const clean = hex.replace('#', '');
+    if (clean.length !== 6) return null;
+    return {
+      r: parseInt(clean.substring(0, 2), 16),
+      g: parseInt(clean.substring(2, 4), 16),
+      b: parseInt(clean.substring(4, 6), 16),
+    };
+  };
+
+  const rgb = hexToRgb(color);
+  if (rgb) {
+    // AMARELO/LARANJA = Novidade: R alto, G alto, B baixo
+    // Amarelo: R > 200, G > 200, B < 100
+    // Laranja: R > 200, G entre 100-180, B < 100
+    if (rgb.r > 180 && rgb.g > 120 && rgb.b < 100) {
+      // Diferenciar amarelo de laranja
+      if (rgb.g > 180) {
+        console.log(`[VisualRule BG] Cor identificada como AMARELO (Novidade)`);
+      } else {
+        console.log(`[VisualRule BG] Cor identificada como LARANJA (Novidade)`);
+      }
+      return 'novidade';
+    }
+
+    // VERDE = Reposição: G dominante, R e B baixos
+    if (rgb.g > 150 && rgb.g > rgb.r + 30 && rgb.g > rgb.b + 30) {
+      console.log(`[VisualRule BG] Cor identificada como VERDE (Reposição)`);
+      return 'reposicao';
+    }
+  }
+
+  // Fallback por cores exatas comuns
+  const yellowOrangeColors = [
+    'FFFF00', 'FFFF33', 'FFFF44', 'FFCC00', 'FFDD00', 'FFEE00',
+    'FF9900', 'FFAA00', 'FFBB00', 'FFCC33', 'FFCC66',
+    'FFC000', 'FFB000', 'FFA500' // Laranjas
+  ];
+  const greenColors = [
+    '00FF00', '33FF33', '44FF44', '00CC00', '00DD00', '00EE00',
+    '90EE90', '98FB98', '8FBC8F', '3CB371', '2E8B57'
+  ];
+
+  if (yellowOrangeColors.includes(color)) {
+    console.log(`[VisualRule BG] Cor identificada como AMARELO/LARANJA exato (Novidade)`);
+    return 'novidade';
+  }
+  if (greenColors.includes(color)) {
+    console.log(`[VisualRule BG] Cor identificada como VERDE exato (Reposição)`);
+    return 'reposicao';
+  }
+
+  console.log(`[VisualRule BG] Cor de fundo não mapeada, usando Padrão`);
+  return 'padrao';
+}
+
+/**
  * Detecta categoria visual baseado na cor da fonte
  * REGRA REAL DA FAMÍLIA CLINK:
  * - Vermelho = Promocional
  * - Azul = Preço Fixo
- * - Amarelo/Verde = Novidade/Reposição
  * - Preto/Padrão = Normal
  */
 export function detectVisualCategoryFromFontColor(
   fontColor: string
-): 'promocional' | 'preco-fixo' | 'novidade-reposicao' | 'padrao' {
+): 'promocional' | 'preco-fixo' | 'padrao' {
   if (!fontColor || fontColor === 'default') return 'padrao';
 
   const color = fontColor.toUpperCase().replace('#', '');
@@ -171,24 +243,13 @@ export function detectVisualCategoryFromFontColor(
       return 'preco-fixo';
     }
 
-    // Amarelo dominante: R > 150, G > 150, B < 100
-    if (rgb.r > 150 && rgb.g > 150 && rgb.b < 100) {
-      console.log(`[VisualRule] Cor identificada como AMARELO (Novidade/Reposição)`);
-      return 'novidade-reposicao';
-    }
-
-    // Verde dominante: G > 150 e G > R + 30 e G > B + 30
-    if (rgb.g > 150 && rgb.g > rgb.r + 30 && rgb.g > rgb.b + 30) {
-      console.log(`[VisualRule] Cor identificada como VERDE (Novidade/Reposição)`);
-      return 'novidade-reposicao';
-    }
+    // Amarelo e Verde são ignorados na cor da fonte (usam background)
+    // Agora tratados por detectVisualCategoryFromBackgroundColor
   }
 
   // Fallback por cores exatas comuns
   const redColors = ['FF0000', 'FF3333', 'FF4444', 'FF5555', 'FF6666', 'CC0000', 'DD0000', 'EE0000'];
   const blueColors = ['0000FF', '3333FF', '4444FF', '5555FF', '6666FF', '0066CC', '0000CC', '0000DD'];
-  const yellowColors = ['FFFF00', 'FFFF33', 'FFFF44', 'FFCC00', 'FFDD00', 'FFEE00', 'CCCC00'];
-  const greenColors = ['00FF00', '33FF33', '44FF44', '00CC00', '00DD00', '00EE00'];
 
   if (redColors.includes(color)) {
     console.log(`[VisualRule] Cor identificada como VERMELHO exato (Promocional)`);
@@ -197,10 +258,6 @@ export function detectVisualCategoryFromFontColor(
   if (blueColors.includes(color)) {
     console.log(`[VisualRule] Cor identificada como AZUL exato (Preço Fixo)`);
     return 'preco-fixo';
-  }
-  if (yellowColors.includes(color) || greenColors.includes(color)) {
-    console.log(`[VisualRule] Cor identificada como AMARELO/VERDE exato (Novidade/Reposição)`);
-    return 'novidade-reposicao';
   }
 
   console.log(`[VisualRule] Cor não mapeada, usando Padrão`);
@@ -294,16 +351,74 @@ async function extractCellStylesFromXML(fileData: ArrayBuffer): Promise<Map<stri
       }
     });
     
-    // 2. LER <cellXfs> → mapeia estilo index → font index
+    // 1.5. LER <fills> → extrair cores de fundo de cada <fill>
+    const fillElements = stylesDoc.querySelectorAll('fills > fill');
+    const fillColors: (string | null)[] = [];
+    
+    console.log(`[CellStyles XML BG] Encontradas ${fillElements.length} definições de fill (fundo)`);
+    
+    fillElements.forEach((fillEl, idx) => {
+      const patternFillEl = fillEl.querySelector('patternFill');
+      let color: string | null = null;
+      
+      if (patternFillEl) {
+        // Tentar fgColor primeiro, depois bgColor
+        const fgColorEl = patternFillEl.querySelector('fgColor');
+        const bgColorEl = patternFillEl.querySelector('bgColor');
+        const colorEl = fgColorEl || bgColorEl;
+        
+        if (colorEl) {
+          const rgb = colorEl.getAttribute('rgb');
+          const indexed = colorEl.getAttribute('indexed');
+          const theme = colorEl.getAttribute('theme');
+          
+          if (rgb) {
+            const cleanRgb = rgb.length === 8 ? rgb.substring(2) : rgb;
+            color = `#${cleanRgb}`;
+          } else if (indexed) {
+            const indexedColors = [
+              '#000000', '#FFFFFF', '#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF',
+              '#800000', '#008000', '#000080', '#808000', '#800080', '#008080', '#C0C0C0', '#808080',
+              '#9999FF', '#993366', '#FFFFCC', '#CCFFFF', '#660066', '#FF8080', '#0066CC', '#CCCCFF',
+              '#000080', '#FF00FF', '#FFFF00', '#00FFFF', '#800080', '#800000', '#008080', '#0000FF',
+              '#00CCFF', '#CCFFFF', '#CCFFCC', '#FFFF99', '#99CCFF', '#FF99CC', '#CC99FF', '#FFCC99',
+              '#3366FF', '#33CCCC', '#99CC00', '#FFCC00', '#FF9900', '#FF6600', '#666699', '#969696',
+              '#003366', '#339966', '#003300', '#333300', '#993300', '#993366', '#333399', '#333333'
+            ];
+            color = indexedColors[parseInt(indexed)] || null;
+          } else if (theme) {
+            const themeIndex = parseInt(theme);
+            const defaultThemeColors = [
+              '#FFFFFF', '#000000', '#E7E6E6', '#44546A',
+              '#4472C4', '#ED7D31', '#A5A5A5', '#FFC000',
+              '#5B9BD5', '#70AD47', '#0563C1', '#954F72'
+            ];
+            color = defaultThemeColors[themeIndex] || null;
+          }
+        }
+      }
+      
+      fillColors.push(color);
+      
+      if (color && color !== '#000000' && color !== '#FFFFFF') {
+        console.log(`[CellStyles XML BG] Fill #${idx}: cor=${color}`);
+      }
+    });
+    
+    // 2. LER <cellXfs> → mapeia estilo index → font index e fill index
     const cellXfElements = stylesDoc.querySelectorAll('cellXfs > xf');
     const styleToFont: number[] = [];
+    const styleToFill: number[] = [];
     
     cellXfElements.forEach((xfEl) => {
       const fontId = parseInt(xfEl.getAttribute('fontId') || '0');
+      const fillId = parseInt(xfEl.getAttribute('fillId') || '0');
       styleToFont.push(fontId);
+      styleToFill.push(fillId);
     });
     
     console.log(`[CellStyles XML] Mapeados ${styleToFont.length} estilos de célula para fontes`);
+    console.log(`[CellStyles XML BG] Mapeados ${styleToFill.length} estilos de célula para fills`);
     
     // 3. LER xl/worksheets/sheet1.xml → pegar o atributo s="" de cada <c> (célula)
     const sheetFile = zip.file('xl/worksheets/sheet1.xml');
@@ -328,6 +443,10 @@ async function extractCellStylesFromXML(fileData: ArrayBuffer): Promise<Map<stri
       const fontIdx = styleToFont[styleIdx] ?? 0;
       const fontColor = fontColors[fontIdx] ?? null;
       
+      // Resolver: célula → estilo → fill → cor de fundo
+      const fillIdx = styleToFill[styleIdx] ?? 0;
+      const fillColor = fillColors[fillIdx] ?? null;
+      
       const match = cellRef.match(/([A-Z]+)(\d+)/);
       const row = match ? parseInt(match[2]) : 0;
       const col = match ? match[1].charCodeAt(0) - 65 : 0;
@@ -337,12 +456,21 @@ async function extractCellStylesFromXML(fileData: ArrayBuffer): Promise<Map<stri
         row,
         col,
         fontColor: fontColor || undefined,
+        fillColor: fillColor || undefined,
       };
       
-      if (fontColor && fontColor !== '#000000' && fontColor !== '#FFFFFF') {
+      const hasSpecialFont = fontColor && fontColor !== '#000000' && fontColor !== '#FFFFFF';
+      const hasSpecialFill = fillColor && fillColor !== '#000000' && fillColor !== '#FFFFFF';
+      
+      if (hasSpecialFont || hasSpecialFill) {
         specialColors++;
         if (specialColors <= 30) {
-          console.log(`[CellStyles XML] Cor especial: ${cellRef} → fonte#${fontIdx} → ${fontColor}`);
+          if (hasSpecialFont) {
+            console.log(`[CellStyles XML] Cor fonte: ${cellRef} → fonte#${fontIdx} → ${fontColor}`);
+          }
+          if (hasSpecialFill) {
+            console.log(`[CellStyles XML BG] Cor fundo: ${cellRef} → fill#${fillIdx} → ${fillColor}`);
+          }
         }
       }
       
@@ -362,10 +490,13 @@ async function extractCellStylesFromXML(fileData: ArrayBuffer): Promise<Map<stri
 /**
  * Converte linhas de planilha em ProdutoBruto[]
  */
-const rowsToProdutosBrutos = (rows: Record<string, any>[]): ProdutoBruto[] => {
+const rowsToProdutosBrutos = (
+  rows: Record<string, any>[],
+  headerOffset: number = 0
+): ProdutoBruto[] => {
   return rows.map((row, idx) => ({
     campos: { ...row },
-    linhaOrigem: idx,
+    linhaOrigem: idx + headerOffset + 2, // Converte índice 0 para Linha 2 (se cabeçalho na linha 1)
   }));
 };
 
@@ -592,6 +723,7 @@ const normalizeExtracted = (
       isFixedPrice: (e as any).isFixedPrice,
       bloqueiaDesconto: (e as any).bloqueiaDesconto,
       informacoesAdicionais: (e as any).informacoesAdicionais,
+      spatialContext: e.spatialContext, // NOVO: Propagando coordenadas
     };
   });
 };
@@ -717,7 +849,7 @@ export const runImportPipeline = async (
     parserUsado = 'xlsx-direto';
     const spreadsheet = await readSpreadsheet(fileData, tipoArquivo);
     headers = spreadsheet.headers;
-    brutos = rowsToProdutosBrutos(spreadsheet.rows);
+    brutos = rowsToProdutosBrutos(spreadsheet.rows, spreadsheet.headerRowIndex);
 
     // NOVO: Adicionar estilos de célula aos produtos brutos para classificação visual
     // Isso permite que adapters da família CLINK detectem cores de fonte

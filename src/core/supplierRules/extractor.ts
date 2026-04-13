@@ -252,6 +252,7 @@ export const extractProducts = (
       confiancaExtracao: confianca,
       erros,
       warnings,
+      spatialContext: bruto.spatialContext, // NOVO: Propagando coordenadas
     });
   }
 

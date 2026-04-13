@@ -4,6 +4,7 @@
 // ===================================================================
 
 import { ImageExtractionResult } from '../pipeline/imageExtractor';
+import { SpatialContext } from '../images/imageTypes';
 
 /** Tipo de arquivo detectado na importação */
 export type TipoArquivo = 'xlsx' | 'xls' | 'csv' | 'pdf';
@@ -102,6 +103,7 @@ export interface ProdutoExtraido {
   confiancaExtracao: number;          // 0 a 100
   erros: string[];
   warnings: string[];
+  spatialContext?: SpatialContext;    // NOVO: Posição do texto do SKU no arquivo
 }
 
 /**
@@ -145,11 +147,13 @@ export interface ProdutoNormalizadoV2 {
   linhaOrigem?: number;
   confiancaExtracao?: number;
   // Campos visuais
-  visualCategory?: string;
+  visualCategory?: string;      // Categoria predominante (para regras de desconto)
+  visualTags?: string[];        // Todas as categorias detectadas (para filtros e sufixos)
   isPromotional?: boolean;
   isFixedPrice?: boolean;
   bloqueiaDesconto?: boolean;
   informacoesAdicionais?: string;
+  spatialContext?: SpatialContext;    // NOVO: Coordenadas consolidadas
 }
 
 /**

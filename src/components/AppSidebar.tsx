@@ -1,6 +1,7 @@
 import {
   LayoutDashboard, FileUp, Database, Tag, Download, ArrowRightLeft,
-  Building2, Settings as SettingsIcon, History, Workflow, LogOut
+  Building2, Settings as SettingsIcon, History, Workflow, LogOut,
+  FlaskConical
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -21,6 +22,7 @@ const menuItems = [
   { title: "Regras de Mapeamento", url: "/regras", icon: Workflow },
   { title: "Histórico", url: "/historico", icon: History },
   { title: "Configurações", url: "/configuracoes", icon: SettingsIcon },
+  { title: "Feature Flags", url: "/admin/feature-flags", icon: FlaskConical, admin: true },
 ];
 
 export function AppSidebar() {

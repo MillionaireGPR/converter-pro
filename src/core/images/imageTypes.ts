@@ -2,6 +2,14 @@
 // TIPOS DA CAMADA DE EXTRAÇÃO E PROCESSAMENTO DE IMAGENS
 // ===================================================================
 
+export interface SpatialContext {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  page: number;
+}
+
 export interface ImagemExtraida {
   originalName: string;
   temporaryId: string;
@@ -13,6 +21,7 @@ export interface ImagemExtraida {
   width?: number;
   height?: number;
   confidence: number;            // Qualidade presumida da extração
+  spatialContext?: SpatialContext; // NOVO: Posição exata na página
 }
 
 export interface ImagemAssociadaProduto {

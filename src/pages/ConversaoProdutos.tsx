@@ -355,240 +355,261 @@ export default function ConversaoProdutos() {
   const resultStats = resultData;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4">
+      {/* Título compacto */}
       <div>
-        <h1 className="text-3xl font-extrabold text-foreground tracking-tight">Conversão de Produtos</h1>
-        <p className="text-sm text-muted-foreground mt-1">Envie arquivos de fornecedores para processamento automático</p>
+        <h1 className="text-2xl font-bold text-foreground tracking-tight">Conversão de Produtos</h1>
+        <p className="text-xs text-muted-foreground">Envie arquivos de fornecedores para processamento automático</p>
       </div>
 
-<div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Coluna da Esquerda: Upload */}
-        <Card className="shadow-card lg:col-span-2">
-          <CardContent className="space-y-4">
-            <div
-              className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer ${
-                dragOver ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40 hover:bg-accent/30'
-              } ${selectedFile ? 'border-success/50 bg-success/5' : ''}`}
-              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={e => { 
-                e.preventDefault();
-                setDragOver(false); 
-                const file = e.dataTransfer.files[0];
-                if (file) {
-                  setSelectedFile(file);
-                  setTipoArquivo("excel");
-                  toast.success(`Arquivo ${file.name} recebido!`);
-                }
-              }}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                onChange={handleFileChange} 
-                accept={ACCEPTED_FILE_TYPES} 
-                className="hidden" 
-              />
-              <div className={`w-12 h-12 rounded-xl mx-auto mb-3 flex items-center justify-center shadow-sm ${selectedFile ? 'bg-success text-success-foreground' : 'gradient-primary text-primary-foreground'}`}>
-                {selectedFile ? <FileSpreadsheet className="h-5 w-5" /> : <Upload className="h-5 w-5" />}
+      {/* Grid principal: 12 colunas no desktop */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+        {/* Coluna Esquerda: Upload + Formulário (7 colunas) */}
+        <div className="xl:col-span-7 space-y-3">
+          <Card className="shadow-card">
+            <CardContent className="p-3 space-y-3">
+              {/* Área de upload compacta - horizontal */}
+              <div
+                className={`border-2 border-dashed rounded-lg p-4 transition-all cursor-pointer ${
+                  dragOver ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40 hover:bg-accent/30'
+                } ${selectedFile ? 'border-success/50 bg-success/5' : ''}`}
+                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={e => { 
+                  e.preventDefault();
+                  setDragOver(false); 
+                  const file = e.dataTransfer.files[0];
+                  if (file) {
+                    setSelectedFile(file);
+                    setTipoArquivo("excel");
+                    toast.success(`Arquivo ${file.name} recebido!`);
+                  }
+                }}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  onChange={handleFileChange} 
+                  accept={ACCEPTED_FILE_TYPES} 
+                  className="hidden" 
+                />
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center shadow-sm ${selectedFile ? 'bg-success text-success-foreground' : 'gradient-primary text-primary-foreground'}`}>
+                    {selectedFile ? <FileSpreadsheet className="h-4 w-4" /> : <Upload className="h-4 w-4" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-foreground truncate">
+                      {selectedFile ? selectedFile.name : 'Arraste ou clique para selecionar'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {selectedFile ? `${(selectedFile.size / 1024).toFixed(1)} KB` : '.xlsx, .xls, .csv, .pdf — máx 50MB'}
+                    </p>
+                  </div>
+                </div>
               </div>
-              <p className="text-sm font-semibold text-foreground">
-                {selectedFile ? selectedFile.name : 'Arraste ou clique para selecionar'}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                {selectedFile ? `${(selectedFile.size / 1024).toFixed(1)} KB` : '.xlsx, .xls, .csv, .pdf — máx 50MB'}
-              </p>
-            </div>
 
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium">Fornecedor</label>
-                <div className="flex flex-col gap-2">
+              {/* Formulário em 2 colunas */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">Fornecedor</label>
                   <Select value={fornecedor} onValueChange={setFornecedor}>
-                    <SelectTrigger><SelectValue placeholder="Selecionar fornecedor" /></SelectTrigger>
+                    <SelectTrigger className="h-9"><SelectValue placeholder="Selecionar" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="novo" className="font-semibold text-primary">+ Novo Fornecedor</SelectItem>
+                      <SelectItem value="novo" className="font-semibold text-primary">+ Novo</SelectItem>
                       {fornecedores.map(f => <SelectItem key={f.id} value={f.id}>{f.nome}</SelectItem>)}
                     </SelectContent>
                   </Select>
                   {fornecedor === 'novo' && (
                     <Input 
-                      placeholder="Nome do novo fornecedor (ex: Mondial)" 
+                      placeholder="Nome do fornecedor" 
                       value={novoFornecedor}
                       onChange={e => setNovoFornecedor(e.target.value)}
-                      className="border-primary/50 focus-visible:ring-primary"
+                      className="h-8 text-sm mt-1 border-primary/50"
                     />
                   )}
                 </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">Tipo de Arquivo</label>
+                  <Select value={tipoArquivo} onValueChange={setTipoArquivo}>
+                    <SelectTrigger className="h-9"><SelectValue placeholder="Selecionar" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="excel"><div className="flex items-center gap-2"><FileSpreadsheet className="h-3.5 w-3.5 text-success" /> Excel / CSV</div></SelectItem>
+                      <SelectItem value="pdf"><div className="flex items-center gap-2"><FileText className="h-3.5 w-3.5 text-destructive" /> PDF</div></SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium">Tipo de Arquivo</label>
-                <Select value={tipoArquivo} onValueChange={setTipoArquivo}>
-                  <SelectTrigger><SelectValue placeholder="Selecionar tipo" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="excel"><div className="flex items-center gap-2"><FileSpreadsheet className="h-4 w-4 text-success" /> Excel / CSV</div></SelectItem>
-                    <SelectItem value="pdf"><div className="flex items-center gap-2"><FileText className="h-4 w-4 text-destructive" /> PDF</div></SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
 
-            <Button
-              className="w-full gradient-primary text-primary-foreground font-semibold h-11 shadow-sm"
-              onClick={handleProcessar}
-              disabled={state === 'processing'}
-            >
-              {state === 'processing' ? (
-                <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Processando...</>
-              ) : (
-                <>Processar Arquivo</>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
-
-        {state !== 'idle' && (
-          <Card className="shadow-card overflow-hidden">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base font-semibold flex items-center gap-2">
+              <Button
+                className="w-full gradient-primary text-primary-foreground font-semibold h-9 shadow-sm"
+                onClick={handleProcessar}
+                disabled={state === 'processing'}
+              >
                 {state === 'processing' ? (
-                  <><Loader2 className="h-4 w-4 animate-spin text-primary" /> Processando...</>
-                ) : state === 'error' ? (
-                  <><AlertCircle className="h-4 w-4 text-destructive" /> Erro no Processamento</>
+                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Processando...</>
                 ) : (
-                  <><CheckCircle className="h-4 w-4 text-success" /> Processamento Concluído</>
+                  <>Processar Arquivo</>
                 )}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              {state === 'processing' && (
-                <div className="space-y-3">
-                  <Progress value={Math.min(progress, 100)} className="h-2" />
-                  <div className="rounded-lg p-4 space-y-2 bg-muted/50">
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <FileIcon className="h-4 w-4" /> Lendo arquivo...
-                    </div>
-                    <div className="h-2 w-3/4 rounded bg-muted animate-pulse" />
-                    <div className="h-2 w-1/2 rounded bg-muted animate-pulse" />
+              </Button>
+
+              {/* Info do processamento (quando done) - compacto */}
+              {state === 'done' && resultData && (
+                <div className="mt-3 pt-3 border-t border-dashed space-y-1.5 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Arquivo:</span>
+                    <span className="font-medium truncate max-w-[200px]" title={resultData.fileName}>{resultData.fileName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Fornecedor:</span>
+                    <span className="font-medium">{resultData.fornNome}</span>
+                  </div>
+                  {importMeta && (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Parser:</span>
+                        <Badge variant="outline" className="text-[10px] h-4 px-1">{importMeta.parserUsado}</Badge>
+                      </div>
+                      {importMeta.fornecedorDetectado && importMeta.fornecedorDetectado !== resultData.fornNome && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Detectado:</span>
+                          <span className="text-muted-foreground italic">{importMeta.fornecedorDetectado}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Confiança:</span>
+                        <span className="font-medium">{importMeta.confiancaExtracao}%</span>
+                      </div>
+                    </>
+                  )}
+                  <div className="flex justify-between items-center pt-1">
+                    <span className="text-muted-foreground">Status:</span>
+                    <StatusBadge status="processado" />
                   </div>
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </div>
 
-              {state === 'done' && resultData && resultStats && (
-                <>
-                  <div className="space-y-2.5 text-sm">
-                    <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Arquivo:</span><span className="font-medium">{resultData.fileName}</span></div>
-                    <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Fornecedor:</span><span className="font-medium">{resultData.fornNome}</span></div>
-                    <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Status:</span><StatusBadge status="processado" /></div>
-                    {importMeta && (
-                      <>
-                        <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Parser:</span><Badge variant="outline" className="text-[10px]">{importMeta.parserUsado}</Badge></div>
-                        {importMeta.fornecedorDetectado && (
-                          <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Detectado:</span><Badge variant="outline" className="text-[10px] bg-primary/10">{importMeta.fornecedorDetectado}</Badge></div>
-                        )}
-                        <div className="flex justify-between py-1.5 border-b border-dashed"><span className="text-muted-foreground">Confiança:</span><span className="font-medium text-sm">{importMeta.confiancaExtracao}%</span></div>
-                      </>
-                    )}
-                    <div className="flex justify-between py-1.5"><span className="text-muted-foreground">Produtos detectados:</span><span className="font-extrabold text-lg text-primary">{resultStats.total}</span></div>
+        {/* Coluna da Direita: Ações e Resumo (quando processing/done/error) ou Histórico (quando idle) */}
+        <div className="xl:col-span-5 space-y-3">
+          {/* Processing State */}
+          {state === 'processing' && (
+            <Card className="shadow-card overflow-hidden border-l-2 border-l-primary">
+              <CardHeader className="py-2 px-3">
+                <CardTitle className="text-xs font-semibold flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" /> Processando...
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-3 pb-3 space-y-2">
+                <Progress value={Math.min(progress, 100)} className="h-1.5" />
+                <div className="rounded p-2 space-y-1 bg-muted/50">
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <FileIcon className="h-3 w-3" /> Lendo arquivo...
                   </div>
-                  <div className="rounded-xl border overflow-hidden">
-                    <div className="flex items-center gap-2 text-sm p-3 bg-success/5 border-b border-success/10">
-                      <CheckCircle className="h-4 w-4 text-success" />
-                      <span className="font-medium text-success">{resultStats.ok} produtos importados com sucesso</span>
-                    </div>
-                    {resultStats.pendentes > 0 && (
-                      <div className="flex items-center gap-2 text-sm p-3 bg-warning/5 border-b border-warning/10">
-                        <AlertCircle className="h-4 w-4 text-warning" />
-                        <span className="font-medium text-warning">{resultStats.pendentes} produtos pendentes/incompletos</span>
-                      </div>
-                    )}
-                    {resultStats.erros > 0 && (
-                      <div className="flex items-center gap-2 text-sm p-3 bg-destructive/5 border-b border-destructive/10">
-                        <AlertCircle className="h-4 w-4 text-destructive" />
-                        <span className="font-medium text-destructive">{resultStats.erros} produtos com erro</span>
-                      </div>
-                    )}
-                    {resultData.duplicados > 0 && (
-                      <div className="flex items-center gap-2 text-sm p-3 bg-muted/50">
-                        <Info className="h-4 w-4 text-muted-foreground" />
-                        <span className="font-medium text-muted-foreground">{resultData.duplicados} duplicados removidos</span>
-                      </div>
-                    )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Done State - Total + Métricas + Ações */}
+          {state === 'done' && resultData && resultStats && (
+            <>
+              {/* Card do Total Destacado */}
+              <Card className="shadow-card overflow-hidden border-l-4 border-l-success bg-gradient-to-br from-success/5 to-background">
+                <CardContent className="p-4 text-center">
+                  <div className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Produtos Encontrados</div>
+                  <div className="text-4xl font-extrabold text-success mb-1">{resultStats.total}</div>
+                  <div className="flex items-center justify-center gap-1 text-xs">
+                    <CheckCircle className="h-3.5 w-3.5 text-success" />
+                    <span className="text-success font-medium">{resultStats.ok} importados com sucesso</span>
                   </div>
-                  
-                  {/* Seção das Imagens */}
-                  {imageResult && imageResult.totalImagesFound > 0 && (
-                    <div className="rounded-xl border overflow-hidden mt-4">
-                      <div className="flex items-center justify-between p-3 bg-primary/5 border-b border-primary/10">
-                        <div className="flex items-center gap-2 text-sm">
-                           <ImageIcon className="h-4 w-4 text-primary" />
-                           <span className="font-semibold text-primary">Métricas de Imagens</span>
-                        </div>
-                        <Badge variant="outline">{imageResult.totalImagesFound} Mídias Encontradas</Badge>
-                      </div>
-                      <div className="flex items-center gap-2 text-sm p-3 bg-background border-b">
-                         <CheckCircle className="h-4 w-4 text-success" />
-                         <span className="font-medium">{imageResult.totalImagesMatched} Imagens Associadas (SKU)</span>
-                      </div>
-                      {imageResult.totalImagesUnmatched > 0 && (
-                        <div className="flex items-center gap-2 text-sm p-3 bg-muted/30">
-                           <AlertCircle className="h-4 w-4 text-muted-foreground" />
-                           <span className="font-medium text-muted-foreground">{imageResult.totalImagesUnmatched} Imagens Não Associadas</span>
-                        </div>
+                  {(resultStats.pendentes > 0 || resultStats.erros > 0 || resultData.duplicados > 0) && (
+                    <div className="flex flex-wrap justify-center gap-2 mt-2 pt-2 border-t border-dashed">
+                      {resultStats.pendentes > 0 && (
+                        <Badge variant="outline" className="text-[10px] bg-warning/10 text-warning border-warning/20">{resultStats.pendentes} pendentes</Badge>
+                      )}
+                      {resultStats.erros > 0 && (
+                        <Badge variant="outline" className="text-[10px] bg-destructive/10 text-destructive border-destructive/20">{resultStats.erros} erros</Badge>
+                      )}
+                      {resultData.duplicados > 0 && (
+                        <Badge variant="outline" className="text-[10px] bg-muted">{resultData.duplicados} duplicados</Badge>
                       )}
                     </div>
                   )}
+                </CardContent>
+              </Card>
 
-                  <div className="flex gap-2 pt-2">
-                    <Button variant="outline" size="sm" className="flex-1 border-primary/20 text-primary hover:bg-primary/5" onClick={() => navigate('/base')}>
-                      Ver Base <ArrowRight className="h-3.5 w-3.5 ml-1" />
-                    </Button>
-                    <Button size="sm" className="flex-1 gradient-success text-primary-foreground font-semibold shadow-sm" onClick={() => navigate('/exportacoes')}>
-                      Exportar Mercos <ArrowRight className="h-3.5 w-3.5 ml-1" />
-                    </Button>
-                  </div>
-                  
-                  {imageResult && imageResult.images.length > 0 && (
-                    <div className="flex pt-2">
-                      <Button 
-                        size="sm" 
-                        className="w-full gradient-primary text-primary-foreground shadow-sm"
-                        disabled={isZipping}
-                        onClick={async () => {
-                           setIsZipping(true);
-                           try {
-                             await buildAndDownloadZip(imageResult, resultData.fornNome);
-                           } catch(e) {
-                             toast.error("Erro ao gerar arquivo de Imagens.");
-                           } finally {
-                             setIsZipping(false);
-                           }
-                        }}
-                      >
-                        {isZipping ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
-                        Baixar Zip Imagens
-                      </Button>
+              {/* Métricas de Imagens (se houver) */}
+              {imageResult && imageResult.totalImagesFound > 0 && (
+                <Card className="shadow-card overflow-hidden">
+                  <CardHeader className="py-2 px-3">
+                    <CardTitle className="text-xs font-semibold flex items-center gap-2">
+                      <ImageIcon className="h-3.5 w-3.5 text-primary" /> Imagens
+                      <Badge variant="outline" className="ml-auto text-[10px]">{imageResult.totalImagesFound} encontradas</Badge>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-3 pb-3 space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Associadas (SKU):</span>
+                      <span className="font-medium text-success">{imageResult.totalImagesMatched}</span>
                     </div>
-                  )}
-                </>
+                    {imageResult.totalImagesUnmatched > 0 && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">Não associadas:</span>
+                        <span className="font-medium text-warning">{imageResult.totalImagesUnmatched}</span>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
               )}
-            </CardContent>
-          </Card>
-        )}
 
-        {/* Coluna da Direita: Histórico (apenas quando idle) */}
+              {/* Botões de Ação */}
+              <div className="grid grid-cols-2 gap-2">
+                <Button size="sm" className="h-9 gradient-success text-primary-foreground font-semibold shadow-sm" onClick={() => navigate('/exportacoes')}>
+                  <ArrowRight className="h-3.5 w-3.5 mr-1" /> Exportar
+                </Button>
+                {imageResult && imageResult.images.length > 0 && (
+                  <Button 
+                    size="sm" 
+                    variant="outline"
+                    className="h-9 border-primary/30"
+                    disabled={isZipping}
+                    onClick={async () => {
+                       setIsZipping(true);
+                       try {
+                         await buildAndDownloadZip(imageResult, resultData.fornNome);
+                       } catch(e) {
+                         toast.error("Erro ao gerar arquivo de Imagens.");
+                       } finally {
+                         setIsZipping(false);
+                       }
+                    }}
+                  >
+                    {isZipping ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Download className="h-3.5 w-3.5 mr-1" />}
+                    Imagens
+                  </Button>
+                )}
+              </div>
+              
+              <Button variant="outline" size="sm" className="w-full h-8 border-primary/20 text-primary hover:bg-primary/5" onClick={() => navigate('/base')}>
+                Ver Base Completa <ArrowRight className="h-3.5 w-3.5 ml-1" />
+              </Button>
+            </>
+          )}
+
+        {/* Histórico (apenas quando idle) */}
         {state === 'idle' && ultimasConversoes.length > 0 && (
-          <div className="space-y-4">
-            <Card className="shadow-card border-l-2 border-l-primary">
-              <CardHeader className="py-3 px-4">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <History className="h-4 w-4 text-primary" />
-                  Últimas Conversões
-                  <Badge variant="secondary" className="ml-auto text-[10px]">{ultimasConversoes.length}</Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
+          <Card className="shadow-card border-l-2 border-l-primary">
+            <CardHeader className="py-3 px-4">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <History className="h-4 w-4 text-primary" />
+                Últimas Conversões
+                <Badge variant="secondary" className="ml-auto text-[10px]">{ultimasConversoes.length}</Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
                 <div className="divide-y divide-border">
                   {ultimasConversoes.map((conversao) => (
                     <div 
@@ -661,8 +682,8 @@ export default function ConversaoProdutos() {
                 </div>
               </CardContent>
             </Card>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );

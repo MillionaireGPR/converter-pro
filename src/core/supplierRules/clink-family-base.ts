@@ -6,21 +6,22 @@
 import { ProdutoBruto, ProdutoExtraido } from '../types/productPipeline';
 import { SupplierAdapter, FieldAliases, ExclusionRule } from './types';
 import { extractPrice, detectStockStatus, cleanDescription, normalizeSpaces } from '../normalizers/cleaners';
-import { CellStyleInfo, detectVisualCategoryFromFontColor } from '../pipeline/importPipeline';
+import { CellStyleInfo, detectVisualCategoryFromFontColor, detectVisualCategoryFromBackgroundColor } from '../pipeline/importPipeline';
 
 // ===================================================================
 // TIPOS ESTENDIDOS PARA FAMÍLIA CLINK
 // ===================================================================
 
-export type VisualCategory = 'promocional' | 'preco-fixo' | 'novidade-reposicao' | 'padrao';
+export type VisualCategory = 'promocional' | 'preco-fixo' | 'novidade' | 'reposicao' | 'padrao';
 
 export interface ClinkFamilyProduct extends ProdutoExtraido {
-  visualCategory?: VisualCategory;
-  visualColorRaw?: string;      // Cor bruta detectada
-  visualColorNormalized?: string; // Cor normalizada
+  visualCategory?: VisualCategory;  // Categoria predominante (para regras de desconto)
+  visualTags?: VisualCategory[];    // Todas as categorias detectadas (para filtros e sufixos)
+  visualColorRaw?: string;          // Cor bruta detectada
+  visualColorNormalized?: string;   // Cor normalizada
   isPromotional?: boolean;
   isFixedPrice?: boolean;
-  bloqueiaDesconto?: boolean; // Promocional/Preço Fixo bloqueiam desconto futuro
+  bloqueiaDesconto?: boolean;       // Promocional/Preço Fixo bloqueiam desconto futuro
   descontoAutomatico?: number;
   multiplo?: number;
   priceSource?: 'preco' | 'precoEspecial' | 'precoFinal' | 'precoPromocional';
@@ -29,9 +30,9 @@ export interface ClinkFamilyProduct extends ProdutoExtraido {
   precoFinal?: number;
   informacoesAdicionais?: string;
   // NOVO: Nome comercial para Mercos
-  nomeComercial?: string;       // Nome com sufixo ***PROMOCAO*** ou ***PRECO FIXO***
-  nomeBase?: string;            // Nome limpo sem sufixo
-  sufixoComercial?: string | null; // Sufixo aplicado (se houver)
+  nomeComercial?: string;           // Nome com sufixo ***PROMOCAO*** ou ***PRECO FIXO***
+  nomeBase?: string;                // Nome limpo sem sufixo
+  sufixoComercial?: string | null;   // Sufixo aplicado (se houver)
 }
 
 // ===================================================================
@@ -149,7 +150,6 @@ export function detectVisualCategoryFromCell(
   
   console.log(`[VisualRule DEBUG] detectVisualCategoryFromCell chamado: linhaReal=${linhaReal}, colunaDescricao=${colunaDescricao}, cellStyles size=${cellStyles?.size || 0}`);
   
-  // Tentar detectar por cor da fonte PRIMEIRO (regra real)
   if (cellStyles && cellStyles.size > 0) {
     // Buscar estilo da célula na coluna de descrição (geralmente onde a cor está)
     // Tentar várias colunas comuns: A (0), B (1), C (2)
@@ -157,6 +157,30 @@ export function detectVisualCategoryFromCell(
     
     console.log(`[VisualRule DEBUG] Verificando ${colunasParaVerificar.length} colunas na linha ${linhaReal}`);
     
+    // PRIMEIRO: Verificar COR DE FUNDO (background) para NOVIDADE e REPOSICAO
+    for (const col of colunasParaVerificar) {
+      const cellAddress = `${String.fromCharCode(65 + col)}${linhaReal}`;
+      const style = cellStyles.get(cellAddress);
+      
+      console.log(`[VisualRule DEBUG BG] Célula ${cellAddress}: style=${style ? 'encontrado' : 'não encontrado'}, fillColor=${style?.fillColor || 'n/a'}`);
+      
+      if (style && style.fillColor && style.fillColor !== 'default') {
+        const bgCategory = detectVisualCategoryFromBackgroundColor(style.fillColor);
+        
+        console.log(`[VisualRule BG] codigo=linha${linhaReal} fillColor=${style.fillColor} category=${bgCategory} source=color cell=${cellAddress}`);
+        
+        if (bgCategory !== 'padrao') {
+          return {
+            category: bgCategory,
+            colorRaw: style.fillColor,
+            colorNormalized: style.fillColor,
+            source: 'color'
+          };
+        }
+      }
+    }
+    
+    // SEGUNDO: Verificar COR DA FONTE para PROMOCAO e PRECO FIXO
     for (const col of colunasParaVerificar) {
       const cellAddress = `${String.fromCharCode(65 + col)}${linhaReal}`;
       const style = cellStyles.get(cellAddress);
@@ -197,6 +221,98 @@ export function detectVisualCategoryFromCell(
 }
 
 /**
+ * Detecta TODAS as categorias visuais de uma célula
+ * Permite múltiplas categorias (ex: reposicao + preco-fixo)
+ * Retorna array com todas as categorias detectadas
+ */
+export function detectAllVisualCategories(
+  cellStyles: Map<string, CellStyleInfo> | undefined,
+  linhaReal: number,
+  colunaDescricao: number = 1,
+  textoFallback?: string
+): { 
+  categories: VisualCategory[]; 
+  primaryCategory: VisualCategory;
+  colorRaw?: string; 
+  colorNormalized?: string; 
+  source: 'color' | 'fallback' 
+} {
+  const categories: VisualCategory[] = [];
+  let colorRaw: string | undefined;
+  let colorNormalized: string | undefined;
+  let source: 'color' | 'fallback' = 'fallback';
+  
+  console.log(`[VisualRule ALL] detectAllVisualCategories chamado: linhaReal=${linhaReal}`);
+  
+  if (cellStyles && cellStyles.size > 0) {
+    const colunasParaVerificar = [0, 1, 2, 3, 4]; // A, B, C, D, E
+    source = 'color';
+    
+    // PRIMEIRO: Verificar COR DE FUNDO (background) para NOVIDADE e REPOSICAO
+    for (const col of colunasParaVerificar) {
+      const cellAddress = `${String.fromCharCode(65 + col)}${linhaReal}`;
+      const style = cellStyles.get(cellAddress);
+      
+      if (style && style.fillColor && style.fillColor !== 'default') {
+        const bgCategory = detectVisualCategoryFromBackgroundColor(style.fillColor);
+        
+        if (bgCategory !== 'padrao' && !categories.includes(bgCategory)) {
+          categories.push(bgCategory);
+          colorRaw = style.fillColor;
+          colorNormalized = style.fillColor;
+          console.log(`[VisualRule ALL] BG detectado: ${bgCategory} em ${cellAddress}`);
+        }
+      }
+    }
+    
+    // SEGUNDO: Verificar COR DA FONTE para PROMOCAO e PRECO FIXO
+    for (const col of colunasParaVerificar) {
+      const cellAddress = `${String.fromCharCode(65 + col)}${linhaReal}`;
+      const style = cellStyles.get(cellAddress);
+      
+      if (style && style.fontColor && style.fontColor !== 'default') {
+        const fontCategory = detectVisualCategoryFromFontColor(style.fontColor);
+        
+        if (fontCategory !== 'padrao' && !categories.includes(fontCategory)) {
+          categories.push(fontCategory);
+          colorRaw = style.fontColor;
+          colorNormalized = style.fontColor;
+          console.log(`[VisualRule ALL] Fonte detectada: ${fontCategory} em ${cellAddress}`);
+        }
+      }
+    }
+  }
+  
+  // FALLBACK: Se não achou por cor, tentar por texto
+  if (categories.length === 0 && textoFallback) {
+    const category = detectVisualCategoryFromTextFallback(textoFallback);
+    if (category !== 'padrao') {
+      categories.push(category);
+      console.log(`[VisualRule ALL] Fallback texto: ${category}`);
+    }
+  }
+  
+  // Determinar categoria primária (para regras de desconto)
+  // Prioridade: promocional > preco-fixo > reposicao > novidade > padrao
+  let primaryCategory: VisualCategory = 'padrao';
+  if (categories.includes('promocional')) primaryCategory = 'promocional';
+  else if (categories.includes('preco-fixo')) primaryCategory = 'preco-fixo';
+  else if (categories.includes('reposicao')) primaryCategory = 'reposicao';
+  else if (categories.includes('novidade')) primaryCategory = 'novidade';
+  else if (categories.length > 0) primaryCategory = categories[0];
+  
+  console.log(`[VisualRule ALL] Resultado: categories=[${categories.join(', ')}], primary=${primaryCategory}`);
+  
+  return {
+    categories: categories.length > 0 ? categories : ['padrao'],
+    primaryCategory,
+    colorRaw,
+    colorNormalized,
+    source
+  };
+}
+
+/**
  * Detecta categoria visual por texto (FALLBACK SECUNDÁRIO)
  * Usado quando não é possível ler a cor da fonte
  */
@@ -227,16 +343,25 @@ function detectVisualCategoryFromTextFallback(texto: string): VisualCategory {
     if (pattern.test(texto)) return 'preco-fixo';
   }
 
-  // 3. Verificar se é novidade/reposição por texto
+  // 3. Verificar se é novidade por texto
   const novidadePatterns = [
     /novidade/i,
-    /reposi[cç][aã]o/i,
     /lan[cç]amento/i,
     /new/i,
     /novo/i,
   ];
   for (const pattern of novidadePatterns) {
-    if (pattern.test(texto)) return 'novidade-reposicao';
+    if (pattern.test(texto)) return 'novidade';
+  }
+
+  // 4. Verificar se é reposição por texto
+  const reposicaoPatterns = [
+    /reposi[cç][aã]o/i,
+    /restock/i,
+    /reabastecimento/i,
+  ];
+  for (const pattern of reposicaoPatterns) {
+    if (pattern.test(texto)) return 'reposicao';
   }
 
   return 'padrao';
@@ -392,12 +517,21 @@ export function calcularDescontoAutomatico(
         precoCalculado: precoBase
       };
 
-    case 'novidade-reposicao':
+    case 'novidade':
       // Novidade: sem bloqueio, permite desconto
       return {
         desconto: 0,
         bloqueiaDesconto: false,
-        motivo: 'Item novidade/reposição (fonte amarela/verde) - permite desconto',
+        motivo: 'Item novidade (fundo amarelo/laranja) - permite desconto',
+        precoCalculado: precoBase
+      };
+
+    case 'reposicao':
+      // Reposição: sem bloqueio, permite desconto
+      return {
+        desconto: 0,
+        bloqueiaDesconto: false,
+        motivo: 'Item reposição (fundo verde) - permite desconto',
         precoCalculado: precoBase
       };
 
@@ -444,8 +578,11 @@ export function buildInformacoesAdicionais(
       case 'preco-fixo':
         partes.push('Preço Fixo (desconto bloqueado)');
         break;
-      case 'novidade-reposicao':
+      case 'novidade':
         partes.push('Novidade');
+        break;
+      case 'reposicao':
+        partes.push('Reposição');
         break;
     }
   }
@@ -469,13 +606,17 @@ export function buildInformacoesAdicionais(
 
 const SUFIXO_PROMOCIONAL = '***PROMOCAO***';
 const SUFIXO_PRECO_FIXO = '***PRECO FIXO***';
+const SUFIXO_NOVIDADE = '***NOVIDADE***';
+const SUFIXO_REPOSICAO = '***REPOSICAO***';
 
 /**
  * Constrói o nome comercial final do produto com sufixo comercial
  * REGRA REAL:
- * - Promocional (vermelho) → adiciona " ***PROMOCAO***" no final
- * - Preço Fixo (azul) → adiciona " ***PRECO FIXO***" no final
- * - Novidade/Padrão → mantém nome base sem sufixo
+ * - Promocional (fonte vermelha) → adiciona " ***PROMOCAO***"
+ * - Preço Fixo (fonte azul) → adiciona " ***PRECO FIXO***"
+ * - Novidade (fundo amarelo/laranja) → adiciona " ***NOVIDADE***"
+ * - Reposição (fundo verde) → adiciona " ***REPOSICAO***"
+ * - Múltiplas categorias → todos os sufixos aplicáveis
  * 
  * Proteções:
  * - Não duplica sufixo se já existir
@@ -484,7 +625,7 @@ const SUFIXO_PRECO_FIXO = '***PRECO FIXO***';
  */
 export function buildCommercialProductName(
   nomeBase: string,
-  visualCategory: VisualCategory,
+  visualCategory: VisualCategory | VisualCategory[],
   nomeOriginal?: string
 ): { nomeComercial: string; nomeBase: string; sufixoAplicado: string | null } {
   // Limpar nome base
@@ -501,34 +642,31 @@ export function buildCommercialProductName(
     .replace(/\s*\*\*\*PROMOCAO\*\*\*$/i, '')
     .replace(/\s*\*\*\*PRECO FIXO\*\*\*$/i, '')
     .replace(/\s*\*\*\*PREÇO FIXO\*\*\*$/i, '')
+    .replace(/\s*\*\*\*NOVIDADE\*\*\*$/i, '')
+    .replace(/\s*\*\*\*REPOSICAO\*\*\*$/i, '')
     .trim();
   
-  // Determinar sufixo baseado na categoria visual
-  let sufixo: string | null = null;
+  // Normalizar para array (suporta uma ou múltiplas categorias)
+  const categories = Array.isArray(visualCategory) ? visualCategory : [visualCategory];
+  const sufixos: string[] = [];
   
-  switch (visualCategory) {
-    case 'promocional':
-      sufixo = ` ${SUFIXO_PROMOCIONAL}`;
-      break;
-    case 'preco-fixo':
-      sufixo = ` ${SUFIXO_PRECO_FIXO}`;
-      break;
-    case 'novidade-reposicao':
-    case 'padrao':
-    default:
-      sufixo = null;
-      break;
-  }
+  // Aplicar sufixos na ordem de prioridade: PROMO > FIXO > REPOS > NOVO
+  if (categories.includes('promocional')) sufixos.push(` ${SUFIXO_PROMOCIONAL}`);
+  if (categories.includes('preco-fixo')) sufixos.push(` ${SUFIXO_PRECO_FIXO}`);
+  if (categories.includes('reposicao')) sufixos.push(` ${SUFIXO_REPOSICAO}`);
+  if (categories.includes('novidade')) sufixos.push(` ${SUFIXO_NOVIDADE}`);
+  
+  const sufixoFinal = sufixos.length > 0 ? sufixos.join('') : null;
   
   // Montar nome comercial final
-  const nomeComercial = sufixo 
-    ? `${nomeLimpo}${sufixo}` 
+  const nomeComercial = sufixoFinal 
+    ? `${nomeLimpo}${sufixoFinal}` 
     : nomeLimpo;
   
   return {
     nomeComercial,
     nomeBase: nomeLimpo,
-    sufixoAplicado: sufixo?.trim() || null
+    sufixoAplicado: sufixoFinal?.trim() || null
   };
 }
 
@@ -538,7 +676,10 @@ export function buildCommercialProductName(
 export function hasCommercialSuffix(nome: string): boolean {
   if (!nome) return false;
   const upper = nome.toUpperCase();
-  return upper.includes(SUFIXO_PROMOCIONAL) || upper.includes(SUFIXO_PRECO_FIXO);
+  return upper.includes(SUFIXO_PROMOCIONAL) || 
+         upper.includes(SUFIXO_PRECO_FIXO) ||
+         upper.includes(SUFIXO_NOVIDADE) ||
+         upper.includes(SUFIXO_REPOSICAO);
 }
 
 /**
@@ -550,6 +691,8 @@ export function removeCommercialSuffix(nome: string): string {
     .replace(/\s*\*\*\*PROMOCAO\*\*\*$/i, '')
     .replace(/\s*\*\*\*PRECO FIXO\*\*\*$/i, '')
     .replace(/\s*\*\*\*PREÇO FIXO\*\*\*$/i, '')
+    .replace(/\s*\*\*\*NOVIDADE\*\*\*$/i, '')
+    .replace(/\s*\*\*\*REPOSICAO\*\*\*$/i, '')
     .trim();
 }
 
@@ -576,7 +719,8 @@ export function extractClinkFamily(
   const contadores = {
     promocional: 0,
     precoFixo: 0,
-    novidadeReposicao: 0,
+    novidade: 0,
+    reposicao: 0,
     padrao: 0,
     byColor: 0,
     byFallback: 0
@@ -644,32 +788,37 @@ export function extractClinkFamily(
 
     const allValues = Object.values(campos).map(String).join(' ');
 
-    // === DETECÇÃO VISUAL POR COR DE FONTE (REGRA REAL) ===
+    // === DETECÇÃO VISUAL POR COR (REGRA REAL) - AGORA COM MÚLTIPLAS CATEGORIAS ===
     const cellStyles = campos.__cellStyles as Map<string, CellStyleInfo> | undefined;
     const linhaReal = campos.__linhaReal as number | undefined;
 
-    const visualDetection = detectVisualCategoryFromCell(
+    const visualDetection = detectAllVisualCategories(
       cellStyles,
       linhaReal || (idx + 1),
       1, // Coluna de descrição
       `${descricao} ${descricaoComplementar}`
     );
 
-    const visualCategory = visualDetection.category;
+    const visualCategory = visualDetection.primaryCategory;  // Para regras de desconto
+    const visualTags = visualDetection.categories;           // Para filtros e sufixos
     
-    // Atualizar contadores
+    // Atualizar contadores (contar todas as categorias)
     if (visualDetection.source === 'color') {
       contadores.byColor++;
     } else {
       contadores.byFallback++;
     }
     
-    switch (visualCategory) {
-      case 'promocional': contadores.promocional++; break;
-      case 'preco-fixo': contadores.precoFixo++; break;
-      case 'novidade-reposicao': contadores.novidadeReposicao++; break;
-      default: contadores.padrao++;
-    }
+    // Contar cada categoria individualmente (um produto pode ter múltiplas)
+    visualTags.forEach(cat => {
+      switch (cat) {
+        case 'promocional': contadores.promocional++; break;
+        case 'preco-fixo': contadores.precoFixo++; break;
+        case 'novidade': contadores.novidade++; break;
+        case 'reposicao': contadores.reposicao++; break;
+        case 'padrao': contadores.padrao++; break;
+      }
+    });
 
     // === EXTRAÇÃO DE MÚLTIPLO E CAIXA ===
     let multiplo = extractMultiplo(`${descricao} ${descricaoComplementar} ${allValues}`);
@@ -724,7 +873,8 @@ export function extractClinkFamily(
 
     // === NOME COMERCIAL FINAL (REGRA REAL MERCOS) ===
     // Aplicar ANTES de qualquer outra transformação para preservar o sufixo
-    const nomeComercialResult = buildCommercialProductName(descricaoLimpa, visualCategory);
+    // Agora passa visualTags para aplicar múltiplos sufixos quando houver
+    const nomeComercialResult = buildCommercialProductName(descricaoLimpa, visualTags);
     const nomeComercial = nomeComercialResult.nomeComercial;
     const nomeBase = nomeComercialResult.nomeBase;
     const sufixoComercial = nomeComercialResult.sufixoAplicado;
@@ -767,11 +917,12 @@ export function extractClinkFamily(
       ncm,
       ipi,
       statusEstoque,
-      // NOVO: Classificação visual
+      // NOVO: Classificação visual (múltiplas categorias)
       visualCategory,
+      visualTags,
       visualColorRaw: visualDetection.colorRaw,
       visualColorNormalized: visualDetection.colorNormalized,
-      // NOVO: Flags de regras de negócio
+      // NOVO: Flags de regras de negócio (baseado na categoria primária)
       isPromotional: visualCategory === 'promocional',
       isFixedPrice: visualCategory === 'preco-fixo',
       bloqueiaDesconto,
@@ -794,7 +945,7 @@ export function extractClinkFamily(
 
   // Log final de métricas
   console.log(`[ClinkFamily] Extração concluída: ${produtos.length} produtos`);
-  console.log(`[ClinkFamily] Categorias: Promocional=${contadores.promocional} PreçoFixo=${contadores.precoFixo} Novidade=${contadores.novidadeReposicao} Padrão=${contadores.padrao}`);
+  console.log(`[ClinkFamily] Categorias: Promocional=${contadores.promocional} PreçoFixo=${contadores.precoFixo} Novidade=${contadores.novidade} Reposição=${contadores.reposicao} Padrão=${contadores.padrao}`);
   console.log(`[ClinkFamily] Detecção: PorCor=${contadores.byColor} Fallback=${contadores.byFallback}`);
 
   return produtos;

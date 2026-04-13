@@ -79,3 +79,26 @@ Antes, durante e depois de cada intervenção, a IA DEVE:
 - **NUNCA:** Mesclar ou misturar manipulação estrutural de lógicas da Fase 1 (Produtos) na Fase 2 (Pedidos). São módulos totalmente paralelos com tipagens diferentes.
 - **NUNCA:** Sugerir ao usuário edições dentro do construtor visual Lovable. Todas correções de código devem ser locais, preservando a verba e os créditos da plataforma.
 - **NUNCA:** Propor serviços/libs pagos para novas features; Priorize serviços open-source ou tier gratuitos generosos ao projetar novas soluções.
+
+---
+
+## 8. Alterações Recentes (Log)
+
+### 2026-04-13: Múltiplas Categorias Visuais
+Implementado suporte para produtos com múltiplas categorias visuais simultâneas (ex: REPOSIÇÃO + PREÇO FIXO).
+
+**Arquivos Modificados:**
+- `src/core/types/productPipeline.ts` - Adicionado campo `visualTags?: string[]`
+- `src/core/supplierRules/clink-family-base.ts` - Nova função `detectAllVisualCategories()`, suporte a múltiplos sufixos
+- `src/context/AppContext.tsx` - Interface `Produto` atualizada, mapeamento `visualTags` em `addProdutosNormalizados()`
+- `src/pages/DescontosCatalogos.tsx` - Filtros e badges usam `visualTags`, botões de bloqueio para todas as categorias
+- `src/pages/ExportacoesMercos.tsx` - Preview mostra todas as categorias
+
+**Regras:**
+- Categoria primária (para desconto): PROMO > FIXO > REPOS > NOVO > PADRAO
+- Um produto pode ter múltiplas tags: `['reposicao', 'preco-fixo']`
+- Sufixos são aplicados na ordem: PROMO → FIXO → REPOS → NOVO
+- Produtos aparecem em TODOS os filtros das categorias que possuem
+
+**Bug Corrigido:**
+- `src/core/pipeline/smartPdfInterpreter.ts` - Corrigido escopo de chaves que fechava o `if (template...)` cedo demais

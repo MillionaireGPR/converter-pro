@@ -50,7 +50,8 @@ export interface Produto {
   ipi: number;
   unidade: string;
   // Campos visuais (família CLINK/FLASH/MOMENT)
-  visualCategory?: 'promocional' | 'preco-fixo' | 'novidade-reposicao' | 'padrao';
+  visualCategory?: 'promocional' | 'preco-fixo' | 'novidade' | 'reposicao' | 'padrao';
+  visualTags?: ('promocional' | 'preco-fixo' | 'novidade' | 'reposicao' | 'padrao')[];
   isPromotional?: boolean;
   isFixedPrice?: boolean;
   bloqueiaDesconto?: boolean;
@@ -260,6 +261,7 @@ interface AppContextType {
   fornecedores: Fornecedor[];
   arquivos: ArquivoProcessado[];
   produtosPadronizados: Produto[];
+  setProdutosPadronizados?: React.Dispatch<React.SetStateAction<Produto[]>>;
   regrasMapeamento: RegraMapeamento[];
   descontos: DescontoSalvo[];
   exportacoesMercos: ExportacaoMercos[];
@@ -502,12 +504,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       // Salvar no estado
       setConversoesSalvas(prev => {
-        const atualizado = [novaConversao, ...prev].slice(0, 50); // Manter apenas últimas 50
-        // Persistir no localStorage
+        const atualizado = [novaConversao, ...prev].slice(0, 10); 
+        
+        // Persistir no localStorage (Versão leve sem as URLs de imagem pesadas)
         try {
-          localStorage.setItem(CONVERSOES_STORAGE_KEY, JSON.stringify(atualizado));
+          const versaoLeve = atualizado.map(c => ({
+            ...c,
+            // Removemos as imagens do localStorage para economizar espaço
+            // O usuário pode ver a lista, mas o download depende do processamento ativo
+            imagens: c.imagens?.map(img => ({ id: img.id, nome: img.nome, temporaryId: img.temporaryId })) || []
+          }));
+          localStorage.setItem(CONVERSOES_STORAGE_KEY, JSON.stringify(versaoLeve));
         } catch (e) {
-          console.warn('[Flow MVP] Erro ao salvar conversões no localStorage:', e);
+          console.warn('[Flow MVP] Erro ao salvar conversões (Quota). Limpando histórico antigo...');
+          localStorage.removeItem(CONVERSOES_STORAGE_KEY);
         }
         return atualizado;
       });
@@ -781,6 +791,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           codigoOriginal: p.original_code,
           codigoFinal: p.final_code || '',
           visualCategory: (p as any).visual_category || undefined,
+          visualTags: (p as any).visual_tags || ((p as any).visual_category ? [(p as any).visual_category] : []),
           isPromotional: (p as any).is_promotional || false,
           isFixedPrice: (p as any).is_fixed_price || false,
           bloqueiaDesconto: (p as any).bloqueia_desconto || false,
@@ -860,6 +871,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       erros: p.erros || [],
       // Campos visuais mapeados do pipeline CLINK
       visualCategory: anyProd.visualCategory || anyProd.visual_category || undefined,
+      visualTags: anyProd.visualTags || (anyProd.visualCategory ? [anyProd.visualCategory] : []),
       isPromotional: anyProd.isPromotional || false,
       isFixedPrice: anyProd.isFixedPrice || false,
       bloqueiaDesconto: anyProd.bloqueiaDesconto || anyProd.bloqueia_desconto || false,
@@ -1206,7 +1218,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   return (
     <AppContext.Provider value={{
-      fornecedores, arquivos, produtosPadronizados, regrasMapeamento, descontos,
+      fornecedores, arquivos, produtosPadronizados, setProdutosPadronizados, regrasMapeamento, descontos,
       exportacoesMercos, catalogosGerados, pedidosConvertidos, historico, conversoesSalvas,
       dashboard, detectedHeaders, isLoading,
       processarArquivo, addProdutos, addProdutosNormalizados, updateProduto, validarProdutos, aplicarDesconto, aplicarIpi,

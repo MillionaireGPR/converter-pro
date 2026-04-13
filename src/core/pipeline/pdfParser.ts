@@ -15,38 +15,76 @@ let pdfjsLib: any = null;
 const loadPdfJs = async (): Promise<any> => {
   if (pdfjsLib) return pdfjsLib;
   try {
-    const pdfjs = await import('pdfjs-dist');
+    // Usar a versão exata do package.json para evitar inconsistências
+    const version = '5.6.205';
+    const cdnUrl = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/build/pdf.mjs`;
     
-    // A partir da v4+, o pacote dist usa preferencialmente .mjs
-    // Vamos usar o jsdelivr apontando para a build unificada
-    pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+    // Importação dinâmica via URL com ignore do Vite para evitar bugs de resolução
+    const pdfjs = await import(/* @vite-ignore */ cdnUrl);
+    
+    pdfjs.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
     
     pdfjsLib = pdfjs;
     return pdfjs;
   } catch (err) {
-    console.error('[PDF Parser] Falha ao carregar pdfjs-dist:', err);
-    throw new Error('Biblioteca de leitura de PDF não disponível. Verifique sua conexão ou instale: npm install pdfjs-dist');
+    console.error('[PDF Parser] Falha ao carregar pdfjs-dist via CDN:', err);
+    
+    // Fallback: tentar importação local se o CDN falhar
+    try {
+      const pdfjsLocal = await import('pdfjs-dist');
+      pdfjsLib = pdfjsLocal;
+      return pdfjsLocal;
+    } catch (localErr) {
+      throw new Error('Biblioteca de leitura de PDF não disponível. Verifique sua conexão.');
+    }
   }
 };
 
+export interface PdfTextItem {
+  str: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface PdfPageData {
+  pageNum: number;
+  text: string;
+  items: PdfTextItem[];
+}
+
 /**
- * Extrai texto de todas as páginas de um PDF.
+ * Extrai texto e coordenadas de todas as páginas de um PDF.
  */
 export const extractTextFromPDF = async (
   fileData: ArrayBuffer
-): Promise<{ pages: { pageNum: number; text: string }[]; totalPages: number }> => {
+): Promise<{ pages: PdfPageData[]; totalPages: number }> => {
   const pdfjs = await loadPdfJs();
   const doc = await pdfjs.getDocument({ data: fileData }).promise;
 
-  const pages: { pageNum: number; text: string }[] = [];
+  const pages: PdfPageData[] = [];
 
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
+    const viewport = page.getViewport({ scale: 1.0 });
     const content = await page.getTextContent();
-    const text = content.items
-      .map((item: any) => item.str)
-      .join(' ');
-    pages.push({ pageNum: i, text });
+    
+    const items: PdfTextItem[] = content.items.map((item: any) => ({
+      str: item.str,
+      x: item.transform[4],
+      y: item.transform[5],
+      w: item.width,
+      h: item.height
+    }));
+
+    const text = items.map(it => it.str).join(' ');
+    
+    pages.push({ 
+      pageNum: i, 
+      text,
+      items
+    });
   }
 
   return { pages, totalPages: doc.numPages };

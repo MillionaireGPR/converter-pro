@@ -246,6 +246,61 @@ export default function ExportacoesMercos() {
         </div>
       </div>
 
+      {/* Filtros - SEMPRE visíveis */}
+      <Card className="shadow-card">
+        <CardContent className="p-4">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input 
+                placeholder="Buscar por código ou nome..." 
+                className="pl-9 bg-card" 
+                value={busca} 
+                onChange={e => setBusca(e.target.value)} 
+              />
+            </div>
+            <Select value={filtroFornecedor} onValueChange={setFiltroFornecedor}>
+              <SelectTrigger className="w-full sm:w-44 bg-card">
+                <SelectValue placeholder="Fornecedor" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos fornecedores</SelectItem>
+                {fornecedores.map(f => <SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={filtroStatus} onValueChange={(v: any) => setFiltroStatus(v)}>
+              <SelectTrigger className="w-full sm:w-40 bg-card">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos status</SelectItem>
+                <SelectItem value="validado">Validado</SelectItem>
+                <SelectItem value="erro">Com Erro</SelectItem>
+                <SelectItem value="pendente">Pendente</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={filtroCampoFaltando} onValueChange={(v: any) => setFiltroCampoFaltando(v)}>
+              <SelectTrigger className="w-full sm:w-52 bg-card">
+                <Filter className="h-4 w-4 mr-2 text-muted-foreground" />
+                <SelectValue placeholder="Dados faltando" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos os campos</SelectItem>
+                <SelectItem value="codigo">Sem Código</SelectItem>
+                <SelectItem value="nome">Sem Nome</SelectItem>
+                <SelectItem value="preco">Sem Preço</SelectItem>
+                <SelectItem value="ipi">Sem IPI</SelectItem>
+                <SelectItem value="descricao">Sem Descrição</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-2 mt-3 text-xs text-muted-foreground">
+            <Filter className="h-3.5 w-3.5" />
+            <span>Exibindo {displayProducts.length} produto(s) filtrado(s) de {produtosPadronizados.length} total</span>
+          </div>
+        </CardContent>
+      </Card>
+
       {displayProducts.length === 0 ? (
         <Card className="shadow-card">
           <CardContent className="p-12 text-center">
@@ -256,63 +311,7 @@ export default function ExportacoesMercos() {
           </CardContent>
         </Card>
       ) : (
-        <>
-          {/* Filtros de colunas */}
-          <Card className="shadow-card">
-            <CardContent className="p-4">
-              <div className="flex flex-col sm:flex-row gap-3">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    placeholder="Buscar por código ou nome..." 
-                    className="pl-9 bg-card" 
-                    value={busca} 
-                    onChange={e => setBusca(e.target.value)} 
-                  />
-                </div>
-                <Select value={filtroFornecedor} onValueChange={setFiltroFornecedor}>
-                  <SelectTrigger className="w-full sm:w-44 bg-card">
-                    <SelectValue placeholder="Fornecedor" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todos">Todos fornecedores</SelectItem>
-                    {fornecedores.map(f => <SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <Select value={filtroStatus} onValueChange={(v: any) => setFiltroStatus(v)}>
-                  <SelectTrigger className="w-full sm:w-40 bg-card">
-                    <SelectValue placeholder="Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todos">Todos status</SelectItem>
-                    <SelectItem value="validado">Validado</SelectItem>
-                    <SelectItem value="erro">Com Erro</SelectItem>
-                    <SelectItem value="pendente">Pendente</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Select value={filtroCampoFaltando} onValueChange={(v: any) => setFiltroCampoFaltando(v)}>
-                  <SelectTrigger className="w-full sm:w-52 bg-card">
-                    <Filter className="h-4 w-4 mr-2 text-muted-foreground" />
-                    <SelectValue placeholder="Dados faltando" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todos">Todos os campos</SelectItem>
-                    <SelectItem value="codigo">Sem Código</SelectItem>
-                    <SelectItem value="nome">Sem Nome</SelectItem>
-                    <SelectItem value="preco">Sem Preço</SelectItem>
-                    <SelectItem value="ipi">Sem IPI</SelectItem>
-                    <SelectItem value="descricao">Sem Descrição</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-center gap-2 mt-3 text-xs text-muted-foreground">
-                <Filter className="h-3.5 w-3.5" />
-                <span>Exibindo {displayProducts.length} produto(s) filtrado(s) de {produtosPadronizados.length} total</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <Card className="shadow-card">
             <CardHeader><CardTitle className="text-base">Checklist de Validação</CardTitle></CardHeader>
             <CardContent className="space-y-3">
@@ -347,8 +346,8 @@ export default function ExportacoesMercos() {
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">Preview da Exportação ({mercosResult.validos.length} válidos / {mercosResult.invalidos.length} inválidos)</CardTitle>
                 <div className="flex gap-2">
-                  <Badge variant="outline" className="text-xs">Schema Mercos Fixo</Badge>
-                  <Badge variant="outline" className="text-xs">{MERCOS_EXPORT_COLUMNS.length} colunas</Badge>
+                  <Badge variant="outline" className="text-xs">Schema Mercos</Badge>
+                  <Badge variant="outline" className="text-xs">{MERCOS_EXPORT_COLUMNS.length} cols</Badge>
                 </div>
               </div>
             </CardHeader>
@@ -357,7 +356,7 @@ export default function ExportacoesMercos() {
                 <div className="flex items-center justify-between p-3 bg-destructive/5 rounded-lg border border-destructive/10">
                   <div className="flex items-center gap-2">
                     <FileWarning className="h-4 w-4 text-destructive" />
-                    <span className="text-sm font-medium text-destructive">{mercosResult.invalidos.length} produtos excluídos da exportação (campos obrigatórios ausentes)</span>
+                    <span className="text-sm font-medium text-destructive">{mercosResult.invalidos.length} produtos excluídos (campos obrigatórios ausentes)</span>
                   </div>
                   <Button variant="ghost" size="sm" className="text-xs h-7" onClick={handleExportarErros}>
                     Exportar Erros
@@ -365,66 +364,73 @@ export default function ExportacoesMercos() {
                 </div>
               )}
               <div className="overflow-x-auto">
-                <Table>
+                <Table className="text-xs">
                   <TableHeader>
                     <TableRow>
-                      <SortableHeader field="codigo">Código do produto*</SortableHeader>
-                      <SortableHeader field="nome">Nome do produto*</SortableHeader>
-                      <TableHead className="text-center">Categoria</TableHead>
-                      <SortableHeader field="preco" className="text-right">Preço de Tabela*</SortableHeader>
-                      <SortableHeader field="ipi" className="text-right">IPI</SortableHeader>
-                      <TableHead>Informações adicionais</TableHead>
-                      <TableHead className="text-center">Bloqueio</TableHead>
-                      <SortableHeader field="status">Status</SortableHeader>
+                      <SortableHeader field="codigo">Código*</SortableHeader>
+                      <SortableHeader field="nome">Produto*</SortableHeader>
+                      <TableHead className="text-center w-20">Cat.</TableHead>
+                      <SortableHeader field="preco" className="text-right">Preço*</SortableHeader>
+                      <SortableHeader field="ipi" className="text-right w-16">IPI</SortableHeader>
+                      <TableHead className="w-24">Info</TableHead>
+                      <TableHead className="text-center w-16">Blk</TableHead>
+                      <SortableHeader field="status" className="w-16">Status</SortableHeader>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {mercosResult.validos.slice(0, 50).map((p, idx) => {
-                      // Buscar produto original para ter acesso aos campos de bloqueio
                       const produtoOriginal = produtosFiltrados.find(prod => 
                         (prod.codigoFinal || prod.codigoOriginal) === p['Código do produto (recomendado)']
                       );
                       const isBloqueado = produtoOriginal?.bloqueiaDesconto || false;
-                      const visualCat = produtoOriginal?.visualCategory;
+                      const visualTags = produtoOriginal?.visualTags || [];
                       return (
                         <TableRow key={idx} className={isBloqueado ? 'bg-amber-50/50 dark:bg-amber-950/10' : ''}>
-                          <TableCell className="font-mono text-xs">{p['Código do produto (recomendado)']}</TableCell>
-                          <TableCell className="text-sm max-w-[240px] truncate">
-                            <div className="flex items-center gap-1.5">
-                              {visualCat === 'promocional' && (
-                                <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-red-500 text-white">PROMO</span>
+                          <TableCell className="font-mono text-[10px] whitespace-nowrap">{p['Código do produto (recomendado)']}</TableCell>
+                          <TableCell className="text-xs max-w-[180px]">
+                            <div className="flex items-center gap-1">
+                              {visualTags.includes('promocional') && (
+                                <span className="shrink-0 px-1 py-0 rounded text-[7px] font-bold bg-red-500 text-white">P</span>
                               )}
-                              {visualCat === 'preco-fixo' && (
-                                <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-blue-500 text-white">FIXO</span>
+                              {visualTags.includes('preco-fixo') && (
+                                <span className="shrink-0 px-1 py-0 rounded text-[7px] font-bold bg-blue-500 text-white">F</span>
                               )}
-                              {p['Nome do produto (obrigatório)']}
+                              {visualTags.includes('novidade') && (
+                                <span className="shrink-0 px-1 py-0 rounded text-[7px] font-bold bg-amber-500 text-white">N</span>
+                              )}
+                              {visualTags.includes('reposicao') && (
+                                <span className="shrink-0 px-1 py-0 rounded text-[7px] font-bold bg-emerald-500 text-white">R</span>
+                              )}
+                              <span className="truncate">{p['Nome do produto (obrigatório)']}</span>
                             </div>
                           </TableCell>
                           <TableCell className="text-center">
-                            {visualCat === 'promocional' && (
-                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">PROMOÇÃO</span>
+                            {visualTags.includes('promocional') && (
+                              <span className="px-1 py-0 rounded text-[8px] font-bold bg-red-100 text-red-700">PROMO</span>
                             )}
-                            {visualCat === 'preco-fixo' && (
-                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">PREÇO FIXO</span>
+                            {visualTags.includes('preco-fixo') && (
+                              <span className="px-1 py-0 rounded text-[8px] font-bold bg-blue-100 text-blue-700">FIXO</span>
                             )}
-                            {visualCat !== 'promocional' && visualCat !== 'preco-fixo' && '-'}
+                            {visualTags.includes('novidade') && (
+                              <span className="px-1 py-0 rounded text-[8px] font-bold bg-amber-100 text-amber-700">NOVO</span>
+                            )}
+                            {visualTags.includes('reposicao') && (
+                              <span className="px-1 py-0 rounded text-[8px] font-bold bg-emerald-100 text-emerald-700">REPOS</span>
+                            )}
+                            {visualTags.length === 0 && '-'}
                           </TableCell>
-                          <TableCell className="text-right text-sm">R$ {Number(p['Preço de Tabela (obrigatório)'] || 0).toFixed(2)}</TableCell>
-                          <TableCell className="text-right text-sm">{p['IPI (opcional - não informar o símbolo %)'] || '-'}</TableCell>
-                          <TableCell className="text-xs max-w-[220px] truncate">{p['Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)'] || '-'}</TableCell>
+                          <TableCell className="text-right whitespace-nowrap">R$ {Number(p['Preço de Tabela (obrigatório)'] || 0).toFixed(2)}</TableCell>
+                          <TableCell className="text-right">{p['IPI (opcional - não informar o símbolo %)'] || '-'}</TableCell>
+                          <TableCell className="max-w-[100px] truncate" title={p['Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)'] || ''}>{p['Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)'] || '-'}</TableCell>
                           <TableCell className="text-center">
                             {isBloqueado ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                                <Lock className="h-3 w-3" /> SIM
-                              </span>
+                              <Lock className="h-3 w-3 mx-auto text-amber-600" />
                             ) : (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400">
-                                NÃO
-                              </span>
+                              <span className="text-green-600 text-[10px]">-</span>
                             )}
                           </TableCell>
                           <TableCell>
-                            <Badge variant="outline" className="text-[10px] bg-success/10 text-success border-success/20"><CheckCircle className="h-3 w-3 mr-1" />OK</Badge>
+                            <Badge variant="outline" className="text-[9px] bg-success/10 text-success border-success/20 px-1">OK</Badge>
                           </TableCell>
                         </TableRow>
                       );
@@ -432,7 +438,7 @@ export default function ExportacoesMercos() {
                     {mercosResult.validos.length > 50 && (
                       <TableRow>
                         <TableCell colSpan={8} className="text-center text-xs text-muted-foreground py-3">
-                          ...e mais {mercosResult.validos.length - 50} produtos (exibindo primeiros 50)
+                          ...e mais {mercosResult.validos.length - 50} produtos
                         </TableCell>
                       </TableRow>
                     )}
@@ -442,7 +448,6 @@ export default function ExportacoesMercos() {
             </CardContent>
           </Card>
         </div>
-        </>
       )}
     </div>
   );
