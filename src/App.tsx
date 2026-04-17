@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/AppLayout";
 import { AppProvider } from "@/context/AppContext";
+import { Analytics } from "@vercel/analytics/react";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import ConversaoProdutos from "./pages/ConversaoProdutos";
@@ -48,6 +49,7 @@ const App = () => (
           </Routes>
         </BrowserRouter>
       </AppProvider>
+      <Analytics />
     </TooltipProvider>
   </QueryClientProvider>
 );
