@@ -12,6 +12,8 @@ import { goalKidsAdapter } from './goal-kids';
 import { clinkAdapter } from './clink';
 import { momentAdapter } from './moment';
 import { flashAdapter } from './flash';
+import { petrinAdapter } from './petrin';
+import { levivanAdapter } from './levivan';
 import { genericAdapter } from './generic';
 
 /** Lista completa de adapters registrados (ordem importa para detecção) */
@@ -24,6 +26,8 @@ const ADAPTERS: SupplierAdapter[] = [
   clinkAdapter,
   momentAdapter,
   flashAdapter,
+  petrinAdapter,
+  levivanAdapter,
 ];
 
 /** Busca um adapter pelo ID ou nome (case-insensitive) */

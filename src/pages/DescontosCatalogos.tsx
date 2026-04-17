@@ -589,11 +589,23 @@ export default function DescontosCatalogos() {
                   <div className="space-y-1">
                     <label className="text-[10px] text-muted-foreground">Desc. no IPI (%)</label>
                     <Input type="number" min="0" max="100" step="0.01" value={descontoIpi} onChange={e => setDescontoIpi(e.target.value)} placeholder="Ex: 50" className={`h-7 text-xs ${descontoIpi !== "" && !descontoIpiValido ? 'border-destructive' : ''}`} />
+                    <div className="flex gap-1 mt-1">
+                      <button onClick={() => setDescontoIpi("33.33")} className="text-[9px] px-1.5 py-0.5 bg-amber-100 hover:bg-amber-200 rounded text-amber-700 transition-colors" title="Reduz 1/3 do IPI">1/3</button>
+                      <button onClick={() => setDescontoIpi("66.66")} className="text-[9px] px-1.5 py-0.5 bg-amber-100 hover:bg-amber-200 rounded text-amber-700 transition-colors" title="Reduz 2/3 do IPI">2/3</button>
+                      <button onClick={() => setDescontoIpi("50")} className="text-[9px] px-1.5 py-0.5 bg-amber-100 hover:bg-amber-200 rounded text-amber-700 transition-colors" title="Reduz metade do IPI">1/2</button>
+                    </div>
                   </div>
                 </div>
                 {descontoIpiValido && produtosFiltrados.length > 0 && (
-                  <p className="text-[10px] text-amber-600">Ex: IPI 6.5% vira {+(6.5 * (1 - descontoIpiNum * 0.01)).toFixed(2)}%</p>
+                  <p className="text-[10px] text-amber-600">
+                    Ex: IPI 6.5% vira {+(6.5 * (1 - descontoIpiNum * 0.01)).toFixed(2)}%
+                    {descontoIpiNum === 33.33 && <span className="ml-1 font-medium">(= reduziu 1/3)</span>}
+                    {descontoIpiNum === 66.66 && <span className="ml-1 font-medium">(= reduziu 2/3)</span>}
+                  </p>
                 )}
+                <p className="text-[10px] text-muted-foreground">
+                  <span className="font-medium">Dica:</span> Para reduzir 1/3 do IPI, use 33,33% de desconto
+                </p>
                 <div className="grid grid-cols-2 gap-2">
                   <Button className="h-7 text-xs bg-amber-500 hover:bg-amber-600 text-white" size="sm" disabled={!ipiValido || !produtosFiltrados.length} onClick={handleSalvarIpi}>
                     <Save className="h-3 w-3 mr-1" /> Aplicar IPI

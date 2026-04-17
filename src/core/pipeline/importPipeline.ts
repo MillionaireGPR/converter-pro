@@ -488,6 +488,66 @@ async function extractCellStylesFromXML(fileData: ArrayBuffer): Promise<Map<stri
 }
 
 /**
+ * Valida e corrige linhas de planilha para evitar desalinhamento
+ * quando imagens ou elementos visuais "vazam" das células
+ */
+const validateAndFixRows = (
+  rows: Record<string, any>[],
+  headers: string[]
+): { validRows: Record<string, any>[]; warnings: string[] } => {
+  try {
+    const warnings: string[] = [];
+    const validRows: Record<string, any>[] = [];
+    let lastValidCode: string | null = null;
+    let consecutiveEmpty = 0;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+
+      // Verifica se a linha tem algum campo preenchido
+      const hasAnyValue = Object.values(row).some(v => v !== undefined && v !== null && v !== '');
+
+      // Tenta encontrar código na linha (comum em códigos de produto)
+      const rowText = Object.values(row).join(' ');
+      const hasCode = /[A-Z]{2,4}\d{3,}/i.test(rowText) || /\b\d{4,}\b/.test(rowText);
+
+      // Verifica se é uma linha "fantasma" (vazia ou sem código quando deveria ter)
+      if (!hasAnyValue || (!hasCode && hasAnyValue)) {
+        consecutiveEmpty++;
+
+        // Se temos muitas linhas vazias consecutivas, pode ser desalinhamento
+        if (consecutiveEmpty >= 2 && lastValidCode) {
+          warnings.push(`Possível desalinhamento detectado após código ${lastValidCode} (linha ${i + 1}). Verifique se há imagens vazando das células.`);
+        }
+        continue; // Pula linhas vazias/incompletas
+      }
+
+      // Reset contador de linhas vazias
+      consecutiveEmpty = 0;
+
+      // Extrai código para referência futura
+      const codeMatch = rowText.match(/([A-Z]{2,4}\d{3,})/i);
+      if (codeMatch) {
+        lastValidCode = codeMatch[1].toUpperCase();
+      }
+
+      validRows.push(row);
+    }
+
+    if (warnings.length > 0) {
+      console.warn(`[Pipeline] Validação de linhas: ${warnings.length} alertas`, warnings);
+    }
+
+    return { validRows, warnings };
+  } catch (error) {
+    // Em caso de erro na validação, retorna todas as linhas sem filtrar
+    // Isso garante que o sistema não quebre
+    console.error(`[Pipeline] Erro na validação de linhas:`, error);
+    return { validRows: rows, warnings: ['Erro ao validar linhas da planilha. Processando sem filtros.'] };
+  }
+};
+
+/**
  * Converte linhas de planilha em ProdutoBruto[]
  */
 const rowsToProdutosBrutos = (
@@ -825,6 +885,7 @@ export const runImportPipeline = async (
   let parserUsado: ParserStrategy = 'xlsx-direto';
   let headers: string[] = [];
   let partialMetadata: Partial<ImportMetadata> = {};
+  let pipelineWarnings: string[] = []; // NOVO: Warnings gerais do pipeline
 
   if (tipoArquivo === 'pdf') {
     const pdfResult = await readPDF(fileData, adapter);
@@ -849,7 +910,15 @@ export const runImportPipeline = async (
     parserUsado = 'xlsx-direto';
     const spreadsheet = await readSpreadsheet(fileData, tipoArquivo);
     headers = spreadsheet.headers;
-    brutos = rowsToProdutosBrutos(spreadsheet.rows, spreadsheet.headerRowIndex);
+
+    // NOVO: Valida e corrige linhas para evitar desalinhamento por imagens vazando
+    const { validRows, warnings: rowWarnings } = validateAndFixRows(spreadsheet.rows, headers);
+    if (rowWarnings.length > 0) {
+      console.warn(`[Pipeline] ⚠️ Problemas detectados na planilha:`, rowWarnings);
+      pipelineWarnings.push(...rowWarnings);
+    }
+
+    brutos = rowsToProdutosBrutos(validRows, spreadsheet.headerRowIndex);
 
     // NOVO: Adicionar estilos de célula aos produtos brutos para classificação visual
     // Isso permite que adapters da família CLINK detectem cores de fonte
@@ -968,5 +1037,6 @@ export const runImportPipeline = async (
     produtosNormalizados: produtosFinais,
     stats,
     inconsistencias,
+    warnings: pipelineWarnings.length > 0 ? pipelineWarnings : undefined,
   };
 };

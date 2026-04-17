@@ -90,9 +90,10 @@ export const interpretPdfSemantically = (
     // Muitos catálogos separam produtos por Código, Preço, ou quebra de item.
     // Vamos tentar fatiar o texto a cada vez que encontrar um Padrão de Código ou "R$"
     
-    // Heurística de fatiamento: Encontrar códigos comuns formados por 2-4 letras e 3+ números (ex: DXP24, NX020)
-    // e usar isso como âncora para iniciar um novo bloco de produto.
-    const codeAnchorRegex = /\b([A-Z]{2,4}\d{3,})\b/g;
+    // Heurística de fatiamento: Encontrar códigos de fornecedores
+    // Padrões: 2-4 letras + 2-8 dígitos (ex: DXP24, NX020, NX12345, CL2024001)
+    // Suporta também: 1 letra + 3-7 dígitos (ex: A123, N12345)
+    const codeAnchorRegex = /\b([A-Z]{1,4}[-]?\d{2,8}(?:[-]?\d{1,4})?)\b/g;
     let match;
     let codeMatches: { index: number; code: string }[] = [];
     while ((match = codeAnchorRegex.exec(text)) !== null) {

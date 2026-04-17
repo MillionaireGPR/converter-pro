@@ -166,8 +166,11 @@ const parseBlockFields = (block: string): Record<string, any> => {
 
   // Se não extraiu campos estruturados, tenta heurísticas
   if (Object.keys(campos).length === 0) {
-    // Tenta extrair código (primeiro padrão alfanumérico forte)
-    const codeMatch = block.match(/\b([A-Z]{2,4}\d{3,6})\b/);
+    // Tenta extrair código (padrões alfanuméricos de fornecedores)
+    // Padrões: AB123, AB-123, AB1234, AB12345, AB123456, NX001, NX1234, CL-2024-001
+    const codeMatch = block.match(/\b([A-Z]{1,4}[-]?\d{2,8}(?:[-]?\d{1,4})?)\b/) ||
+                       block.match(/\b([A-Z]{2,6}\d{2,6})\b/) ||
+                       block.match(/\b([A-Z]\d{3,7})\b/);
     if (codeMatch) campos['codigo'] = codeMatch[1];
 
     // Tenta extrair preço

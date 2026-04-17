@@ -6,6 +6,7 @@ import { dagiaTemplate } from './dagia.template';
 import { nixTemplate } from './nix.template';
 import { clinkTemplate } from './clink.template';
 import { momentTemplate } from './moment.template';
+import { lilaHomeTemplate } from './lila-home.template';
 
 const templates: PdfTemplate[] = [
   giraImportsTemplate,
@@ -14,7 +15,8 @@ const templates: PdfTemplate[] = [
   dagiaTemplate,
   nixTemplate,
   clinkTemplate,
-  momentTemplate
+  momentTemplate,
+  lilaHomeTemplate
 ];
 
 export const detectTemplate = (texto: string): PdfTemplate | undefined => {

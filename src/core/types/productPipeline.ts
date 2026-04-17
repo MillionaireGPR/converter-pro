@@ -69,6 +69,8 @@ export interface ProdutoBruto {
   paginaOrigem?: number;
   /** Texto bruto do bloco (para PDFs por bloco) */
   textoBruto?: string;
+  /** Contexto espacial do produto no PDF (coordenadas x, y, página) */
+  spatialContext?: SpatialContext;
 }
 
 /**
@@ -251,6 +253,8 @@ export interface PipelineResult {
     duplicados: number;
   };
   inconsistencias: Inconsistencia[];
+  /** Warnings gerais sobre a importação (ex: desalinhamento de linhas) */
+  warnings?: string[];
 }
 
 export interface Inconsistencia {
