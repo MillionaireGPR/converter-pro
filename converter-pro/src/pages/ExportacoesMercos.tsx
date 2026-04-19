@@ -265,7 +265,7 @@ export default function ExportacoesMercos() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos fornecedores</SelectItem>
-                {fornecedores.map(f => <SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>)}
+                {[...fornecedores].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')).map(f => <SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>)}
               </SelectContent>
             </Select>
             <Select value={filtroStatus} onValueChange={(v: any) => setFiltroStatus(v)}>

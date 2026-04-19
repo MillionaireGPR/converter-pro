@@ -267,7 +267,7 @@ export default function RegrasMapeamento() {
             <SelectTrigger className="w-44"><SelectValue placeholder="Fornecedor" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="todos">Todos</SelectItem>
-              {fornecedores.map(f => <SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>)}
+              {[...fornecedores].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')).map(f => <SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>)}
             </SelectContent>
           </Select>
           <Button 
@@ -459,7 +459,7 @@ export default function RegrasMapeamento() {
               <label className="text-sm font-medium">Fornecedor</label>
               <Select value={form.fornecedor} onValueChange={v => setForm(f => ({ ...f, fornecedor: v }))}>
                 <SelectTrigger><SelectValue placeholder="Selecionar" /></SelectTrigger>
-                <SelectContent>{fornecedores.map(f => <SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>)}</SelectContent>
+                <SelectContent>{[...fornecedores].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')).map(f => <SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5">

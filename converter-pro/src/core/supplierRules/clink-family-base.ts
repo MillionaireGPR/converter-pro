@@ -836,11 +836,17 @@ export function extractClinkFamily(
     }
 
     // === IPI ===
-    let ipi = toNum(findValue(campos, fa.ipi));
-    if (ipi <= 0) {
-      const ipiExtraido = extractIpi(`${descricao} ${descricaoComplementar} ${allValues}`);
-      if (ipiExtraido !== undefined) {
-        ipi = ipiExtraido;
+    // REGRA: Se a planilha NÃO tem coluna IPI, o valor deve ser 0.
+    // Não fazer fallback por regex no texto, pois pega números aleatórios
+    // (ex: quantidade por caixa) como IPI — isso afeta Moment, Clink, Flash.
+    const ipiRaw = findValue(campos, fa.ipi);
+    let ipi = 0;
+    if (ipiRaw !== undefined && ipiRaw !== null && ipiRaw !== '') {
+      ipi = toNum(ipiRaw);
+      // Validar que é um percentual razoável de IPI (0-100)
+      if (ipi > 100) {
+        console.warn(`[ClinkFamily] IPI suspeito (${ipi}%) para ${codigo} — zerando`);
+        ipi = 0;
       }
     }
 

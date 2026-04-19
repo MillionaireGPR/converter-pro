@@ -350,7 +350,7 @@ export default function BasePadronizada() {
                   <SelectTrigger className="w-full sm:w-44 bg-card"><SelectValue placeholder="Fornecedor" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="todos">Todos fornecedores</SelectItem>
-                    {fornecedores.map(f => <SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>)}
+                    {[...fornecedores].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')).map(f => <SelectItem key={f.id} value={f.nome}>{f.nome}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <Select value={filtroStatus} onValueChange={setFiltroStatus}>
@@ -533,7 +533,7 @@ export default function BasePadronizada() {
                 <SelectTrigger className="w-full bg-card"><SelectValue placeholder="Selecione..." /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todos" className="font-semibold text-destructive">Toda a Base (Todos os fornecedores)</SelectItem>
-                  {fornecedores.map(f => <SelectItem key={f.id} value={f.nome}>Apenas produtos da {f.nome}</SelectItem>)}
+                  {[...fornecedores].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')).map(f => <SelectItem key={f.id} value={f.nome}>Apenas produtos da {f.nome}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

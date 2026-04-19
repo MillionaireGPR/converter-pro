@@ -7,7 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useApp } from "@/context/AppContext";
 import { supabase } from "@/integrations/supabase/client";
-import { Eye, FileDown, FileSpreadsheet, Save, Tag, Sparkles, Package, Percent, Lock, Unlock, Filter, Shield, ShieldCheck, Loader2 } from "lucide-react";
+import { Eye, FileDown, FileSpreadsheet, Save, Tag, Sparkles, Package, Percent, Lock, Unlock, Filter, Shield, ShieldCheck, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import jsPDF from "jspdf";
@@ -79,9 +79,11 @@ export default function DescontosCatalogos() {
     liberados: produtosPorFornecedor.filter(p => !p.bloqueiaDesconto).length,
   };
 
-  const fornecedoresComProdutos = fornecedores.filter(f => 
-    produtosPadronizados.some(p => p.fornecedorId === f.id || p.fornecedor.toLowerCase() === f.nome.toLowerCase())
-  );
+  const fornecedoresComProdutos = fornecedores
+    .filter(f => 
+      produtosPadronizados.some(p => p.fornecedorId === f.id || p.fornecedor.toLowerCase() === f.nome.toLowerCase())
+    )
+    .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
 
   // Calculadora de desconto composto do formato "30+15+10"
   const d1 = parseFloat(descontoPrincipal) || 0;
@@ -504,6 +506,17 @@ export default function DescontosCatalogos() {
       <div>
         <h1 className="text-2xl font-extrabold text-foreground tracking-tight">Descontos e Catálogos</h1>
         <p className="text-sm text-muted-foreground mt-1">Configure descontos, IPI em massa e gere catálogos comerciais</p>
+      </div>
+
+      {/* AVISO: Salvar antes de exportar */}
+      <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-700">
+        <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+        <div>
+          <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Atenção: Salve antes de exportar!</p>
+          <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+            Para que os descontos e IPI sejam aplicados na conversão Mercos ou no envio aos clientes, é obrigatório clicar no botão <strong>"Salvar"</strong> após configurar. Sem salvar, as alterações ficam apenas na tela.
+          </p>
+        </div>
       </div>
 
       {/* ══════════════ LINHA 1: CONTROLES + RESUMO ══════════════ */}

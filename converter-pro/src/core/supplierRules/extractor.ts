@@ -189,10 +189,17 @@ export const extractProducts = (
 
     const embalagem = fa.embalagem ? toStr(findValue(campos, fa.embalagem)) : '';
     const ncm = fa.ncm ? toStr(findValue(campos, fa.ncm)) : (campos['ncm'] ? toStr(campos['ncm']) : '');
-    let ipi = fa.ipi ? toNum(findValue(campos, fa.ipi)) : 0;
-    // Leitura direta do campo 'ipi' se existir (preenchido pelo smartPdfInterpreter)
-    if (ipi <= 0 && campos['ipi']) {
+    // IPI: Somente se existe coluna explícita ou smartPdfInterpreter preencheu
+    const ipiRaw = fa.ipi ? findValue(campos, fa.ipi) : undefined;
+    let ipi = 0;
+    if (ipiRaw !== undefined && ipiRaw !== null && ipiRaw !== '') {
+      ipi = toNum(ipiRaw);
+      if (ipi > 100) ipi = 0; // Valor suspeito, não é IPI
+    }
+    // Fallback: campo 'ipi' preenchido pelo smartPdfInterpreter (PDFs com label IPI explícito)
+    if (ipi <= 0 && campos['ipi'] !== undefined && campos['ipi'] !== null && campos['ipi'] !== '') {
       ipi = toNum(campos['ipi']);
+      if (ipi > 100) ipi = 0;
     }
     const dimensoes = fa.dimensoes ? toStr(findValue(campos, fa.dimensoes)) : '';
     const material = fa.material ? toStr(findValue(campos, fa.material)) : '';

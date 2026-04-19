@@ -417,7 +417,7 @@ export default function ConversaoProdutos() {
                     <SelectTrigger className="h-9"><SelectValue placeholder="Selecionar" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="novo" className="font-semibold text-primary">+ Novo</SelectItem>
-                      {fornecedores.map(f => <SelectItem key={f.id} value={f.id}>{f.nome}</SelectItem>)}
+                      {[...fornecedores].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')).map(f => <SelectItem key={f.id} value={f.id}>{f.nome}</SelectItem>)}
                     </SelectContent>
                   </Select>
                   {fornecedor === 'novo' && (
