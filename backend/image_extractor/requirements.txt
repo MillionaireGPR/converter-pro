@@ -1,0 +1,7 @@
+pymupdf
+pillow
+python-dotenv
+supabase
+fastapi
+uvicorn
+opencv-python-headless==4.10.0.84

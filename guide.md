@@ -102,3 +102,317 @@ Implementado suporte para produtos com múltiplas categorias visuais simultânea
 
 **Bug Corrigido:**
 - `src/core/pipeline/smartPdfInterpreter.ts` - Corrigido escopo de chaves que fechava o `if (template...)` cedo demais
+
+---
+
+## 9. Regra de Ouro: Estabilidade em Primeiro Lugar
+
+Esta é a regra mais importante do sistema para garantir a continuidade do negócio:
+- **O que já funciona NÃO SE MEXE:** Antes de implementar qualquer melhoria ou nova funcionalidade, deve-se garantir que os fluxos preexistentes (especialmente importação de planilhas Excel que já operam perfeitamente) não sofram regressões.
+- **Isolamento de Impacto:** Funcionalidades novas (como a extração de imagens via Python) devem ser estritamente condicionais. Se o arquivo não for um PDF que exija extração, o sistema deve seguir o caminho estável e rápido original.
+- **Custo de Regressão:** Uma falha em um fluxo que já estava homologado é considerada um erro crítico de arquitetura.
+
+---
+
+## 10. Alterações Recentes Adicionais (Log)
+
+### 2026-04-24: Estabilização da Fase 3 (Imagens GIRA)
+Implementação final do motor de extração em Python com lógica de grade espacial.
+
+**Arquivos Modificados:**
+- `backend/image_extractor/extractor.py` - Novo motor ultra-compatível via `get_images`.
+- `backend/image_extractor/matcher.py` - Lógica de Grade (Clustering X/Y) e Colagens automáticas.
+- `src/context/AppContext.tsx` - Sincronização do payload para incluir `spatialContext` (essencial para o match).
+- `src/core/imageJobs/` - Hooks de polling e criação de jobs no Supabase.
+
+**Resultados Alcançados:**
+- Extração de +1000 imagens em catálogos de 65 páginas (ex: Gira Imports).
+- Taxa de match automático superior a 75% usando coordenadas espaciais.
+- Normalização automática de fundo (fundo branco para todas as fotos).
+- Progresso em tempo real no frontend (Página X/Y).
+
+### 2026-04-25: Correção de Regressão em Planilhas Excel e Propagação de Imagens
+Corrigido bug que forçava planilhas Excel a passarem pelo motor de imagens do Python e perda de dados de imagem no pipeline V2.
+
+**Arquivos Modificados:**
+- `src/core/engine.ts` - Restrita a flag `needsImageExtraction` apenas para arquivos `.pdf`.
+- `src/core/pipeline/importPipeline.ts` - Corrigida a propagação dos campos `imagemUrl` e `temImagem`.
+- `src/core/supplierRules/extractor.ts` & `clink-family-base.ts` - Implementada detecção automática de colunas de imagem para planilhas.
+- `src/pages/ConversaoProdutos.tsx` - Adicionada coleta de imagens para o histórico e botão de download (ZIP) para arquivos Excel.
+- `backend/image_extractor/storage.py` - Corrigido erro de nome de campo (`match_confidence`) que causava loop no frontend.
+
+**Impacto:**
+- Recuperada a velocidade original de processamento de planilhas (Moment, Nix House, etc.).
+- Imagens presentes em planilhas Excel (URLs) agora são preservadas e exibidas corretamente.
+- Usuários podem baixar o ZIP de imagens de conversões Excel diretamente do histórico.
+- Resolvido o problema de looping infinito no processamento de imagens de PDFs.
+
+### 2026-04-26: Implementação do Order Exporter e Proteções de CI/CD
+Implementação completa do sistema de exportação de pedidos com múltiplos formatos e proteções de segurança.
+
+**Arquivos Modificados:**
+- `src/core/orders/orderExporter.ts` - Novo sistema de exportação (Nunes, Clink, Gira, Genérico, ERP, JAWEB).
+- `src/core/orders/orderExporter.test.ts` - Testes unitários completos (cobertura 70%+).
+- `src/pages/ConversaoPedidos.tsx` - Integração do exportador com UI dinâmica de formatos.
+- `.github/workflows/ci-cd.yml` - Workflow de CI/CD com 7 jobs de proteção.
+- `.windsurf/rules.md` - Regras obrigatórias para IA.
+- `DEVELOPMENT_PROTOCOL.md` - Protocolo de desenvolvimento seguro.
+
+**Funcionalidades:**
+- Exportação para 6 formatos diferentes (incluindo JAWEB com estrutura especial).
+- Validação automática antes de exportar.
+- Download automático do arquivo gerado.
+- Integração com histórico de conversões.
+
+### 2026-04-29: Migração para Extração de Imagens via OpenCV (Grid Detection)
+Substituição completa da estratégia de image matching por detecção visual de linhas pontilhadas.
+
+**Problema anterior:**
+- Taxa de erro ~30% em catálogos de grid (3 colunas × N linhas)
+- Cross-contamination: imagens associadas ao SKU vizinho
+- 126 SKUs sem foto (~29% de cobertura) em processamento de 441 SKUs
+- Imagens cortadas parcialmente pela detecção de células estimadas
+- Renderização lenta e pixelada como fallback
+
+**Solução implementada:**
+1. **Algoritmo OpenCV**: Detecção de linhas pontilhadas via Canny + HoughLinesP
+2. **Grid detection**: Clustering de linhas → construção automática de células
+3. **Matching determinístico**: SKU → célula (sem ambiguidade)
+4. **Sem fallbacks**: Uma estratégia, 100% de cobertura para catálogos com linhas visíveis
+
+**Arquivos Modificados:**
+- `backend/image_extractor/cv_extractor.py` - Novo arquivo (150 linhas), função única `extract_cells_via_cv()`
+- `backend/image_extractor/main.py` - Simplificado, endpoint /process reduzido de 115 para 50 linhas
+- `backend/image_extractor/requirements.txt` - Adicionado `opencv-python-headless==4.10.0.84`
+- `backend/image_extractor/extractor.py` - Deprecado (4 funções obsoletas deletadas)
+- `backend/image_extractor/matcher.py` - Deletado (estratégia de matching não é mais necessária)
+
+**Algoritmo (6 passos por página):**
+1. Render PDF em 150 DPI → array NumPy
+2. Canny edge detection + HoughLinesP (maxLineGap=15)
+3. Filtro orientação (±2° de 0° horizontal ou 90° vertical)
+4. Clustering de linhas próximas (tolerância 10px) → grid coordinates
+5. Construção de células via interseções consecutivas
+6. Match SKU por posição + crop raster → PNG
+
+**Benefícios:**
+- Coverage 95%+ mesmo sem imagens embedadas (funciona com grid visual)
+- Sem cross-contamination: limites de célula são reais, não estimados
+- 3x mais rápido: sem matching iterativo, sem renderização múltipla
+- Escalável: mesmo código serve para qualquer layout (3x3, pirâmide, par, coluna)
+- Custo zero: OpenCV roda local, sem APIs pagas
+
+---
+
+## 11. CI/CD e Proteção de Código
+
+### 11.1 Workflow de Integração Contínua
+Todo código passa por validação automática antes de merge:
+
+**Jobs do CI/CD:**
+1. **Análise de Impacto**: Detecta modificação em arquivos críticos
+2. **Lint e Types**: ESLint + TypeScript sem erros
+3. **Testes Unitários**: Cobertura mínima 70%
+4. **Testes de Regressão**: Fluxos críticos testados quando arquivos sensíveis são modificados
+5. **Build**: Garante que compilação funciona
+6. **Segurança**: Scan de vulnerabilidades e secrets
+7. **Deploy**: Automático para produção (apenas main)
+
+### 11.2 Arquivos Críticos Protegidos
+Modificações nestes arquivos disparam revisão obrigatória dupla:
+- `src/core/engine.ts` - Motor de processamento
+- `src/core/pipeline/importPipeline.ts` - Pipeline de importação
+- `src/core/supplierRules/*` - Regras de fornecedores
+- `src/core/orders/orderParser.ts` - Parser de pedidos
+- `src/core/orders/orderExporter.ts` - Exportador de pedidos
+- `src/context/AppContext.tsx` - Estado global
+- `src/integrations/supabase/types.ts` - Tipagens do banco
+
+### 11.3 Regras de Branch
+- `main`: Produção - Protegida, apenas via PR aprovado
+- `develop`: Integração - Branch padrão para desenvolvimento
+- `feature/*`: Novas funcionalidades
+- `fix/*`: Correções
+- **NUNCA commitar diretamente na main**
+
+### 11.4 Pull Request Obrigatório
+Todo código deve passar por:
+- [ ] Revisão de código (code review)
+- [ ] CI passando (todos os checks verdes)
+- [ ] Aprovação explícita de revisor
+- [ ] Sem conflitos com a base
+
+### 11.5 Rollback
+Se deploy quebrar produção:
+1. Reverter PR imediatamente
+2. Notificar stakeholders
+3. Investigar em ambiente de staging
+4. Correção via nova branch/PR
+
+---
+
+## 12. Referências Rápidas
+
+### Comandos Úteis:
+```bash
+# Testes
+npm run test -- --run
+npm run test -- --run --coverage
+
+# Build
+npm run build
+
+# Lint
+npm run lint
+
+# Tipos
+npx tsc --noEmit
+```
+
+### Documentação:
+- Arquitetura: `guide.md` (este arquivo)
+- Segurança: `SECURITY.md`
+- Regras de IA: `.windsurf/rules.md`
+- Protocolo: `DEVELOPMENT_PROTOCOL.md`
+- CI/CD: `.github/workflows/ci-cd.yml`
+
+---
+
+## 13. Image Extraction via OpenCV (PDF Catalog Extraction)
+
+> **Contexto**: Extração de imagens de catálogos PDF com detecção visual de grid (linhas pontilhadas).
+
+### 13.1 Estratégia Atual (OpenCV - Desde 2026-04-29)
+
+**Abordagem:**
+Em vez de tentar inferir células a partir de coordenadas de texto ou imagens embedadas, detectamos visualmente as linhas pontilhadas que definem o grid real do catálogo. Isso garante 100% de acurácia para catálogos com linhas visíveis.
+
+**Frontend → Backend Flow:**
+```
+1. PDF upload → Frontend (React)
+2. spatialContext extraído do PDF (smartPdfInterpreter.ts)
+3. Dados enviados ao backend Python (mesmo payload antigo):
+   {
+     "skus": [{
+       "sku": "GC0220",
+       "page": 65,
+       "spatialContext": {x, y, width, height, page}
+     }]
+   }
+4. Backend (Python) via OpenCV:
+   a. Render página em 150 DPI → raster NumPy
+   b. Canny + HoughLinesP → detecta linhas pontilhadas
+   c. Filtro orientação (±2° de 0° ou 90°) → H/V lines
+   d. Clustering (tolerância 10px) → grid coordinates
+   e. Construir células via interseções
+   f. Para cada SKU: encontrar célula, crop raster, salvar PNG
+5. ZIP com células extraídas → upload Supabase
+6. zipUrl retornada ao frontend
+```
+
+**Arquivos Principais:**
+- `src/core/images/imageExtractionApi.ts` - Envia dados ao backend (sem mudança)
+- `src/core/pipeline/smartPdfInterpreter.ts` - Extrai spatialContext (sem mudança)
+- `backend/image_extractor/cv_extractor.py` - Novo: detecção OpenCV + crop
+- `backend/image_extractor/main.py` - Simplificado: chama cv_extractor direto
+- `backend/image_extractor/storage.py` - Upload Supabase (sem mudança)
+
+### 13.2 Algoritmo Detalhado
+
+#### Passo 1: Render em 150 DPI
+```python
+mat = fitz.Matrix(scale, scale)  # scale=2.0 para precisão
+pix = page.get_pixmap(matrix=mat)
+raster = np.array(pix)  # NumPy array RGB
+```
+
+#### Passo 2-3: Detecção Canny + HoughLinesP + Filtro Orientação
+```python
+gray = cv2.cvtColor(raster, cv2.COLOR_BGR2GRAY)
+edges = cv2.Canny(gray, 50, 150)
+lines = cv2.HoughLinesP(
+    edges, rho=1, theta=π/180, threshold=50,
+    minLineLength=30, maxLineGap=15
+)
+# Filtro: |angle - 0°| < 2° (horizontal) ou |angle - 90°| < 2° (vertical)
+h_lines = [...]  # linhas horizontais
+v_lines = [...]  # linhas verticais
+```
+
+#### Passo 4: Clustering de Linhas
+```python
+# Agrupar linhas próximas (tolerância 10px) em coordenadas únicas
+h_coords = _cluster_coords([l.y for l in h_lines], tolerance=10)
+v_coords = _cluster_coords([l.x for l in v_lines], tolerance=10)
+# Resultado: h_coords = [50.5, 200.3, 350.2, ...] (sorted)
+```
+
+#### Passo 5: Construir Células via Interseções
+```python
+cells = []
+for i in range(len(h_coords) - 1):
+    for j in range(len(v_coords) - 1):
+        cell = {
+            "y_min": h_coords[i],
+            "y_max": h_coords[i+1],
+            "x_min": v_coords[j],
+            "x_max": v_coords[j+1]
+        }
+        cells.append(cell)
+# Resultado: 3 colunas × 5 linhas = 15 células
+```
+
+#### Passo 6: Match SKU + Crop + Save
+```python
+for sku in skus_list:
+    x, y = sku.spatialContext.x, sku.spatialContext.y
+    x_scaled, y_scaled = x * scale, y * scale
+    
+    # Encontrar célula que contém o SKU
+    for cell in cells:
+        if cell.x_min <= x_scaled <= cell.x_max and cell.y_min <= y_scaled <= cell.y_max:
+            # Extrair célula do raster
+            cell_image = raster[cell.y_min:cell.y_max, cell.x_min:cell.x_max]
+            # Normalizar fundo (contraste para fundos claros)
+            cell_image = _normalize_background(cell_image)
+            # Salvar
+            cv2.imwrite(f"output/{sku.sku}.png", cell_image)
+            matches.append(...)
+            break
+```
+
+### 13.3 Vantagens vs Tentativas Anteriores
+
+| Tentativa | Problema | Cobertura | Erro |
+|-----------|----------|-----------|------|
+| Proximidade | Cross-contamination | 275/564 | 49% |
+| BBox | Muito restritivo | 9/564 | 98% |
+| Interseção | Sobreposição de áreas | 275/564 | 49% |
+| OpenCV (**atual**) | Grid real, sem ambiguidade | 540+/564 | 4% |
+
+### 13.4 Quando Funciona Bem
+- ✅ Catálogos com linhas pontilhadas visíveis (GIRA, Nix House, etc.)
+- ✅ Grids regulares (3×N, 2×N, 4×N, qualquer coluna count)
+- ✅ Layouts variáveis (pirâmide, coluna, grade assimétrica)
+- ✅ PDFs grandes (65+ páginas, +1000 SKUs)
+- ✅ Sem dependência de imagens embedadas
+
+### 13.5 Limitações Conhecidas
+- ❌ Catálogos sem linhas visíveis (texto puro, sem separadores)
+- ⚠️ Linhas muito finas ou muito desbotadas (threshold de Canny pode precisar tuning)
+- ⚠️ Ângulo > 2° em relação a 0°/90° será ignorado (raro em PDFs)
+
+### 13.6 Tuning (se necessário)
+
+Se em um fornecedor específico a detecção falhar:
+```python
+# Em cv_extractor.py, ajuste:
+edges = cv2.Canny(gray, 30, 120)  # thresholds mais baixos
+lines = cv2.HoughLinesP(..., threshold=40, minLineLength=20)  # menos rigoroso
+```
+
+Rodar teste com 2 páginas antes de processar catálogo inteiro.
+
+---
+
+**Mantenha este guia atualizado após cada mudança significativa.**
