@@ -55,30 +55,32 @@ def extract_cells_via_cv(
         mat = fitz.Matrix(scale, scale)
         page = doc.load_page(page_num - 1)
         pix = page.get_pixmap(matrix=mat)
-        raster = np.array(pix)
+        raster = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
 
-        if len(raster.shape) == 3 and raster.shape[2] == 4:
+        if pix.n == 4:
             raster = cv2.cvtColor(raster, cv2.COLOR_RGBA2RGB)
-        elif len(raster.shape) == 3:
-            raster = cv2.cvtColor(raster, cv2.COLOR_RGB2BGR)
+        # pix.n == 3: já é RGB, não precisa converter
 
         height, width = raster.shape[:2]
         print(f"[CV Extractor] Página {page_num}: {width}x{height} px (scale={scale})")
 
-        # Step 2 & 3: Canny + HoughLinesP com filtro de orientação
-        gray = cv2.cvtColor(raster, cv2.COLOR_BGR2GRAY)
+        # Step 2 & 3: Canny + HoughLinesP com filtro de orientação e comprimento mínimo
+        gray = cv2.cvtColor(raster, cv2.COLOR_RGB2GRAY)
 
-        # Canny com thresholds adaptados para linhas pontilhadas
+        # Canny com thresholds para linhas pontilhadas
         edges = cv2.Canny(gray, 50, 150)
 
-        # HoughLinesP: detecta segmentos de linha
+        # HoughLinesP: segmentos de linha mínimo 15% da dimensão da página
+        min_h_length = int(width * 0.15)   # H-line deve cruzar 15% da largura
+        min_v_length = int(height * 0.15)  # V-line deve cruzar 15% da altura
+
         lines = cv2.HoughLinesP(
             edges,
             rho=1,
             theta=np.pi / 180,
-            threshold=50,
-            minLineLength=30,
-            maxLineGap=15
+            threshold=60,
+            minLineLength=max(50, min_h_length // 3),
+            maxLineGap=20
         )
 
         if lines is None:
@@ -91,34 +93,45 @@ def extract_cells_via_cv(
                 })
             continue
 
-        # Step 4: Filtrar linhas por orientação (±2°) e agrupar por coordenada
-        h_lines = []  # Linhas horizontais (y1 ≈ y2)
-        v_lines = []  # Linhas verticais (x1 ≈ x2)
+        # Step 4: Filtrar por orientação (±2°) E comprimento mínimo (15% da dim. da página)
+        # Isso elimina bordas de texto/imagem que são curtas
+        h_lines = []  # (y_coord, x_start, x_end)
+        v_lines = []  # (x_coord, y_start, y_end)
 
         for line in lines:
             x1, y1, x2, y2 = line[0]
 
-            # Calcular ângulo
-            dx = x2 - x1
-            dy = y2 - y1
+            dx, dy = x2 - x1, y2 - y1
             angle = np.arctan2(dy, dx) * 180 / np.pi
-
-            # Normalizar ângulo para [0, 180)
             if angle < 0:
                 angle += 180
 
-            # Filtro ±2° de 0° (horizontal) ou 90° (vertical)
+            seg_len = np.sqrt(dx * dx + dy * dy)
             is_horizontal = (angle < 2 or angle > 178)
             is_vertical = (88 < angle < 92)
 
-            if is_horizontal:
+            # Linhas H: devem ter comprimento mínimo horizontal
+            if is_horizontal and seg_len >= min_h_length:
                 h_lines.append(((y1 + y2) / 2, min(x1, x2), max(x1, x2)))
-            elif is_vertical:
+            # Linhas V: devem ter comprimento mínimo vertical
+            elif is_vertical and seg_len >= min_v_length:
                 v_lines.append(((x1 + x2) / 2, min(y1, y2), max(y1, y2)))
 
-        # Step 5: Cluster linhas próximas (tolerância 10px)
-        h_coords = _cluster_coords([l[0] for l in h_lines], tolerance=10)
-        v_coords = _cluster_coords([l[0] for l in v_lines], tolerance=10)
+        # Step 5: Cluster linhas próximas (tolerância 40px para agrupar bordas de células)
+        h_coords = _cluster_coords([l[0] for l in h_lines], tolerance=40)
+        v_coords = _cluster_coords([l[0] for l in v_lines], tolerance=40)
+
+        # Filtrar clusters com menos de 2 segmentos (ruído isolado)
+        if h_lines:
+            h_counts = _count_segments_per_cluster(h_lines, h_coords, tolerance=40)
+            h_coords = [c for c, cnt in zip(h_coords, h_counts) if cnt >= 2]
+        if v_lines:
+            v_counts = _count_segments_per_cluster(v_lines, v_coords, tolerance=40)
+            v_coords = [c for c, cnt in zip(v_coords, v_counts) if cnt >= 2]
+
+        # Adicionar bordas da página ao grid (limites implícitos)
+        h_coords = sorted(set([0.0] + list(h_coords) + [float(height)]))
+        v_coords = sorted(set([0.0] + list(v_coords) + [float(width)]))
 
         print(f"[CV Extractor] Página {page_num}: {len(h_coords)} H-lines, {len(v_coords)} V-lines")
 
@@ -140,6 +153,8 @@ def extract_cells_via_cv(
         for i in range(len(h_coords_sorted) - 1):
             for j in range(len(v_coords_sorted) - 1):
                 cell = {
+                    "h_idx": i,   # índice da linha H (para encontrar célula acima)
+                    "v_idx": j,
                     "y_min": int(h_coords_sorted[i]),
                     "y_max": int(h_coords_sorted[i + 1]),
                     "x_min": int(v_coords_sorted[j]),
@@ -147,7 +162,7 @@ def extract_cells_via_cv(
                 }
                 cells.append(cell)
 
-        print(f"[CV Extractor] Grid: {len(h_coords_sorted)} linhas H × {len(v_coords_sorted)} linhas V → {len(cells)} células")
+        print(f"[CV Extractor] Grid: {len(h_coords_sorted)} H × {len(v_coords_sorted)} V → {len(cells)} células")
 
         # Step 6: Match SKU + crop + save
         for sku in page_skus:
@@ -183,11 +198,35 @@ def extract_cells_via_cv(
                 })
                 continue
 
+            # Se a célula do SKU é uma zona de texto pequena (<150px), expande para
+            # incluir a célula de imagem acima (mesma coluna). Em catálogos tipo GIRA
+            # a estrutura é: [imagem grande ~380px] + [texto/SKU pequeno ~100px]
+            cell_height = matched_cell["y_max"] - matched_cell["y_min"]
+            crop_y_min = matched_cell["y_min"]
+
+            if cell_height < 150 and matched_cell["h_idx"] > 0:
+                # Procurar célula acima na mesma coluna
+                above_cell = next(
+                    (c for c in cells
+                     if c["h_idx"] == matched_cell["h_idx"] - 1
+                     and c["v_idx"] == matched_cell["v_idx"]),
+                    None
+                )
+                if above_cell:
+                    crop_y_min = above_cell["y_min"]
+
+            crop_region = {
+                "y_min": crop_y_min,
+                "y_max": matched_cell["y_max"],
+                "x_min": matched_cell["x_min"],
+                "x_max": matched_cell["x_max"]
+            }
+
             # Extrair e salvar célula
             try:
                 cell_image = raster[
-                    matched_cell["y_min"]:matched_cell["y_max"],
-                    matched_cell["x_min"]:matched_cell["x_max"]
+                    crop_region["y_min"]:crop_region["y_max"],
+                    crop_region["x_min"]:crop_region["x_max"]
                 ]
 
                 # Normalizar fundo (branco)
@@ -197,8 +236,7 @@ def extract_cells_via_cv(
                 filename = f"{sku.get('sku', 'UNKNOWN')}_page{page_num}.png"
                 filepath = os.path.join(output_folder, filename)
 
-                cell_bgr = cv2.cvtColor(cell_image, cv2.COLOR_RGB2BGR)
-                cv2.imwrite(filepath, cell_bgr)
+                cv2.imwrite(filepath, cv2.cvtColor(cell_image, cv2.COLOR_RGB2BGR))
 
                 matches.append({
                     "sku": sku.get("sku"),
@@ -221,6 +259,18 @@ def extract_cells_via_cv(
 
     print(f"[CV Extractor] Resultado: {len(matches)} matches, {len(unmatched)} unmatch")
     return matches, unmatched
+
+
+def _count_segments_per_cluster(lines: List[tuple], clusters: List[float], tolerance: float = 20) -> List[int]:
+    """Conta quantos segmentos de linha caem em cada cluster (para filtrar ruído)."""
+    counts = [0] * len(clusters)
+    for line in lines:
+        coord = line[0]
+        for i, cluster in enumerate(clusters):
+            if abs(coord - cluster) <= tolerance:
+                counts[i] += 1
+                break
+    return counts
 
 
 def _cluster_coords(coords: List[float], tolerance: float = 10) -> List[float]:
