@@ -203,9 +203,14 @@ def _match_via_grid(
                 search_cells.append(above_cell)
 
         # Para cada célula candidata, busca imagem embedada
+        # Só aceita célula com altura >= 50 PDF-points (exclui linhas separadoras e células de texto)
         best_img = None
         img_cell_pdf = None  # bounds da célula onde a imagem foi encontrada
+        MIN_CELL_H_PTS = 50  # mínimo em PDF-points para ser considerada célula de imagem
         for candidate_cell in search_cells:
+            cell_h_pts = (candidate_cell["y_max"] - candidate_cell["y_min"]) / scale
+            if cell_h_pts < MIN_CELL_H_PTS:
+                continue  # célula muito pequena = separador ou zona de texto
             cell_pdf = fitz.Rect(
                 candidate_cell["x_min"] / scale,
                 candidate_cell["y_min"] / scale,
@@ -218,30 +223,29 @@ def _match_via_grid(
                 img_cell_pdf = cell_pdf
                 break
 
-        if best_img:
-            # Intersecta o rect da imagem com os limites da célula-de-foto.
-            # Garante que pegamos só a área da foto, mesmo que a imagem embedada
-            # no PDF tenha rect maior (cobrindo texto acima/abaixo).
-            crop_rect = best_img["rect"] & img_cell_pdf
-            # Se a interseção for muito pequena (<20% da área da imagem), usa o rect completo
-            min_area = best_img["area"] * 0.20
-            inter_area = max(0, crop_rect.width) * max(0, crop_rect.height)
-            if crop_rect.is_empty or crop_rect.is_infinite or inter_area < min_area:
-                crop_rect = best_img["rect"]
-            # Pequeno inset para não capturar linhas pontilhadas da borda da célula
-            inset = 3 / scale
+        if img_cell_pdf is not None:
+            # Crop direto nos bounds da CÉLULA-DE-IMAGEM (não no rect da imagem embedada).
+            # A célula já delimita corretamente a área da foto no grid.
+            # Usar o rect da imagem seria errado: imagens embedadas no PDF podem cobrir
+            # múltiplas colunas/linhas, causando captura de produtos vizinhos e textos.
+            inset = 2 / scale
             crop_rect = fitz.Rect(
-                crop_rect.x0 + inset, crop_rect.y0 + inset,
-                crop_rect.x1 - inset, crop_rect.y1 - inset,
+                img_cell_pdf.x0 + inset, img_cell_pdf.y0 + inset,
+                img_cell_pdf.x1 - inset, img_cell_pdf.y1 - inset,
             )
             img_arr = _crop_raster_at_rect(crop_rect, raster, width, height, scale)
         else:
-            # Fallback: nenhuma imagem embedada encontrada — tenta a mais próxima acima do SKU
+            # Fallback: nenhuma célula-de-imagem encontrada — tenta imagem mais próxima acima do SKU
             best_img = _find_image_above_sku(page_imgs, sku_x, sku_y,
                                              sku_cell["x_min"] / scale,
                                              sku_cell["x_max"] / scale)
             if best_img:
-                img_arr = _crop_raster_at_rect(best_img["rect"], raster, width, height, scale)
+                inset = 2 / scale
+                r = best_img["rect"]
+                img_arr = _crop_raster_at_rect(
+                    fitz.Rect(r.x0 + inset, r.y0 + inset, r.x1 - inset, r.y1 - inset),
+                    raster, width, height, scale
+                )
             else:
                 unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "no_img_in_cell"})
                 continue
