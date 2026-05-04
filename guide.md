@@ -280,138 +280,111 @@ npx tsc --noEmit
 
 ## 13. Image Extraction via OpenCV (PDF Catalog Extraction)
 
-> **Contexto**: Extração de imagens de catálogos PDF com detecção visual de grid (linhas pontilhadas).
+> **Contexto**: Extração de imagens de catálogos PDF com estratégia adaptativa por página.
 
-### 13.1 Estratégia Atual (OpenCV - Desde 2026-04-29)
+### 13.1 Estratégia Atual (OpenCV Adaptativo - Desde 2026-04-30)
 
-**Abordagem:**
-Em vez de tentar inferir células a partir de coordenadas de texto ou imagens embedadas, detectamos visualmente as linhas pontilhadas que definem o grid real do catálogo. Isso garante 100% de acurácia para catálogos com linhas visíveis.
+**Abordagem por página:**
+O motor detecta automaticamente o tipo de layout de cada página e escolhe a estratégia adequada:
+
+| n° de V-lines interiores detectadas | Estratégia | Descrição |
+|--------------------------------------|------------|-----------|
+| 1 a 4 | **Grid** | Crop de células formadas por linhas pontilhadas |
+| 0 ou > 4 | **Embedded** | Imagens embedadas + matching por Y-proximity |
 
 **Frontend → Backend Flow:**
 ```
 1. PDF upload → Frontend (React)
 2. spatialContext extraído do PDF (smartPdfInterpreter.ts)
-3. Dados enviados ao backend Python (mesmo payload antigo):
-   {
-     "skus": [{
-       "sku": "GC0220",
-       "page": 65,
-       "spatialContext": {x, y, width, height, page}
-     }]
-   }
-4. Backend (Python) via OpenCV:
-   a. Render página em 150 DPI → raster NumPy
-   b. Canny + HoughLinesP → detecta linhas pontilhadas
-   c. Filtro orientação (±2° de 0° ou 90°) → H/V lines
-   d. Clustering (tolerância 10px) → grid coordinates
-   e. Construir células via interseções
-   f. Para cada SKU: encontrar célula, crop raster, salvar PNG
-5. ZIP com células extraídas → upload Supabase
-6. zipUrl retornada ao frontend
+3. Dados enviados ao backend Python:
+   { "skus": [{"sku": "GC0220", "spatialContext": {x, y, page}}] }
+4. main.py:
+   a. Obter page_heights via PyMuPDF
+   b. Converter Y: pymupdf_y = page_height - pdfjs_y
+   c. Deduplica SKUs por (sku, page) — proteção contra PDFs com texto duplicado
+5. cv_extractor.py por página:
+   a. Render 150 DPI → raster NumPy (np.frombuffer correto)
+   b. Canny + HoughLinesP + filtro orientação → H/V lines (comprimento mínimo 15% página)
+   c. Clustering (tolerância 40px) + filtro ≥2 segmentos → coordenadas reais
+   d. Se 1-4 V-interiores: estratégia Grid
+   e. Se 0 ou >4 V-interiores: estratégia Embedded
+6. ZIP → upload Supabase → zipUrl retornada ao frontend
 ```
 
 **Arquivos Principais:**
-- `src/core/images/imageExtractionApi.ts` - Envia dados ao backend (sem mudança)
-- `src/core/pipeline/smartPdfInterpreter.ts` - Extrai spatialContext (sem mudança)
-- `backend/image_extractor/cv_extractor.py` - Novo: detecção OpenCV + crop
-- `backend/image_extractor/main.py` - Simplificado: chama cv_extractor direto
-- `backend/image_extractor/storage.py` - Upload Supabase (sem mudança)
+- `backend/image_extractor/cv_extractor.py` — Motor: detecção OpenCV + estratégias Grid/Embedded
+- `backend/image_extractor/main.py` — Endpoint: conversão de coords + chamada cv_extractor
+- `backend/image_extractor/storage.py` — Upload Supabase (sem mudança)
+- `src/core/images/imageExtractionApi.ts` — Envia dados ao backend (sem mudança)
 
-### 13.2 Algoritmo Detalhado
+### 13.2 Estratégia Grid
 
-#### Passo 1: Render em 150 DPI
+Para catálogos com linhas pontilhadas visíveis (GIRA, GOAL, NIXHOUSE, LILA HOME):
+
 ```python
-mat = fitz.Matrix(scale, scale)  # scale=2.0 para precisão
-pix = page.get_pixmap(matrix=mat)
-raster = np.array(pix)  # NumPy array RGB
-```
-
-#### Passo 2-3: Detecção Canny + HoughLinesP + Filtro Orientação
-```python
-gray = cv2.cvtColor(raster, cv2.COLOR_BGR2GRAY)
-edges = cv2.Canny(gray, 50, 150)
-lines = cv2.HoughLinesP(
-    edges, rho=1, theta=π/180, threshold=50,
-    minLineLength=30, maxLineGap=15
-)
-# Filtro: |angle - 0°| < 2° (horizontal) ou |angle - 90°| < 2° (vertical)
-h_lines = [...]  # linhas horizontais
-v_lines = [...]  # linhas verticais
-```
-
-#### Passo 4: Clustering de Linhas
-```python
-# Agrupar linhas próximas (tolerância 10px) em coordenadas únicas
-h_coords = _cluster_coords([l.y for l in h_lines], tolerance=10)
-v_coords = _cluster_coords([l.x for l in v_lines], tolerance=10)
-# Resultado: h_coords = [50.5, 200.3, 350.2, ...] (sorted)
-```
-
-#### Passo 5: Construir Células via Interseções
-```python
-cells = []
+# Cada célula é definida pelas interseções H × V:
 for i in range(len(h_coords) - 1):
     for j in range(len(v_coords) - 1):
-        cell = {
-            "y_min": h_coords[i],
-            "y_max": h_coords[i+1],
-            "x_min": v_coords[j],
-            "x_max": v_coords[j+1]
-        }
-        cells.append(cell)
-# Resultado: 3 colunas × 5 linhas = 15 células
+        cell = {y_min, y_max, x_min, x_max}
+
+# Match: SKU cai dentro da célula → crop do raster
+cell_img = raster[cell.y_min:cell.y_max, cell.x_min:cell.x_max]
+# Expansão: se célula < 150px altura (zona texto), incorpora célula acima
 ```
 
-#### Passo 6: Match SKU + Crop + Save
+### 13.3 Estratégia Embedded
+
+Para catálogos sem grid visual (BM36, CLINK, DAGIA, FASTNEO):
+
 ```python
-for sku in skus_list:
-    x, y = sku.spatialContext.x, sku.spatialContext.y
-    x_scaled, y_scaled = x * scale, y * scale
-    
-    # Encontrar célula que contém o SKU
-    for cell in cells:
-        if cell.x_min <= x_scaled <= cell.x_max and cell.y_min <= y_scaled <= cell.y_max:
-            # Extrair célula do raster
-            cell_image = raster[cell.y_min:cell.y_max, cell.x_min:cell.x_max]
-            # Normalizar fundo (contraste para fundos claros)
-            cell_image = _normalize_background(cell_image)
-            # Salvar
-            cv2.imwrite(f"output/{sku.sku}.png", cell_image)
-            matches.append(...)
-            break
+# Filtros de imagem:
+logo_xrefs = imagens que aparecem em ≥3 páginas (logos/cabeçalhos)
+# Rejeitar: iw<20 ou ih<20 (ícones), iw>85% e ih>85% da página (backgrounds)
+
+# Score de matching por SKU (menor = melhor):
+score(img) = abs(img.cy - sku_y) * 2 + abs(img.cx - sku_x)
+# Y tem peso 2x → prioriza imagem acima/abaixo do SKU vs laterais
 ```
 
-### 13.3 Vantagens vs Tentativas Anteriores
+### 13.4 Resultados por Fornecedor (Teste E2E 2026-04-30)
 
-| Tentativa | Problema | Cobertura | Erro |
-|-----------|----------|-----------|------|
-| Proximidade | Cross-contamination | 275/564 | 49% |
-| BBox | Muito restritivo | 9/564 | 98% |
-| Interseção | Sobreposição de áreas | 275/564 | 49% |
-| OpenCV (**atual**) | Grid real, sem ambiguidade | 540+/564 | 4% |
+| Fornecedor | SKUs | Match | % | Estratégia |
+|------------|------|-------|---|------------|
+| GIRA | 24 | 24 | 100% | Grid (2 V-int) |
+| GOAL | 9 | 9 | 100% | Grid/Embedded misto |
+| NIXHOUSE | 5 | 5 | 100% | Grid (2-3 V-int) |
+| LILA HOME | 12 | 12 | 100% | Grid (1-2 V-int) |
+| CLINK | 24 | 24 | 100% | Embedded (7 V-int) |
+| DAGIA | 6 | 6 | 100% | Embedded (0 V-int) |
+| BM36/WC | 25 | 24 | 96% | Embedded (5-6 V-int) |
+| FASTNEO | 70 | 69 | 98.6% | Grid/Embedded misto |
+| **TOTAL** | **175** | **173** | **98.9%** | |
 
-### 13.4 Quando Funciona Bem
-- ✅ Catálogos com linhas pontilhadas visíveis (GIRA, Nix House, etc.)
-- ✅ Grids regulares (3×N, 2×N, 4×N, qualquer coluna count)
-- ✅ Layouts variáveis (pirâmide, coluna, grade assimétrica)
-- ✅ PDFs grandes (65+ páginas, +1000 SKUs)
-- ✅ Sem dependência de imagens embedadas
+### 13.5 Padrões SKU por Fornecedor
 
-### 13.5 Limitações Conhecidas
-- ❌ Catálogos sem linhas visíveis (texto puro, sem separadores)
-- ⚠️ Linhas muito finas ou muito desbotadas (threshold de Canny pode precisar tuning)
-- ⚠️ Ângulo > 2° em relação a 0°/90° será ignorado (raro em PDFs)
+| Fornecedor | Regex | Exemplos |
+|------------|-------|---------|
+| GIRA | `^[A-Z]{2,3}\d{3,4}$` | GC0220, AB123 |
+| BM36/WC | `^(BM\|WC)\d{4,8}$` | BM361645, WC409750 |
+| GOAL | `^GK\d{3,6}$` | GK12345 |
+| CLINK | `^CK\d{3,5}$` | CK4372 |
+| LILA HOME | `^LH\d{2,4}$` | LH924 |
+| DAGIA | `^D[A-Z]{1,3}\d{1,4}[A-Z]?\d*$` | DXP25, DZ04 |
+| NIXHOUSE | `^NX\d{3,5}$` | NX020 |
+| FASTNEO | `^\d{6,8}$` | 153060 |
 
 ### 13.6 Tuning (se necessário)
 
-Se em um fornecedor específico a detecção falhar:
 ```python
-# Em cv_extractor.py, ajuste:
-edges = cv2.Canny(gray, 30, 120)  # thresholds mais baixos
-lines = cv2.HoughLinesP(..., threshold=40, minLineLength=20)  # menos rigoroso
+# Em cv_extractor.py, linha _detect_lines():
+edges = cv2.Canny(gray, 30, 120)  # thresholds mais baixos para linhas finas
+lines = cv2.HoughLinesP(..., threshold=40, minLineLength=20)  # mais permissivo
+
+# Limiar para estratégia grid:
+if 1 <= n_interior_v <= 4:  # aumentar para <=6 se catálogo tem mais colunas
 ```
 
-Rodar teste com 2 páginas antes de processar catálogo inteiro.
+Rodar `test_all_suppliers.py` após qualquer ajuste para validar cobertura geral.
 
 ---
 
