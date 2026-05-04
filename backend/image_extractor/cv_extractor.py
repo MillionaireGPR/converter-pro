@@ -2,16 +2,17 @@
 Extrator de imagens de catálogos PDF via OpenCV.
 
 Estratégia adaptativa por página:
-  - Grid (1-4 V-lines internas detectadas): detecta células por linhas pontilhadas
-  - Embedded (0 ou >4 V-lines): extrai imagens embutidas e associa por Y-proximity
+  - Grid (1-4 V-lines internas): localiza célula do SKU, extrai imagem embedada da célula
+  - Embedded (0 ou >4 V-lines): associa imagens por Y-proximity
 
+Saída: {sku}.png  (apenas foto do produto, sem textos/descrições)
 Suporta: GIRA, BM36, NixHouse, Lila Home, Goal, Clink, Dagia, FastNeo e similares.
 """
 import os
 import cv2
 import numpy as np
 import fitz
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict
 
 
 # ─────────────────────────────────────────────────────────────
@@ -25,17 +26,17 @@ def extract_cells_via_cv(
     scale: float = 2.0
 ) -> Tuple[List[Dict], List[Dict]]:
     """
-    Extrai imagens de produto para cada SKU.
+    Extrai a imagem de produto para cada SKU.
 
     Seleciona automaticamente a estratégia por página:
-    - Grid: quando 1-4 linhas verticais interiores são detectadas (catálogos visuais)
-    - Embedded: quando 0 ou >4 linhas (tabelas ou PDFs sem grade visível)
+    - Grid: 1-4 V-lines interiores → localiza célula pelo grid, extrai imagem embedada da célula
+    - Embedded: 0 ou >4 V-lines → imagem embedada mais próxima por Y-proximity
 
     Args:
         pdf_path: caminho do PDF
         skus_list: SKUs com spatialContext {x, y, page} em coords PyMuPDF
         output_folder: diretório de saída
-        scale: fator de renderização (2.0 = 150 DPI)
+        scale: fator de renderização para detecção de grid (não afeta qualidade da imagem extraída)
 
     Returns:
         (matches, unmatched)
@@ -44,22 +45,19 @@ def extract_cells_via_cv(
     matches: List[Dict] = []
     unmatched: List[Dict] = []
 
-    # Detectar logos (xrefs que aparecem em ≥3 páginas)
     logo_xrefs = _detect_logo_xrefs(doc)
 
-    # Deduplica SKUs por (code, page) — PDFs com texto duplicado enviariam 2x o mesmo SKU
-    seen_sku_keys: set = set()
+    # Deduplica SKUs por (sku, page) — proteção para PDFs com texto duplicado
+    seen_keys: set = set()
     deduped: list = []
     for sku in skus_list:
         sc = sku.get("spatialContext")
         key = (sku.get("sku"), sc.get("page") if sc else None)
-        if key in seen_sku_keys:
-            continue
-        seen_sku_keys.add(key)
-        deduped.append(sku)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            deduped.append(sku)
     skus_list = deduped
 
-    # Agrupar SKUs por página
     skus_by_page: Dict[int, list] = {}
     for sku in skus_list:
         sc = sku.get("spatialContext")
@@ -80,20 +78,23 @@ def extract_cells_via_cv(
             raster = cv2.cvtColor(raster, cv2.COLOR_RGBA2RGB)
         height, width = raster.shape[:2]
 
-        # Detectar linhas
         h_lines, v_lines = _detect_lines(raster, width, height)
-        h_coords = _finalize_coords([l[0] for l in h_lines], 40, min_count=2, boundary_lo=0.0, boundary_hi=float(height))
-        v_coords = _finalize_coords([l[0] for l in v_lines], 40, min_count=2, boundary_lo=0.0, boundary_hi=float(width))
-        n_interior_v = len(v_coords) - 2  # excluindo bordas 0 e width
+        h_coords = _finalize_coords([l[0] for l in h_lines], 40, min_count=2,
+                                    boundary_lo=0.0, boundary_hi=float(height))
+        v_coords = _finalize_coords([l[0] for l in v_lines], 40, min_count=2,
+                                    boundary_lo=0.0, boundary_hi=float(width))
+        n_interior_v = len(v_coords) - 2
 
         print(f"[CV] Página {page_num}: {width}x{height}px | {n_interior_v} V-internas", end="")
 
         if 1 <= n_interior_v <= 4:
             print(f" → GRID ({len(h_coords)}H×{len(v_coords)}V)")
-            pm, pu = _match_via_grid(raster, h_coords, v_coords, page_skus, scale, output_folder, page_num)
+            pm, pu = _match_via_grid(doc, page, raster, h_coords, v_coords,
+                                     page_skus, logo_xrefs, scale, output_folder, page_num)
         else:
-            print(f" → EMBEDDED (0 ou >4 V-lines)")
-            pm, pu = _match_via_embedded(page, raster, page_skus, logo_xrefs, scale, output_folder, page_num)
+            print(f" → EMBEDDED")
+            pm, pu = _match_via_embedded(doc, page, raster, page_skus,
+                                         logo_xrefs, scale, output_folder, page_num)
 
         matches.extend(pm)
         unmatched.extend(pu)
@@ -108,7 +109,6 @@ def extract_cells_via_cv(
 # ─────────────────────────────────────────────────────────────
 
 def _detect_lines(raster: np.ndarray, width: int, height: int) -> Tuple[list, list]:
-    """Canny + HoughLinesP com filtro de orientação e comprimento mínimo."""
     gray = cv2.cvtColor(raster, cv2.COLOR_RGB2GRAY)
     min_hl = int(width * 0.15)
     min_vl = int(height * 0.15)
@@ -134,36 +134,35 @@ def _detect_lines(raster: np.ndarray, width: int, height: int) -> Tuple[list, li
 
 def _finalize_coords(raw: list, tolerance: float, min_count: int,
                      boundary_lo: float, boundary_hi: float) -> List[float]:
-    """Cluster + filtro de contagem + bordas de página."""
     if not raw:
         return [boundary_lo, boundary_hi]
     clusters = _cluster_coords(raw, tolerance)
-    counts = _count_segments_per_cluster(
-        [(v, 0, 0) for v in raw], clusters, tolerance
-    )
+    counts = _count_segments_per_cluster([(v, 0, 0) for v in raw], clusters, tolerance)
     filtered = [c for c, cnt in zip(clusters, counts) if cnt >= min_count]
     return sorted(set([boundary_lo] + filtered + [boundary_hi]))
 
 
 # ─────────────────────────────────────────────────────────────
-# Estratégia A: Grid
+# Estratégia A: Grid → extrai imagem embedada da célula
 # ─────────────────────────────────────────────────────────────
 
 def _match_via_grid(
+    doc: fitz.Document,
+    page: fitz.Page,
     raster: np.ndarray,
     h_coords: List[float],
     v_coords: List[float],
     page_skus: list,
+    logo_xrefs: set,
     scale: float,
     output_folder: str,
     page_num: int
 ) -> Tuple[List[Dict], List[Dict]]:
-    """Match SKU → célula do grid → crop do raster."""
     height, width = raster.shape[:2]
     h_s = sorted(h_coords)
     v_s = sorted(v_coords)
 
-    # Construir células indexadas
+    # Construir células
     cells = []
     for i in range(len(h_s) - 1):
         for j in range(len(v_s) - 1):
@@ -172,6 +171,9 @@ def _match_via_grid(
                 "y_min": int(h_s[i]), "y_max": int(h_s[i + 1]),
                 "x_min": int(v_s[j]), "x_max": int(v_s[j + 1]),
             })
+
+    # Pré-computar imagens embedadas da página com suas posições (em PDF-points)
+    page_imgs = _get_page_embedded_images(page, logo_xrefs)
 
     matches, unmatched = [], []
 
@@ -188,26 +190,44 @@ def _match_via_grid(
             (c for c in cells if c["x_min"] <= sx <= c["x_max"] and c["y_min"] <= sy <= c["y_max"]),
             None
         )
-        if not matched_cell:
-            unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "outside_grid"})
-            continue
 
-        # Expandir para cima se a célula for pequena (zona de texto sem imagem)
-        crop_y_min = matched_cell["y_min"]
-        if (matched_cell["y_max"] - matched_cell["y_min"]) < 150 and matched_cell["h_idx"] > 0:
+        # Se cair em célula muito pequena (zona de texto), expandir para célula acima
+        if matched_cell and (matched_cell["y_max"] - matched_cell["y_min"]) < 150 and matched_cell["h_idx"] > 0:
             above = next((c for c in cells
                           if c["h_idx"] == matched_cell["h_idx"] - 1
                           and c["v_idx"] == matched_cell["v_idx"]), None)
             if above:
-                crop_y_min = above["y_min"]
+                matched_cell = above
 
-        cell_img = raster[crop_y_min:matched_cell["y_max"],
-                          matched_cell["x_min"]:matched_cell["x_max"]]
-        if cell_img.size == 0:
+        if not matched_cell:
+            unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "outside_grid"})
+            continue
+
+        # Converter célula de pixels → PDF-points para busca de imagens
+        cell_pdf = fitz.Rect(
+            matched_cell["x_min"] / scale,
+            matched_cell["y_min"] / scale,
+            matched_cell["x_max"] / scale,
+            matched_cell["y_max"] / scale,
+        )
+
+        # Encontrar a maior imagem embedada cujo centro cai dentro da célula
+        best = _find_best_image_in_rect(page_imgs, cell_pdf)
+
+        if best:
+            img_arr = _extract_image_array(doc, best["xref"], best["rect"], raster, width, height, scale)
+        else:
+            # Fallback: crop da parte superior da célula (onde normalmente fica a foto)
+            cell_h = matched_cell["y_max"] - matched_cell["y_min"]
+            crop_y_max = matched_cell["y_min"] + int(cell_h * 0.65)
+            img_arr = raster[matched_cell["y_min"]:crop_y_max,
+                             matched_cell["x_min"]:matched_cell["x_max"]]
+
+        if img_arr is None or img_arr.size == 0:
             unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "empty_crop"})
             continue
 
-        filepath = _save_image(cell_img, sku.get("sku", "UNKNOWN"), page_num, output_folder)
+        filepath = _save_image(img_arr, sku.get("sku", "UNKNOWN"), output_folder)
         matches.append(_make_match(sku, page_num, filepath, "grid"))
 
     return matches, unmatched
@@ -218,6 +238,7 @@ def _match_via_grid(
 # ─────────────────────────────────────────────────────────────
 
 def _match_via_embedded(
+    doc: fitz.Document,
     page: fitz.Page,
     raster: np.ndarray,
     page_skus: list,
@@ -226,11 +247,57 @@ def _match_via_embedded(
     output_folder: str,
     page_num: int
 ) -> Tuple[List[Dict], List[Dict]]:
-    """Match SKU → imagem embedada mais próxima (Y-proximity + X-region)."""
     height, width = raster.shape[:2]
 
-    # Coletar posições de imagens embedadas
-    img_positions = []
+    page_imgs = _get_page_embedded_images(page, logo_xrefs)
+
+    if not page_imgs:
+        return [], [{"sku": s.get("sku"), "page": page_num, "reason": "no_embedded_imgs"} for s in page_skus]
+
+    matches, unmatched = [], []
+    used_xrefs: set = set()
+
+    sorted_skus = sorted(page_skus, key=lambda s: s.get("spatialContext", {}).get("y", 0))
+
+    for sku in sorted_skus:
+        sc = sku.get("spatialContext", {})
+        sku_x, sku_y = sc.get("x"), sc.get("y")
+        if sku_x is None or sku_y is None:
+            unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "no_coords"})
+            continue
+
+        candidates = [p for p in page_imgs if p["xref"] not in used_xrefs]
+        if not candidates:
+            unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "no_img_left"})
+            continue
+
+        def score(p):
+            dy = abs(p["cy"] - sku_y)
+            dx = abs(p["cx"] - sku_x)
+            return dy * 2 + dx
+
+        best = min(candidates, key=score)
+        used_xrefs.add(best["xref"])
+
+        img_arr = _extract_image_array(doc, best["xref"], best["rect"], raster, width, height, scale)
+        if img_arr is None or img_arr.size == 0:
+            unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "empty_crop"})
+            continue
+
+        filepath = _save_image(img_arr, sku.get("sku", "UNKNOWN"), output_folder)
+        matches.append(_make_match(sku, page_num, filepath, "embedded"))
+
+    return matches, unmatched
+
+
+# ─────────────────────────────────────────────────────────────
+# Utilitários de imagem
+# ─────────────────────────────────────────────────────────────
+
+def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set) -> List[Dict]:
+    """Retorna lista de imagens válidas da página com posição e xref."""
+    page_w, page_h = page.rect.width, page.rect.height
+    result = []
     seen = set()
     for img_info in page.get_images(full=True):
         xref = img_info[0]
@@ -242,76 +309,67 @@ def _match_via_embedded(
             continue
         rect = rects[0]
         iw, ih = rect.width, rect.height
-        # Filtrar ícones muito pequenos e imagens de página inteira
-        page_w, page_h = page.rect.width, page.rect.height
         if iw < 20 or ih < 20:
             continue
         if iw > page_w * 0.85 and ih > page_h * 0.85:
             continue
-        img_positions.append({"xref": xref, "rect": rect,
-                               "cx": (rect.x0 + rect.x1) / 2,
-                               "cy": (rect.y0 + rect.y1) / 2,
-                               "area": iw * ih})
-
-    if not img_positions:
-        result = []
-        for sku in page_skus:
-            result.append({"sku": sku.get("sku"), "page": page_num, "reason": "no_embedded_imgs"})
-        return [], result
-
-    matches, unmatched = [], []
-    used_xrefs: set = set()
-
-    # Ordenar SKUs por Y para matching sequencial (cima→baixo)
-    sorted_skus = sorted(page_skus,
-                         key=lambda s: s.get("spatialContext", {}).get("y", 0))
-
-    for sku in sorted_skus:
-        sc = sku.get("spatialContext", {})
-        sku_x, sku_y = sc.get("x"), sc.get("y")
-        if sku_x is None or sku_y is None:
-            unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "no_coords"})
-            continue
-
-        # Candidatas: ainda não usadas
-        candidates = [p for p in img_positions if p["xref"] not in used_xrefs]
-        if not candidates:
-            unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "no_img_left"})
-            continue
-
-        # Score: distância Y (peso 2) + distância X (peso 1) em PDF-points
-        def score(p):
-            dy = abs(p["cy"] - sku_y)
-            dx = abs(p["cx"] - sku_x)
-            return dy * 2 + dx
-
-        best = min(candidates, key=score)
-        used_xrefs.add(best["xref"])
-
-        # Crop do raster (converter de PDF-points para pixels)
-        rect = best["rect"]
-        x0 = max(0, int(rect.x0 * scale))
-        x1 = min(width, int(rect.x1 * scale))
-        y0 = max(0, int(rect.y0 * scale))
-        y1 = min(height, int(rect.y1 * scale))
-
-        cell_img = raster[y0:y1, x0:x1]
-        if cell_img.size == 0:
-            unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "empty_crop"})
-            continue
-
-        filepath = _save_image(cell_img, sku.get("sku", "UNKNOWN"), page_num, output_folder)
-        matches.append(_make_match(sku, page_num, filepath, "embedded"))
-
-    return matches, unmatched
+        result.append({
+            "xref": xref,
+            "rect": rect,
+            "cx": (rect.x0 + rect.x1) / 2,
+            "cy": (rect.y0 + rect.y1) / 2,
+            "area": iw * ih,
+        })
+    return result
 
 
-# ─────────────────────────────────────────────────────────────
-# Utilitários
-# ─────────────────────────────────────────────────────────────
+def _find_best_image_in_rect(page_imgs: List[Dict], cell_pdf: fitz.Rect) -> Dict:
+    """Retorna a maior imagem cujo centro está dentro de cell_pdf."""
+    inside = [
+        p for p in page_imgs
+        if cell_pdf.x0 <= p["cx"] <= cell_pdf.x1 and cell_pdf.y0 <= p["cy"] <= cell_pdf.y1
+    ]
+    if not inside:
+        return None
+    return max(inside, key=lambda p: p["area"])
+
+
+def _extract_image_array(
+    doc: fitz.Document,
+    xref: int,
+    rect: fitz.Rect,
+    raster: np.ndarray,
+    width: int,
+    height: int,
+    scale: float
+) -> np.ndarray:
+    """
+    Extrai a imagem em array RGB.
+    Tenta primeiro via doc.extract_image (foto pura do PDF).
+    Fallback: crop do raster renderizado.
+    """
+    try:
+        img_data = doc.extract_image(xref)
+        if img_data and img_data.get("image"):
+            arr = np.frombuffer(img_data["image"], dtype=np.uint8)
+            decoded = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            if decoded is not None:
+                # cv2 decodifica em BGR, converter para RGB
+                return cv2.cvtColor(decoded, cv2.COLOR_BGR2RGB)
+    except Exception:
+        pass
+
+    # Fallback: crop do raster
+    x0 = max(0, int(rect.x0 * scale))
+    x1 = min(width, int(rect.x1 * scale))
+    y0 = max(0, int(rect.y0 * scale))
+    y1 = min(height, int(rect.y1 * scale))
+    crop = raster[y0:y1, x0:x1]
+    return crop if crop.size > 0 else None
+
 
 def _detect_logo_xrefs(doc: fitz.Document) -> set:
-    """Xrefs que aparecem em ≥3 páginas são logos/cabeçalhos — ignorar."""
+    """Xrefs que aparecem em ≥3 páginas são logos/cabeçalhos."""
     xref_pages: Dict[int, set] = {}
     for i in range(len(doc)):
         for img in doc.load_page(i).get_images(full=True):
@@ -319,11 +377,10 @@ def _detect_logo_xrefs(doc: fitz.Document) -> set:
     return {x for x, pgs in xref_pages.items() if len(pgs) >= 3}
 
 
-def _save_image(img: np.ndarray, sku_code: str, page_num: int, output_folder: str) -> str:
-    """Salva PNG e retorna caminho."""
+def _save_image(img: np.ndarray, sku_code: str, output_folder: str) -> str:
+    """Salva PNG com nome {sku}.png e retorna caminho."""
     clean = "".join(c for c in sku_code if c.isalnum() or c in ("-", "_"))
-    filename = f"{clean}_page{page_num}.png"
-    filepath = os.path.join(output_folder, filename)
+    filepath = os.path.join(output_folder, f"{clean}.png")
     bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
     cv2.imwrite(filepath, bgr)
     return filepath
@@ -345,7 +402,6 @@ def _make_match(sku: dict, page_num: int, filepath: str, match_type: str) -> Dic
 
 
 def _cluster_coords(coords: List[float], tolerance: float = 10) -> List[float]:
-    """Agrupa coordenadas próximas (dentro de tolerance) em um único valor (média)."""
     if not coords:
         return []
     coords_sorted = sorted(set(coords))
@@ -362,7 +418,6 @@ def _cluster_coords(coords: List[float], tolerance: float = 10) -> List[float]:
 
 def _count_segments_per_cluster(lines: List[tuple], clusters: List[float],
                                   tolerance: float = 20) -> List[int]:
-    """Conta quantos segmentos caem em cada cluster."""
     counts = [0] * len(clusters)
     for line in lines:
         coord = line[0]
