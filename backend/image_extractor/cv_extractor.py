@@ -204,6 +204,7 @@ def _match_via_grid(
 
         # Para cada célula candidata, busca imagem embedada
         best_img = None
+        img_cell_pdf = None  # bounds da célula onde a imagem foi encontrada
         for candidate_cell in search_cells:
             cell_pdf = fitz.Rect(
                 candidate_cell["x_min"] / scale,
@@ -211,14 +212,31 @@ def _match_via_grid(
                 candidate_cell["x_max"] / scale,
                 candidate_cell["y_max"] / scale,
             )
-            best_img = _find_best_image_in_rect(page_imgs, cell_pdf)
-            if best_img:
+            found = _find_best_image_in_rect(page_imgs, cell_pdf)
+            if found:
+                best_img = found
+                img_cell_pdf = cell_pdf
                 break
 
         if best_img:
-            img_arr = _crop_raster_at_rect(best_img["rect"], raster, width, height, scale)
+            # Intersecta o rect da imagem com os limites da célula-de-foto.
+            # Garante que pegamos só a área da foto, mesmo que a imagem embedada
+            # no PDF tenha rect maior (cobrindo texto acima/abaixo).
+            crop_rect = best_img["rect"] & img_cell_pdf
+            # Se a interseção for muito pequena (<20% da área da imagem), usa o rect completo
+            min_area = best_img["area"] * 0.20
+            inter_area = max(0, crop_rect.width) * max(0, crop_rect.height)
+            if crop_rect.is_empty or crop_rect.is_infinite or inter_area < min_area:
+                crop_rect = best_img["rect"]
+            # Pequeno inset para não capturar linhas pontilhadas da borda da célula
+            inset = 3 / scale
+            crop_rect = fitz.Rect(
+                crop_rect.x0 + inset, crop_rect.y0 + inset,
+                crop_rect.x1 - inset, crop_rect.y1 - inset,
+            )
+            img_arr = _crop_raster_at_rect(crop_rect, raster, width, height, scale)
         else:
-            # Fallback: nenhuma imagem embedada encontrada — tenta a mais próxima acima do SKU (em PDF-points)
+            # Fallback: nenhuma imagem embedada encontrada — tenta a mais próxima acima do SKU
             best_img = _find_image_above_sku(page_imgs, sku_x, sku_y,
                                              sku_cell["x_min"] / scale,
                                              sku_cell["x_max"] / scale)
@@ -280,7 +298,12 @@ def _match_via_embedded(
         best = min(candidates, key=score)
         used_xrefs.add(best["xref"])
 
-        img_arr = _crop_raster_at_rect(best["rect"], raster, width, height, scale)
+        # Pequeno inset para não capturar bordas/linhas do PDF
+        inset = 3 / scale
+        rect = best["rect"]
+        crop_rect = fitz.Rect(rect.x0 + inset, rect.y0 + inset,
+                               rect.x1 - inset, rect.y1 - inset)
+        img_arr = _crop_raster_at_rect(crop_rect, raster, width, height, scale)
         if img_arr is None or img_arr.size == 0:
             unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "empty_crop"})
             continue
@@ -390,9 +413,24 @@ def _crop_raster_at_rect(rect: fitz.Rect, raster: np.ndarray,
 
 
 def _detect_logo_xrefs(doc: fitz.Document) -> set:
-    """Xrefs presentes em ≥3 páginas = logos/cabeçalhos → ignorar."""
+    """
+    Xrefs presentes em ≥3 páginas amostradas = logos/cabeçalhos → ignorar.
+    Amostra até 40 páginas distribuídas pelo PDF para não escanear catálogos
+    grandes página por página (evita timeout em PDFs com 150+ páginas).
+    """
+    n = len(doc)
+    # Amostra: início, meio e fim do documento
+    if n <= 40:
+        sample = list(range(n))
+    else:
+        step = max(1, n // 30)
+        sample = sorted(set(
+            list(range(0, min(n, 10))) +          # primeiras 10
+            list(range(0, n, step))[:25] +         # distribuídas
+            list(range(max(0, n - 5), n))          # últimas 5
+        ))
     xref_pages: Dict[int, set] = {}
-    for i in range(len(doc)):
+    for i in sample:
         for img in doc.load_page(i).get_images(full=True):
             xref_pages.setdefault(img[0], set()).add(i)
     return {x for x, pgs in xref_pages.items() if len(pgs) >= 3}
