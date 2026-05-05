@@ -369,6 +369,57 @@ def _crop_raster_at_pdf_rect(rect: fitz.Rect, raster: np.ndarray,
     return crop if crop.size > 0 else None
 
 
+def _decode_with_white_bg(decoded: np.ndarray, doc: fitz.Document, smask_xref: int) -> np.ndarray:
+    """
+    Decodifica imagem em RGB compondo qualquer transparência sobre fundo BRANCO.
+
+    PDF storage cases handled:
+    - Grayscale (1 channel) → RGB direto
+    - BGR (3 channels) sem alpha → RGB direto
+    - BGR (3 channels) com SMask externo → composita SMask como alpha sobre branco
+    - BGRA (4 channels) → composita alpha sobre branco
+    """
+    # Caso 1: grayscale puro
+    if len(decoded.shape) == 2:
+        return cv2.cvtColor(decoded, cv2.COLOR_GRAY2RGB)
+
+    if decoded.shape[2] == 4:
+        # BGRA — composita alpha sobre branco
+        bgr = decoded[:, :, :3].astype(np.float32)
+        alpha = decoded[:, :, 3:4].astype(np.float32) / 255.0
+        white = np.full_like(bgr, 255.0)
+        composited = bgr * alpha + white * (1.0 - alpha)
+        rgb = cv2.cvtColor(composited.astype(np.uint8), cv2.COLOR_BGR2RGB)
+        return rgb
+
+    # decoded tem 3 canais (BGR). Verifica se há SMask externo (alpha channel separado)
+    bgr = decoded
+    if smask_xref and smask_xref > 0:
+        try:
+            smask_data = doc.extract_image(smask_xref)
+            if smask_data and smask_data.get("image"):
+                mask_arr = np.frombuffer(smask_data["image"], dtype=np.uint8)
+                mask = cv2.imdecode(mask_arr, cv2.IMREAD_UNCHANGED)
+                if mask is not None:
+                    # Reduz mask a 1 canal se necessário
+                    if len(mask.shape) == 3:
+                        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+                    # Resize se dimensões não baterem
+                    if mask.shape[:2] != bgr.shape[:2]:
+                        mask = cv2.resize(mask, (bgr.shape[1], bgr.shape[0]),
+                                          interpolation=cv2.INTER_LINEAR)
+                    alpha = mask.astype(np.float32) / 255.0
+                    alpha = alpha[:, :, np.newaxis]
+                    bgr_f = bgr.astype(np.float32)
+                    white = np.full_like(bgr_f, 255.0)
+                    composited = bgr_f * alpha + white * (1.0 - alpha)
+                    bgr = composited.astype(np.uint8)
+        except Exception:
+            pass
+
+    return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+
 # ─────────────────────────────────────────────────────────────
 # Extração padrão-ouro: doc.extract_image com fallback raster
 # ─────────────────────────────────────────────────────────────
@@ -406,17 +457,11 @@ def _extract_perfect_image(
             arr = np.frombuffer(raw, dtype=np.uint8)
             decoded = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
             if decoded is not None and decoded.size > 0:
-                # Normaliza para RGB
-                if len(decoded.shape) == 2:  # grayscale
-                    rgb = cv2.cvtColor(decoded, cv2.COLOR_GRAY2RGB)
-                elif decoded.shape[2] == 4:  # BGRA → BGR → RGB
-                    bgr = cv2.cvtColor(decoded, cv2.COLOR_BGRA2BGR)
-                    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-                else:  # BGR → RGB
-                    rgb = cv2.cvtColor(decoded, cv2.COLOR_BGR2RGB)
+                # Tentar máscara/SMask explícita do PDF (alpha channel separado)
+                smask_xref = img_data.get("smask", 0)
+                rgb = _decode_with_white_bg(decoded, doc, smask_xref)
 
                 # Sanidade: aspect ratio do extraído deve bater com o display
-                # (tolerância 30% — diferenças grandes indicam mask/partial/rotação)
                 ext_h, ext_w = rgb.shape[:2]
                 if ext_w > 0 and ext_h > 0:
                     ext_aspect = ext_w / ext_h
