@@ -419,6 +419,66 @@ const postProcessBySupplier = (
     campos['__postProcessed'] = true;
     return; // Sai sem aplicar fallback genérico — tudo foi tratado aqui
   }
+
+  // ═══════════════════════════════════════════════════
+  // BM36 / WORLD CLASSIC — Regras específicas
+  // Estrutura por bloco (5 linhas):
+  //   1. DESCRIÇÃO + SKU (às vezes truncado)
+  //   2. CD: <EAN_13_DIGITOS>
+  //   3. CD: <SKU_COMPLETO>  ← fonte de verdade do SKU
+  //   4. CX: <NUMERO>
+  //   5. B<base>B<margem>     ← preço base em centavos
+  // ═══════════════════════════════════════════════════
+  if (supplierName.includes('BM36') || supplierName.includes('WORLD CLASSIC')) {
+    delete campos['preco'];
+    delete campos['descricao'];
+
+    // Normaliza espaços
+    let text = block.replace(/\s+/g, ' ').trim();
+
+    // ── PASSO 1: SKU completo via segunda linha "CD: BM/WC#####" ──
+    const skuMatch = text.match(/CD:\s*((?:BM|WC)\d{4,8})/i);
+    if (skuMatch) campos['codigo'] = skuMatch[1].toUpperCase();
+
+    // ── PASSO 2: EAN (13 dígitos após primeira "CD:") ──
+    const eanMatch = text.match(/CD:\s*(\d{13})/);
+    if (eanMatch) campos['ean'] = eanMatch[1];
+
+    // ── PASSO 3: Quantidade por caixa ──
+    const cxMatch = text.match(/CX:?\s*(\d{1,4})/i);
+    if (cxMatch) campos['cx'] = cxMatch[1];
+
+    // ── PASSO 4: Preço (B<base>B<margem> → base em centavos) ──
+    const priceMatch = text.match(/B(\d{2,5})B(\d{2,5})/i);
+    if (priceMatch) {
+      const cents = parseInt(priceMatch[1], 10);
+      if (cents > 0 && cents < 1_000_000) {
+        campos['preco'] = (cents / 100).toFixed(2);
+      }
+    }
+
+    // ── PASSO 5: Descrição = texto antes do primeiro "CD:" ──
+    // Remove o SKU truncado/completo do final da descrição
+    const beforeCd = text.split(/\bCD:/i)[0].trim();
+    let descricao = beforeCd
+      // Remove cabeçalho de seção colado (COZINHA & UD, etc.)
+      .replace(/^(COZINHA\s*&?\s*UD|MESA\s*&?\s*BAR|BANHO|DECOR(?:ACAO|AÇÃO)?|UTILIDADES?)\s+/i, '')
+      // Remove SKU truncado/completo no final
+      .replace(/\s*(?:BM|WC)\d{0,8}\s*$/i, '')
+      // Remove "Pag: 001" ou similar que vaza
+      .replace(/Pag:\s*\d+/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (descricao.length >= 3) campos['descricao'] = descricao;
+
+    // ── PASSO 6: Observações ──
+    const extras: string[] = [];
+    if (campos['cx']) extras.push(`Cx c/ ${campos['cx']} unidades`);
+    if (extras.length > 0) campos['observacoes'] = extras.join(' | ');
+
+    campos['__postProcessed'] = true;
+    return;
+  }
 };
 
 /**
