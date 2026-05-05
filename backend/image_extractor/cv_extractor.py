@@ -207,9 +207,11 @@ def _match_via_grid(
             if above:
                 search_cells.append(above)
 
-        # Encontra a maior imagem ainda não usada cujo centro caia em alguma célula candidata
+        # Encontra imagens não usadas cujo centro cai em alguma célula candidata
         # (filtra células muito pequenas — separadores e zonas de texto)
         best_img = None
+        cell_imgs: List[Dict] = []          # todas imagens dentro da célula encontrada
+        chosen_cell_pdf = None              # bounds da célula escolhida (PDF-points)
         MIN_CELL_H_PTS = 50
         for candidate_cell in search_cells:
             cell_h_pts = (candidate_cell["y_max"] - candidate_cell["y_min"]) / scale
@@ -221,7 +223,6 @@ def _match_via_grid(
                 candidate_cell["x_max"] / scale,
                 candidate_cell["y_max"] / scale,
             )
-            # Imagens com centro na célula, ainda não usadas
             inside = [
                 p for p in page_imgs
                 if p["xref"] not in used_xrefs
@@ -229,7 +230,9 @@ def _match_via_grid(
                 and cell_pdf.y0 <= p["cy"] <= cell_pdf.y1
             ]
             if inside:
-                # Variações: pega a maior (foto principal do produto)
+                cell_imgs = inside
+                chosen_cell_pdf = cell_pdf
+                # Variações: pega a maior como referência (uma imagem composta resolve sozinha)
                 best_img = max(inside, key=lambda p: p["area"])
                 break
 
@@ -266,7 +269,25 @@ def _match_via_grid(
                                              used_xrefs)
 
         if best_img is not None:
-            # PADRÃO-OURO: extrai imagem perfeita via doc.extract_image
+            # CASO 1: Múltiplas imagens separadas na mesma célula (variações de cor exibidas
+            # lado a lado, ex: TP1991 com 6 caixinhas como 6 JPEGs distintos).
+            # Solução: raster crop dos bounds da célula → captura a composição visual completa.
+            if len(cell_imgs) >= 2 and chosen_cell_pdf is not None:
+                # Marca todas as imagens da célula como usadas (todas pertencem a esse SKU)
+                for p in cell_imgs:
+                    used_xrefs.add(p["xref"])
+                # Composição: bounding box que cobre todas as imagens da célula (com inset pequeno)
+                bbox = fitz.Rect(chosen_cell_pdf)
+                inset = 2 / scale
+                bbox = fitz.Rect(bbox.x0 + inset, bbox.y0 + inset,
+                                 bbox.x1 - inset, bbox.y1 - inset)
+                img_arr = _crop_raster_at_pdf_rect(bbox, raster, width, height, scale)
+                if img_arr is not None and img_arr.size > 0:
+                    filepath = _save_image(img_arr, sku.get("sku", "UNKNOWN"), output_folder)
+                    matches.append(_make_match(sku, page_num, filepath, "grid_composition"))
+                    continue
+
+            # CASO 2: Uma única imagem (composta ou simples) → doc.extract_image (qualidade perfeita)
             used_xrefs.add(best_img["xref"])
             img_arr = _extract_perfect_image(doc, best_img, raster, width, height, scale)
             if img_arr is not None and img_arr.size > 0:
