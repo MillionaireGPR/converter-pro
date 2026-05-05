@@ -35,30 +35,34 @@ export const interpretPdfSemantically = (
           };
 
           // Buscar coordenadas do SKU no mapa da página.
-          // PDF.js às vezes fragmenta o SKU em items separados (ex: "BM" + "361645").
-          // Estratégia em camadas:
-          //   1. Match exato (item.str inclui SKU completo)
-          //   2. Match por sufixo numérico (parte de dígitos do SKU)
-          //   3. Match por concatenação de items adjacentes
+          // PDF.js fragmenta texto em múltiplos items (ex: "BM361645" pode virar
+          // "BM" + "36" + "1645" ou "CD:" + " BM361645"). Para garantir match,
+          // construímos um índice posicional do texto completo da página.
           if (campos['codigo']) {
             const sku = campos['codigo'] as string;
             let item = page.items.find(it => it.str.includes(sku));
 
-            // Fallback 1: match pela parte numérica do SKU (ex: "361645" para "BM361645")
+            // Fallback robusto: concatenação posicional de TODOS os items.
+            // Mapeia cada caractere do texto concatenado de volta ao item de origem.
             if (!item) {
-              const digits = sku.match(/\d{4,}/)?.[0];
-              if (digits) {
-                item = page.items.find(it => it.str.includes(digits));
+              let joined = '';
+              const charToItemIdx: number[] = [];
+              for (let k = 0; k < page.items.length; k++) {
+                const s = page.items[k].str || '';
+                for (let c = 0; c < s.length; c++) charToItemIdx.push(k);
+                joined += s;
               }
-            }
-
-            // Fallback 2: scan em pares de items consecutivos para SKUs fragmentados
-            if (!item) {
-              for (let k = 0; k < page.items.length - 1; k++) {
-                const combined = page.items[k].str + page.items[k + 1].str;
-                if (combined.includes(sku)) {
-                  item = page.items[k];
-                  break;
+              const skuIdx = joined.indexOf(sku);
+              if (skuIdx >= 0) {
+                item = page.items[charToItemIdx[skuIdx]];
+              } else {
+                // Última tentativa: match pela parte numérica (4+ dígitos do SKU)
+                const digits = sku.match(/\d{4,}/)?.[0];
+                if (digits) {
+                  const digitsIdx = joined.indexOf(digits);
+                  if (digitsIdx >= 0) {
+                    item = page.items[charToItemIdx[digitsIdx]];
+                  }
                 }
               }
             }
