@@ -34,9 +34,35 @@ export const interpretPdfSemantically = (
             textoBruto: block.trim(),
           };
 
-          // NOVO: Buscar coordenadas do SKU no mapa da página
+          // Buscar coordenadas do SKU no mapa da página.
+          // PDF.js às vezes fragmenta o SKU em items separados (ex: "BM" + "361645").
+          // Estratégia em camadas:
+          //   1. Match exato (item.str inclui SKU completo)
+          //   2. Match por sufixo numérico (parte de dígitos do SKU)
+          //   3. Match por concatenação de items adjacentes
           if (campos['codigo']) {
-            const item = page.items.find(it => it.str.includes(campos['codigo']));
+            const sku = campos['codigo'] as string;
+            let item = page.items.find(it => it.str.includes(sku));
+
+            // Fallback 1: match pela parte numérica do SKU (ex: "361645" para "BM361645")
+            if (!item) {
+              const digits = sku.match(/\d{4,}/)?.[0];
+              if (digits) {
+                item = page.items.find(it => it.str.includes(digits));
+              }
+            }
+
+            // Fallback 2: scan em pares de items consecutivos para SKUs fragmentados
+            if (!item) {
+              for (let k = 0; k < page.items.length - 1; k++) {
+                const combined = page.items[k].str + page.items[k + 1].str;
+                if (combined.includes(sku)) {
+                  item = page.items[k];
+                  break;
+                }
+              }
+            }
+
             if (item) {
               prod.spatialContext = {
                 x: item.x,
