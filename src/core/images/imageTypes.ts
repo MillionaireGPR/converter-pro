@@ -16,6 +16,7 @@ export interface ImagemExtraida {
   sourceType: 'pdf' | 'excel' | 'url';
   sourcePage?: number;           // Para PDF (página 1-based)
   sourceIndex?: number;          // Se houver várias na página / workbook
+  sourceSheet?: string;          // ✅ NOVO: Nome da aba/sheet no Excel (ex: "Conferencias", "DADOS")
   imageBlob?: Blob;              // Dados brutos
   imageDataUrl?: string;         // DataURL base64 para preview
   width?: number;
@@ -42,6 +43,7 @@ export interface ResultadoExtracaoImagens {
   totalImagesUnmatched: number;
   images: ImagemAssociadaProduto[];
   unmatchedImages: ImagemExtraida[];
+  zipUrl?: string;  // URL do ZIP gerado pelo backend
   warnings: string[];
   errors: string[];
 }

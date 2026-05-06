@@ -1,0 +1,49 @@
+# ============================================
+# Vercel Ignore — manter o frontend mínimo
+# ============================================
+
+# Backend Python (deployado no Render, não no Vercel)
+backend/
+
+# Build artifacts
+dist/
+build/
+.vercel/
+.vite/
+
+# Dependências (Vercel reinstala via npm install)
+node_modules/
+
+# Git
+.git/
+.github/
+
+# IDE / config local
+.vscode/
+.idea/
+.windsurf/
+.claude/
+
+# Scripts locais
+*.bat
+*.ps1
+
+# Caches de processamento (pode ter GB de jobs)
+temp/
+.temp/
+**/temp/
+**/__pycache__/
+*.pyc
+
+# Logs e env locais
+*.log
+.env.local
+.env*.local
+
+# Outros
+.DS_Store
+docs/
+playwright-fixture.ts
+playwright.config.ts
+*.bak
+test-output.txt

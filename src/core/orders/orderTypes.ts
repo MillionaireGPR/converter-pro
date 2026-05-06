@@ -22,6 +22,9 @@ export interface ItemPedidoNormalizado {
   quantidade: number;
   precoUnitario: number;
   total: number;
+  ipi?: number;           // Opcional - IPI do item
+  desconto?: number;     // Opcional - Desconto percentual
+  unidade?: string;      // Opcional - Unidade de medida
   observacoes: string;
   referenciaPedido: string;
   status: StatusItemPedido;

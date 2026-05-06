@@ -108,6 +108,7 @@ export interface ConversaoSalva {
   headers: string[];
   totalProdutos: number;
   status: 'concluído' | 'erro';
+  zipUrl?: string; // URL do ZIP do backend (quando processado via backend Python)
 }
 
 export interface ExportacaoMercos {
@@ -300,7 +301,7 @@ interface AppContextType {
   salvarConversao: (dados: Omit<ConversaoSalva, 'id' | 'data'>) => Promise<string>;
   reabrirConversao: (id: string) => Promise<ConversaoSalva | null>;
   excluirConversao: (id: string) => Promise<void>;
-  exportarImagensConversao: (id: string) => Promise<{ sucesso: boolean; zipBlob?: Blob; mensagem: string }>;
+  exportarImagensConversao: (id: string) => Promise<{ sucesso: boolean; zipBlob?: Blob; zipUrl?: string; mensagem: string }>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -590,11 +591,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // === exportarImagensConversao ===
-  const exportarImagensConversao = useCallback(async (id: string): Promise<{ sucesso: boolean; zipBlob?: Blob; mensagem: string }> => {
+  const exportarImagensConversao = useCallback(async (id: string): Promise<{ sucesso: boolean; zipBlob?: Blob; zipUrl?: string; mensagem: string }> => {
     try {
       const conversao = conversoesSalvas.find(c => c.id === id);
       if (!conversao) {
         return { sucesso: false, mensagem: "Conversão não encontrada" };
+      }
+
+      // Se tiver zipUrl do backend, retorna ela diretamente
+      if (conversao.zipUrl) {
+        return { sucesso: true, zipUrl: conversao.zipUrl, mensagem: "ZIP disponível para download" };
       }
 
       if (!conversao.imagens || conversao.imagens.length === 0) {

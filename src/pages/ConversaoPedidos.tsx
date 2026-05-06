@@ -7,7 +7,8 @@ import { Upload, Download, ArrowRightLeft, CheckCircle, FileSpreadsheet, AlertTr
 import { toast } from "sonner";
 import { useApp } from "@/context/AppContext";
 import { processarPedido } from "@/core/orders/orderParser";
-import type { ItemPedidoNormalizado, PedidoProcessado, OrderColumnMapping } from "@/core/orders/orderTypes";
+import { exportarPedido, validarPedidoParaExportacao, downloadExportedFile, EXPORT_FORMATS, type FormatoExportacao } from "@/core/orders/orderExporter";
+import type { ItemPedidoNormalizado, PedidoProcessado } from "@/core/orders/orderTypes";
 
 export default function ConversaoPedidos() {
   const { registrarHistorico } = useApp();
@@ -77,9 +78,49 @@ export default function ConversaoPedidos() {
       toast.error("Nenhum pedido carregado para exportar.");
       return;
     }
-    toast.info(
-      "Conversão final do pedido será habilitada na próxima etapa. Estrutura pronta para integração."
-    );
+
+    try {
+      // Validar antes de exportar
+      const formato = destino as FormatoExportacao;
+      const issues = validarPedidoParaExportacao(pedido, formato);
+      
+      const errors = issues.filter(i => i.severity === 'error');
+      if (errors.length > 0) {
+        toast.error(`${errors.length} erro(s) encontrados. Verifique os itens.`);
+        console.error("[Export] Erros:", errors);
+        return;
+      }
+
+      const warnings = issues.filter(i => i.severity === 'warning');
+      if (warnings.length > 0) {
+        toast.warning(`${warnings.length} aviso(s). Exportando mesmo assim.`);
+      }
+
+      // Exportar
+      const resultado = exportarPedido(pedido, formato, {
+        onlyValid: true,
+        includeErrors: false,
+      });
+
+      // Download
+      downloadExportedFile(resultado);
+
+      // Registrar no histórico
+      registrarHistorico({
+        arquivo: nomeArquivo,
+        fornecedor: EXPORT_FORMATS[formato].name,
+        usuario: "Admin",
+        data: new Date().toISOString(),
+        tipoConversao: `Exportação ${EXPORT_FORMATS[formato].name}`,
+        qtdItens: resultado.stats.validItems,
+        status: errors.length === 0 ? "concluído" : "erro",
+      });
+
+      toast.success(`Exportado com sucesso! ${resultado.stats.validItems} itens.`);
+    } catch (err: any) {
+      console.error("[Export] Erro:", err);
+      toast.error(`Erro ao exportar: ${err.message}`);
+    }
   };
 
   // === STATUS BADGES ===
@@ -250,9 +291,11 @@ export default function ConversaoPedidos() {
                   <SelectValue placeholder="Selecionar destino" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="JaWeb">JaWeb</SelectItem>
-                  <SelectItem value="ERP Fornecedor">ERP Fornecedor</SelectItem>
-                  <SelectItem value="Outro Layout">Outro Layout</SelectItem>
+                  {Object.entries(EXPORT_FORMATS).map(([key, format]) => (
+                    <SelectItem key={key} value={key}>
+                      {format.name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

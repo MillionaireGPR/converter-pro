@@ -6,6 +6,9 @@ import { ImagemExtraida } from './imageTypes';
  * todas as mídias embutidas (pasta xl/media/). Em seguida vincula 
  * os relacionamentos XML do Drawing para descobrir a Linha Exata da célula
  * em que a imagem está ancorada.
+ * 
+ * ✅ AGORA COM SUPORTE A MÚLTIPLAS SHEETS (ABAS):
+ * Busca imagens em todas as sheets do workbook, não apenas na primeira.
  */
 export const extractImagesFromExcel = async (
   fileData: ArrayBuffer,
@@ -17,17 +20,60 @@ export const extractImagesFromExcel = async (
     await zip.loadAsync(fileData);
     
     const mediaFiles = Object.keys(zip.files).filter(k => k.startsWith('xl/media/') && !k.endsWith('/'));
-    if (mediaFiles.length === 0) return images;
+    if (mediaFiles.length === 0) {
+      console.log('[ImageExtractorExcel] Nenhuma imagem encontrada em xl/media/');
+      return images;
+    }
+    console.log(`[ImageExtractorExcel] Encontradas ${mediaFiles.length} imagens em xl/media/`);
 
-    // Relacionamento (rId => xl/media/image.png)
-    let anchorMap: Record<string, number> = {};
+    // Relacionamento (rId => xl/media/image.png) com a sheet de origem
+    let anchorMap: Record<string, { rowIdx: number; sheetName: string }> = {};
     
-    // Tentar localizar os drawings. O Excel permite n drawings pra N sheets
-    // Mas normalmente há só o drawing1.xml no MVP de catálogo de produtos
-    const drawingKeys = Object.keys(zip.files).filter(k => k.startsWith('xl/drawings/') && !k.includes('_rels'));
+    // === NOVO: Descobrir todas as sheets e seus drawings ===
+    // 1. Ler workbook.xml para mapear sheetId -> sheetName
+    const workbookXmlFile = zip.file('xl/workbook.xml');
+    const sheetIdToName: Record<string, string> = {};
     
-    for (const drawKey of drawingKeys) {
-        const drawRelKey = drawKey.replace('xl/drawings/', 'xl/drawings/_rels/') + '.rels';
+    if (workbookXmlFile) {
+      const workbookXml = await workbookXmlFile.async('string');
+      const parser = new DOMParser();
+      const wbDoc = parser.parseFromString(workbookXml, 'application/xml');
+      const sheets = wbDoc.querySelectorAll('sheets > sheet');
+      
+      sheets.forEach((sheet, idx) => {
+        const sheetId = sheet.getAttribute('sheetId') || String(idx + 1);
+        const sheetName = sheet.getAttribute('name') || `Sheet${idx + 1}`;
+        sheetIdToName[sheetId] = sheetName;
+        console.log(`[ImageExtractorExcel] Sheet encontrada: ${sheetName} (ID: ${sheetId})`);
+      });
+    }
+    
+    // 2. Para cada sheet, encontrar seu drawing correspondente
+    const worksheetFiles = Object.keys(zip.files).filter(k => 
+      k.startsWith('xl/worksheets/sheet') && 
+      !k.includes('_rels') && 
+      !k.endsWith('/')
+    );
+    
+    console.log(`[ImageExtractorExcel] Processando ${worksheetFiles.length} worksheet(s)...`);
+    
+    for (const wsFile of worksheetFiles) {
+      // Extrair número da sheet do nome do arquivo (sheet1.xml -> 1)
+      const sheetMatch = wsFile.match(/sheet(\d+)\.xml$/);
+      const sheetNum = sheetMatch ? sheetMatch[1] : '1';
+      const sheetName = sheetIdToName[sheetNum] || `Sheet${sheetNum}`;
+      
+      // Ler a worksheet para encontrar o drawing relationship
+      const wsContent = await zip.files[wsFile].async('string');
+      const drawingRefMatch = wsContent.match(/r:id="([^"]+)".*?drawings\/drawing(\d+)\.xml/);
+      
+      if (drawingRefMatch) {
+        const drawingNum = drawingRefMatch[2] || sheetNum;
+        const drawKey = `xl/drawings/drawing${drawingNum}.xml`;
+        const drawRelKey = `xl/drawings/_rels/drawing${drawingNum}.xml.rels`;
+        
+        console.log(`[ImageExtractorExcel] Sheet "${sheetName}" -> ${drawKey}`);
+        
         const drawingFile = zip.files[drawKey];
         const drawingRels = zip.files[drawRelKey];
 
@@ -51,18 +97,26 @@ export const extractImagesFromExcel = async (
                 const embedMatch = chunk.match(/<a:blip[^>]+r:embed="([^"]+)"/);
                 
                 if (rowMatch && embedMatch) {
-                    const rowIdx = parseInt(rowMatch[1], 10) + 1; // 1-based (se é linha 3 no XML -> row 4 visual -> mas xlsx engine usa o origin. Ajustar no matcher depois)
+                    const rowIdx = parseInt(rowMatch[1], 10) + 1; // 1-based
                     const rId = embedMatch[1];
                     const target = idToTarget[rId];
                     if (target) {
-                        anchorMap[target] = rowIdx;
+                        anchorMap[target] = { rowIdx, sheetName };
+                        console.log(`[ImageExtractorExcel] Imagem ${target} -> linha ${rowIdx} na sheet "${sheetName}"`);
                     }
                 }
             });
         }
+      } else {
+        console.log(`[ImageExtractorExcel] Sheet "${sheetName}" não tem drawing`);
+      }
     }
 
     // Gerar extração Blob final
+    console.log(`[ImageExtractorExcel] Processando ${mediaFiles.length} imagens...`);
+    let matchedCount = 0;
+    let unmatchedCount = 0;
+    
     for (let i = 0; i < mediaFiles.length; i++) {
        const relativePath = mediaFiles[i];
        const file = zip.files[relativePath];
@@ -75,7 +129,7 @@ export const extractImagesFromExcel = async (
        
        const cleanFileName = relativePath.split('/').pop() || '';
        const tempName = `${fileName}_img${i + 1}.${extension}`;
-       const sourceRow = anchorMap[relativePath];
+       const anchorInfo = anchorMap[relativePath];
        
        // Converter blob para dataURL
        const arrayBuffer = await blob.arrayBuffer();
@@ -88,16 +142,27 @@ export const extractImagesFromExcel = async (
        const mimeType = extension === 'png' ? 'image/png' : extension === 'webp' ? 'image/webp' : 'image/jpeg';
        const imageDataUrl = `data:${mimeType};base64,${base64}`;
 
+       // Se temos informação de ancoragem, a confiança é alta
+       const hasAnchor = !!anchorInfo;
+       if (hasAnchor) {
+         matchedCount++;
+       } else {
+         unmatchedCount++;
+       }
+
        images.push({
          originalName: cleanFileName,
          temporaryId: tempName,
          sourceType: 'excel',
-         sourceIndex: sourceRow, // Índice de linha exata da planilha
+         sourceIndex: anchorInfo?.rowIdx, // Índice de linha exata da planilha
+         sourceSheet: anchorInfo?.sheetName, // ✅ NOVO: Nome da aba/sheet
          imageBlob: blob,
          imageDataUrl: imageDataUrl,
-         confidence: sourceRow ? 95 : 40 // Baixa confiança se a imagem ta boiando de forma não ancorada
+         confidence: hasAnchor ? 95 : 40 // Baixa confiança se a imagem ta boiando de forma não ancorada
        });
     }
+    
+    console.log(`[ImageExtractorExcel] ✅ Extração completa: ${matchedCount} imagens ancoradas, ${unmatchedCount} sem ancora, total ${images.length}`);
 
   } catch(e) {
     console.error('[ImageExtractorExcel] Falha:', e);

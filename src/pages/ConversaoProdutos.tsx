@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { Upload, FileSpreadsheet, FileText, CheckCircle, AlertCircle, ArrowRight, Loader2, File as FileIcon, Info, History, Image, RotateCcw, Trash2, Clock, Package } from "lucide-react";
+import { Upload, FileSpreadsheet, FileText, CheckCircle, AlertCircle, ArrowRight, Loader2, File as FileIcon, Info, History, Image, RotateCcw, Trash2, Clock, Package, Download } from "lucide-react";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useApp, Produto } from "@/context/AppContext";
 import { toast } from "sonner";
@@ -16,9 +16,11 @@ import { ACCEPTED_FILE_TYPES } from "@/core/pipeline/fileDetector";
 import { importPipeline } from "@/core/pipeline";
 import { supabase } from "@/integrations/supabase/client";
 import { ImportMetadata } from "@/core/types/productPipeline";
-import { Image as ImageIcon, Download } from "lucide-react";
+import { Image as ImageIcon } from "lucide-react";
 import { buildAndDownloadZip } from "@/core/images/imageZipBuilder";
 import { ResultadoExtracaoImagens } from "@/core/images/imageTypes";
+import JSZip from "jszip";
+import { saveAs } from "file-saver";
 
 export default function ConversaoProdutos() {
   const { fornecedores, addProdutosNormalizados, registrarHistorico, setDetectedHeaders, salvarConversao, conversoesSalvas, reabrirConversao, excluirConversao } = useApp();
@@ -274,35 +276,54 @@ export default function ConversaoProdutos() {
       setProgress(85);
 
       // Preparar dados da conversão para salvar no histórico
-      // CORREÇÃO: Usar result.imageResults.images (ImagemAssociadaProduto)
-      const imagensParaSalvar = result.imageResults?.images?.map(img => ({
-        id: img.sku,
-        nome: img.imageFileNameFinal,
-        url: img.imageDataUrl || '',
-        temporaryId: img.sku
-      })) || [];
+      // Se backend retornou ZIP, salva a URL. Senão, salva imagens individuais
+      const imagensParaSalvar = result.imageResults?.zipUrl 
+        ? [{ id: 'zip', nome: 'imagens_extraidas.zip', url: result.imageResults.zipUrl, temporaryId: 'zip' }]
+        : result.imageResults?.images?.map(img => ({
+            id: img.sku,
+            nome: img.imageFileNameFinal,
+            url: img.imageDataUrl || '',
+            temporaryId: img.sku
+          })) || [];
+
+      // ✅ NOVO: Criar mapa de SKU -> imagem extraída para vincular aos produtos
+      const imagensPorSku = new Map<string, string>();
+      result.imageResults?.images?.forEach(img => {
+        if (img.imageDataUrl && img.sku) {
+          imagensPorSku.set(img.sku, img.imageDataUrl);
+          console.log(`[ConversaoProdutos] Imagem vinculada: ${img.sku} -> ${img.imageFileNameFinal}`);
+        }
+      });
+      console.log(`[ConversaoProdutos] Total de imagens vinculadas a SKUs: ${imagensPorSku.size}`);
 
       // Mapear produtos normalizados para o formato de conversão
-      const produtosParaSalvar: Produto[] = result.produtos.map(p => ({
-        id: p.codigo || p.codigoOriginal,
-        fornecedor: supplier.nome,
-        codigoOriginal: p.codigoOriginal,
-        codigoFinal: p.codigo || p.codigoOriginal,
-        nome: p.nome,
-        descricao: p.descricaoComplementar || '',
-        precoBase: p.precoBase,
-        descontoPercentual: p.descontoPercentual || 0,
-        precoFinal: p.precoFinal,
-        ipi: p.ipi || 0,
-        unidade: p.unidade,
-        qtdCaixa: p.quantidadeCaixa,
-        categoria: p.categoria || '',
-        embalagem: p.embalagem || '',
-        status: p.status as any,
-        erros: p.erros || [],
-        imagemUrl: p.imagemUrl || '',
-        temImagem: !!p.imagemUrl,
-      }));
+      // ✅ AGORA com imagens vinculadas do imageResults
+      const produtosParaSalvar: Produto[] = result.produtos.map(p => {
+        // Verificar se tem imagem vinculada a este SKU
+        const imagemDoSku = imagensPorSku.get(p.codigo);
+        const temImagemVinculada = !!imagemDoSku;
+        
+        return {
+          id: p.codigo || p.codigoOriginal,
+          fornecedor: supplier.nome,
+          codigoOriginal: p.codigoOriginal,
+          codigoFinal: p.codigo || p.codigoOriginal,
+          nome: p.nome,
+          descricao: p.descricaoComplementar || '',
+          precoBase: p.precoBase,
+          descontoPercentual: p.descontoPercentual || 0,
+          precoFinal: p.precoFinal,
+          ipi: p.ipi || 0,
+          unidade: p.unidade,
+          qtdCaixa: p.quantidadeCaixa,
+          categoria: p.categoria || '',
+          embalagem: p.embalagem || '',
+          status: p.status as any,
+          erros: p.erros || [],
+          imagemUrl: imagemDoSku || p.imagemUrl || '', // ✅ PRIORIDADE: imagem extraída > imagem do pipeline
+          temImagem: temImagemVinculada || !!p.imagemUrl, // ✅ true se tem imagem vinculada OU do pipeline
+        };
+      });
 
       // Salvar conversão completa no histórico (localStorage)
       await salvarConversao({
@@ -312,7 +333,8 @@ export default function ConversaoProdutos() {
         imagens: imagensParaSalvar,
         headers: result.metadata.camposDetectados,
         totalProdutos: result.produtos.length,
-        status: 'concluído'
+        status: 'concluído',
+        zipUrl: result.imageResults?.zipUrl // Salvar URL do ZIP do backend
       });
 
       // Registra histórico no banco
@@ -542,18 +564,22 @@ export default function ConversaoProdutos() {
               </Card>
 
               {/* Métricas de Imagens (se houver) */}
-              {imageResult && imageResult.totalImagesFound > 0 && (
-                <Card className="shadow-card overflow-hidden">
+              {/* ✅ CORREÇÃO: Mostrar tanto para ZIP (PDF/backend) quanto para imagens individuais (Excel) */}
+              {imageResult && (imageResult.zipUrl || imageResult.totalImagesFound > 0) && (
+                <Card className="shadow-card overflow-hidden border-l-4 border-l-primary">
                   <CardHeader className="py-2 px-3">
                     <CardTitle className="text-xs font-semibold flex items-center gap-2">
-                      <ImageIcon className="h-3.5 w-3.5 text-primary" /> Imagens
-                      <Badge variant="outline" className="ml-auto text-[10px]">{imageResult.totalImagesFound} encontradas</Badge>
+                      <ImageIcon className="h-3.5 w-3.5 text-primary" /> 
+                      {imageResult.zipUrl ? 'Imagens (Backend)' : 'Imagens Extraídas'}
+                      <Badge variant="outline" className="ml-auto text-[10px] bg-primary/10">
+                        {imageResult.totalImagesMatched || 0} associadas
+                      </Badge>
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="px-3 pb-3 space-y-1.5">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-muted-foreground">Associadas (SKU):</span>
-                      <span className="font-medium text-success">{imageResult.totalImagesMatched}</span>
+                      <span className="text-muted-foreground">Total extraído:</span>
+                      <span className="font-medium">{imageResult.totalImagesFound || 0}</span>
                     </div>
                     {imageResult.totalImagesUnmatched > 0 && (
                       <div className="flex items-center justify-between text-xs">
@@ -561,6 +587,20 @@ export default function ConversaoProdutos() {
                         <span className="font-medium text-warning">{imageResult.totalImagesUnmatched}</span>
                       </div>
                     )}
+                    {/* Mostrar avisos se houver */}
+                    {imageResult.warnings && imageResult.warnings.length > 0 && (
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {imageResult.warnings.map((w, i) => (
+                          <div key={i} className="truncate" title={w}>• {w}</div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Formato:</span>
+                      <span className="font-medium text-success">
+                        {imageResult.zipUrl ? 'ZIP pronto' : `${imageResult.totalImagesFound} imagens individuais`}
+                      </span>
+                    </div>
                   </CardContent>
                 </Card>
               )}
@@ -570,25 +610,62 @@ export default function ConversaoProdutos() {
                 <Button size="sm" className="h-9 gradient-success text-primary-foreground font-semibold shadow-sm" onClick={() => navigate('/exportacoes')}>
                   <ArrowRight className="h-3.5 w-3.5 mr-1" /> Exportar
                 </Button>
-                {imageResult && imageResult.images.length > 0 && (
+                {/* Botão ZIP (PDF/backend) */}
+                {imageResult?.zipUrl && (
                   <Button 
                     size="sm" 
                     variant="outline"
-                    className="h-9 border-primary/30"
-                    disabled={isZipping}
-                    onClick={async () => {
-                       setIsZipping(true);
-                       try {
-                         await buildAndDownloadZip(imageResult, resultData.fornNome);
-                       } catch(e) {
-                         toast.error("Erro ao gerar arquivo de Imagens.");
-                       } finally {
-                         setIsZipping(false);
-                       }
+                    className="h-9 border-primary/30 bg-primary/5 hover:bg-primary/10"
+                    onClick={() => {
+                      window.open(imageResult.zipUrl, '_blank');
+                      toast.success("Download do ZIP iniciado!");
                     }}
                   >
-                    {isZipping ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Download className="h-3.5 w-3.5 mr-1" />}
-                    Imagens
+                    <Download className="h-3.5 w-3.5 mr-1" />
+                    Baixar ZIP
+                  </Button>
+                )}
+                {/* ✅ NOVO: Botão Download Imagens (Excel - imagens individuais) */}
+                {!imageResult?.zipUrl && imageResult?.images && imageResult.images.length > 0 && (
+                  <Button 
+                    size="sm" 
+                    variant="outline"
+                    className="h-9 border-primary/30 bg-primary/5 hover:bg-primary/10"
+                    onClick={async () => {
+                      setIsZipping(true);
+                      try {
+                        const zip = new JSZip();
+                        let adicionadas = 0;
+                        
+                        for (const img of imageResult.images) {
+                          if (img.imageDataUrl && img.sku) {
+                            const base64Data = img.imageDataUrl.split(',')[1];
+                            if (base64Data) {
+                              zip.file(`${img.sku}.jpg`, base64Data, { base64: true });
+                              adicionadas++;
+                            }
+                          }
+                        }
+                        
+                        if (adicionadas === 0) {
+                          toast.error("Nenhuma imagem para download");
+                          return;
+                        }
+                        
+                        const zipBlob = await zip.generateAsync({ type: 'blob' });
+                        const fileName = selectedFile?.name || 'planilha';
+                        saveAs(zipBlob, `${fileName.replace('.xlsx', '').replace('.xls', '').replace('.csv', '')}_imagens.zip`);
+                        toast.success(`${adicionadas} imagens baixadas!`);
+                      } catch (error) {
+                        toast.error("Erro ao gerar ZIP: " + (error instanceof Error ? error.message : 'Erro'));
+                      } finally {
+                        setIsZipping(false);
+                      }
+                    }}
+                    disabled={isZipping}
+                  >
+                    <Download className="h-3.5 w-3.5 mr-1" />
+                    {isZipping ? 'Gerando...' : `Baixar ${imageResult.totalImagesMatched} Imagens`}
                   </Button>
                 )}
               </div>
@@ -625,7 +702,13 @@ export default function ConversaoProdutos() {
                           <span>{conversao.fornecedor}</span>
                           <span>•</span>
                           <span>{conversao.totalProdutos} prod</span>
-                          {conversao.imagens && conversao.imagens.length > 0 && (
+                          {conversao.zipUrl && (
+                            <>
+                              <span>•</span>
+                              <span className="text-success font-medium">ZIP</span>
+                            </>
+                          )}
+                          {conversao.imagens && conversao.imagens.length > 0 && !conversao.zipUrl && (
                             <>
                               <span>•</span>
                               <span className="text-primary">{conversao.imagens.length} img</span>
@@ -652,8 +735,21 @@ export default function ConversaoProdutos() {
                           )}
                         </Button>
                         
-                        {/* Botão Baixar Imagens */}
-                        {conversao.imagens && conversao.imagens.length > 0 && (
+                        {/* Botão Baixar ZIP (quando processado via backend) */}
+                        {conversao.zipUrl && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-success"
+                            onClick={() => window.open(conversao.zipUrl, '_blank')}
+                            title="Baixar ZIP de imagens"
+                          >
+                            <Download className="h-3 w-3" />
+                          </Button>
+                        )}
+                        
+                        {/* Botão Baixar Imagens (quando tem imagens individuais) */}
+                        {conversao.imagens && conversao.imagens.length > 0 && !conversao.zipUrl && (
                           <Button
                             variant="ghost"
                             size="icon"

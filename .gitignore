@@ -7,13 +7,16 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Node
 node_modules
 dist
 dist-ssr
 *.local
 .env
 .env.*
-# Editor directories and files
+!.env.example
+
+# Editor / IDE
 .vscode/*
 !.vscode/extensions.json
 .idea
@@ -23,3 +26,30 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Vercel / build
+.vercel
+.env*.local
+
+# Python (backend/image_extractor)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+
+# Caches de processamento (jobs do backend, podem chegar a GB)
+backend/image_extractor/temp/
+**/temp/
+*.bak
+
+# Test outputs
+test-output.txt
+playwright-report/
+test-results/
+
+# Temporários do OS
+Thumbs.db
+desktop.ini

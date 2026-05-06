@@ -1,0 +1,27 @@
+# Render.com - Configuração do backend Python (Image Extractor)
+# Documentação: https://render.com/docs/blueprint-spec
+#
+# Setup inicial (uma única vez):
+# 1. Suba o repositório no GitHub
+# 2. No painel Render: New + → Blueprint → seleciona o repo
+# 3. Configure as envs SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY
+# 4. Render detecta este arquivo e provisiona o serviço automaticamente
+
+services:
+  - type: web
+    name: converter-pro-image-extractor
+    runtime: python
+    rootDir: backend/image_extractor
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # $PORT é injetada pela Render automaticamente
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.10
+      - key: SUPABASE_URL
+        sync: false        # configura manualmente no Render Dashboard
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false        # configura manualmente no Render Dashboard
