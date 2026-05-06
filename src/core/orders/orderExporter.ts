@@ -342,10 +342,16 @@ const criarWorksheetJAWEB = (
       const value = row[col.header];
       const cellRef = `${excelCol}${excelRow}`;
       
-      if (col.format === 'number' || col.format === 'integer' || col.format === 'currency') {
-        worksheet[cellRef] = { v: Number(value) || 0, t: 'n' };
+      const isNumeric = col.format === 'number' || col.format === 'integer' ||
+                        col.format === 'currency' || col.format === 'percentage';
+      if (isNumeric) {
+        // Number(value) preserva 0; nunca usar `Number(value) || 0` (subistitui 0 por 0, ok, mas perde NaN check)
+        const num = Number(value);
+        worksheet[cellRef] = { v: Number.isFinite(num) ? num : 0, t: 'n' };
       } else {
-        worksheet[cellRef] = { v: String(value || ''), t: 's' };
+        // Bug fix: para valores 0/falsy mas válidos, não substituir por '' (era `value || ''`)
+        const safe = value === undefined || value === null ? '' : String(value);
+        worksheet[cellRef] = { v: safe, t: 's' };
       }
     });
   });
