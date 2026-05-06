@@ -255,122 +255,177 @@ const formatValue = (value: any, format?: string): string => {
 };
 
 /**
- * Cria worksheet especial para JAWEB
+ * Cria worksheet no formato EXATO do template JAW WEB.
+ *
+ * Estrutura validada contra o "Modelo Pedido JAW WEB.xlsx" oficial:
+ *  - A1:I2  -> "PEDIDO DE VENDA" (merged)
+ *  - L1:T1+ -> Instruções (campos obrigatórios, ajuda)
+ *  - A7:B7  -> "CLIENTE"
+ *  - Linhas 8-12: dados do cliente (CNPJ, IE, RzSocial, Endereço, etc.)
+ *  - G4:H4  -> DATA, G5:H5 -> VENDEDOR, G7:H7 -> TAB.PRECO, G8:H8 -> PEDIDO EXTERNO
+ *  - A14:B14 -> TRANSPORTADORA (CNPJ, IE, RzSocial, Frete tipo)
+ *  - A18:C18 -> Dados Adicionais
+ *  - Linha 19: Total Qtd (=SUM E26:E64), Total Produtos (=I22-I20)
+ *  - Linha 20: Total IPI (=SUM K26:K64)
+ *  - Linha 22: Valor Total (=SUM I26:I64)
+ *  - Linha 24: rodapé de contato
+ *  - Linha 25: HEADERS da tabela (Cód Prod*, Descrição[B:D], Qtde*, %Desc, Preço Unit*, IPI, Total, Tot.IPI[K])
+ *  - Linhas 26-64: ITENS com fórmulas pré-definidas em I e K
  */
 const criarWorksheetJAWEB = (
   dataRows: Record<string, any>[],
-  format: ExportFormat
+  format: ExportFormat,
+  cabecalho?: import('./orderTypes').PedidoCabecalho
 ): XLSX.WorkSheet => {
   const worksheet: XLSX.WorkSheet = {};
   
-  // === LINHA 2: TÍTULO PEDIDO DE VENDA ===
-  worksheet['B2'] = { v: 'PEDIDO DE VENDA', t: 's' };
-  
-  // === SEÇÃO DE DADOS DO CLIENTE (linhas 4-13) ===
-  worksheet['B4'] = { v: 'FORNECEDOR:', t: 's' };
-  worksheet['C4'] = { v: format.name, t: 's' };
-  
-  worksheet['B5'] = { v: 'CLIENTE:', t: 's' };
-  worksheet['C5'] = { v: '', t: 's' }; // A ser preenchido
-  
-  worksheet['B6'] = { v: 'CNPJ:', t: 's' };
-  worksheet['C6'] = { v: '', t: 's' }; // A ser preenchido
-  
-  worksheet['B7'] = { v: 'ENDEREÇO:', t: 's' };
-  worksheet['C7'] = { v: '', t: 's' };
-  
-  worksheet['B8'] = { v: 'BAIRRO:', t: 's' };
-  worksheet['C8'] = { v: '', t: 's' };
-  
-  worksheet['B9'] = { v: 'CIDADE:', t: 's' };
-  worksheet['C9'] = { v: '', t: 's' };
-  
-  worksheet['B10'] = { v: 'CEP:', t: 's' };
-  worksheet['C10'] = { v: '', t: 's' };
-  
-  worksheet['B11'] = { v: 'UF:', t: 's' };
-  worksheet['C11'] = { v: '', t: 's' };
-  
-  worksheet['B12'] = { v: 'IE:', t: 's' };
-  worksheet['C12'] = { v: '', t: 's' };
-  
-  worksheet['B13'] = { v: 'FONE:', t: 's' };
-  worksheet['C13'] = { v: '', t: 's' };
-  
-  // === SEÇÃO DE TRANSPORTADORA (linhas 15-17) ===
-  worksheet['B15'] = { v: 'TRANSPORTADORA:', t: 's' };
-  worksheet['C15'] = { v: '', t: 's' };
-  
-  worksheet['B16'] = { v: 'FRETE:', t: 's' };
-  worksheet['C16'] = { v: '', t: 's' };
-  
-  worksheet['B17'] = { v: 'CONTATO:', t: 's' };
-  worksheet['C17'] = { v: '', t: 's' };
-  
-  // === SEÇÃO DE TOTAIS (linhas 19-23) ===
-  worksheet['B19'] = { v: 'SUBTOTAL:', t: 's' };
-  worksheet['C19'] = { v: 0, t: 'n' };
-  
-  worksheet['B20'] = { v: 'DESCONTO:', t: 's' };
-  worksheet['C20'] = { v: 0, t: 'n' };
-  
-  worksheet['B21'] = { v: 'IPI:', t: 's' };
-  worksheet['C21'] = { v: 0, t: 'n' };
-  
-  worksheet['B22'] = { v: 'FRETE:', t: 's' };
-  worksheet['C22'] = { v: 0, t: 'n' };
-  
-  worksheet['B23'] = { v: 'TOTAL:', t: 's' };
-  worksheet['C23'] = { v: 0, t: 'n' };
-  
-  // === CONTATO DO VENDEDOR (linha 24) ===
-  worksheet['B24'] = { v: 'VENDEDOR/CONTATO:', t: 's' };
-  worksheet['C24'] = { v: '', t: 's' };
-  
-  // === LINHA 26: CABEÇALHO DA TABELA ===
-  const headers = format.columns.map(col => col.header);
-  headers.forEach((header, index) => {
-    const col = String.fromCharCode(66 + index); // Começa na coluna B
-    worksheet[`${col}26`] = { v: header, t: 's' };
+  const c = cabecalho || {};
+
+  const setS = (cell: string, v: string | number | undefined | null) => {
+    if (v === undefined || v === null || v === '') return;
+    worksheet[cell] = { v: typeof v === 'number' ? v : String(v), t: typeof v === 'number' ? 'n' : 's' };
+  };
+  // Fórmula com valor cached (XLSX pode descartar fórmula sem `v` em algumas serializações)
+  const setF = (cell: string, formula: string, cachedValue: number = 0) => {
+    worksheet[cell] = { f: formula, v: cachedValue, t: 'n' };
+  };
+
+  // ────────── A1:I2 PEDIDO DE VENDA + L1:T_ instruções ──────────
+  setS('A1', 'PEDIDO DE VENDA');
+  setS('L1', '*Campos Obrigatórios');
+  setS('L2', '*Data: Preencha a data de digitação do pedido.');
+  setS('L3', '*Tab. Preço: Preencha neste campo a tabela de preço do pedido.');
+  setS('L4', 'OBS: Se a tabela não estiver disponível para o cliente que for selecionado, não será possível importar o pedido.');
+  setS('L5', 'Dados Cliente');
+  setS('L6', '*CNPJ/CPF: Preencha o CNPJ ou CPF do cliente deste pedido, sem pontuação, o excel irá formatar automaticamente.');
+  setS('L7', 'Caso seja um cliente novo, é necessário realizar o cadastro do cliente e depois tentar importar o pedido novamente.');
+  setS('L8', 'Dados dos Produtos');
+  setS('L9', 'OBS: Os campos em cinza não podem ser alterados pois possuem fórmulas de cálculo utilizadas para os totais do pedido.');
+  setS('L10', '*Cód. Produto: Preencha o código dos produtos a serem incluídos no pedido, os códigos precisam estar previamente cadastrados.');
+  setS('L11', '*QTD: Preencha a quantidade pedida pelo cliente de cada item.');
+  setS('L12', '*Preço Unit: Deve ser preenchido o valor da tabela escolhida; se for menor, o sistema rejeitará o pedido.');
+
+  // ────────── G4-G8: DATA / VENDEDOR / TAB.PRECO / PEDIDO EXTERNO ──────────
+  setS('G4', 'DATA:*');         setS('I4', c.dataEmissao);
+  setS('G5', 'VENDEDOR:');      setS('I5', c.vendedor);
+  setS('G7', 'TAB.PRECO*:');    setS('I7', c.tabelaPreco);
+  setS('G8', 'PEDIDO EXTERNO:'); setS('I8', c.pedidoExterno || c.numero);
+
+  // ────────── A7:B7 CLIENTE + dados nas linhas 8-12 ──────────
+  setS('A7', 'CLIENTE');
+  setS('A8', 'CNPJ/CPF:*');     setS('B8', (c.clienteCnpj || '').replace(/\D/g, ''));
+  setS('C8', 'IE:');            setS('D8', c.clienteIE);
+  setS('A9', 'RzSocial:');      setS('B9', c.clienteRazaoSocial);
+  setS('A10', 'Endereco:');     setS('B10', c.clienteEndereco);
+  setS('F10', 'N°');            setS('G10', c.clienteNumero);
+  setS('H10', 'Compl:');        setS('I10', c.clienteComplemento);
+  setS('A11', 'Bairro:');       setS('B11', c.clienteBairro);
+  setS('C11', 'Cidade:');       setS('D11', c.clienteCidade);
+  setS('F11', 'UF:');           setS('G11', c.clienteUF);
+  setS('H11', 'CEP:');          setS('I11', c.clienteCEP);
+  setS('A12', 'Email:');        setS('B12', c.clienteEmail);
+  setS('C12', 'Email2:');       setS('D12', c.clienteEmail2);
+  setS('F12', 'Tel:');          setS('G12', c.clienteTelefone);
+  setS('H12', 'Tel2:');         setS('I12', c.clienteTelefone2);
+
+  // ────────── A14:B14 TRANSPORTADORA + frete ──────────
+  setS('A14', 'TRANSPORTADORA');
+  setS('F14', 'Frete');         setS('G14', c.fretePor || '');
+  setS('A15', 'CNPJ/CPF:');     setS('B15', (c.transpCnpj || '').replace(/\D/g, ''));
+  setS('C15', 'IE:');           setS('D15', c.transpIE);
+  setS('G15', ' 1-Emitente ou 2- Destinatario');
+  setS('A16', 'RzSocial:');     setS('B16', c.transpNome);
+
+  // ────────── A18 Dados Adicionais ──────────
+  setS('A18', 'Dados Adicionais');
+  setS('B18', c.informacoesAdicionais);
+
+  // ────────── Totais (linhas 19-22) com fórmulas ──────────
+  setS('D19', 'Total Qtd: ');     setF('E19', 'SUM(E26:E64)');
+  setS('H19', 'Total Produtos: '); setF('I19', 'I22-I20');
+  setS('H20', 'Total IPI: ');      setF('I20', 'SUM(K26:K64)');
+  setS('H22', 'Valor Total:');     setF('I22', 'SUM(I26:I64)');
+
+  // ────────── Linha 24 frase de contato ──────────
+  setS('A24', 'Qualquer dúvida ou reclamação entre em contato pelo fone (99) 9999-9999');
+
+  // ────────── Linha 25: HEADERS DA TABELA ──────────
+  setS('A25', 'Cód Prod.*');
+  setS('B25', 'Descrição');   // merged B25:D25
+  setS('E25', 'Qtde*');
+  setS('F25', '%Desc');
+  setS('G25', 'Preço Unit*');
+  setS('H25', 'IPI');
+  setS('I25', 'Total');
+  setS('K25', 'Tot. IPI');
+
+  // ────────── Linhas 26-64: DADOS DOS ITENS (até 39 itens) ──────────
+  const ITEM_START = 26;
+  const ITEM_END = 64;
+
+  dataRows.forEach((row, idx) => {
+    const r = ITEM_START + idx;
+    if (r > ITEM_END) return; // template suporta no máximo 39 itens
+
+    const codigo = row['Cód Prod.'] ?? row['codigo'] ?? '';
+    const descricao = row['Descrição'] ?? row['descricao'] ?? '';
+    const qtde = Number(row['Qtde'] ?? row['quantidade'] ?? 0) || 0;
+    const desc = Number(row['%Desc'] ?? row['desconto'] ?? 0) || 0;
+    const preco = Number(row['Preço Unit'] ?? row['precoUnitario'] ?? 0) || 0;
+    const ipi = Number(row['IPI'] ?? row['ipi'] ?? 0) || 0;
+
+    setS(`A${r}`, String(codigo));
+    setS(`B${r}`, String(descricao));
+    if (qtde > 0) worksheet[`E${r}`] = { v: qtde, t: 'n' };
+    if (desc > 0) worksheet[`F${r}`] = { v: desc, t: 'n' };
+    if (preco > 0) worksheet[`G${r}`] = { v: preco, t: 'n' };
+    if (ipi > 0) worksheet[`H${r}`] = { v: ipi, t: 'n' };
+    // Fórmulas (idênticas às do template)
+    setF(`I${r}`, `E${r}*((G${r})*(1+(H${r})))`);
+    setF(`K${r}`, `H${r}*G${r}`);
   });
-  
-  // === LINHAS 27+: DADOS DOS ITENS ===
-  dataRows.forEach((row, rowIndex) => {
-    const excelRow = 27 + rowIndex;
-    format.columns.forEach((col, colIndex) => {
-      const excelCol = String.fromCharCode(66 + colIndex);
-      const value = row[col.header];
-      const cellRef = `${excelCol}${excelRow}`;
-      
-      const isNumeric = col.format === 'number' || col.format === 'integer' ||
-                        col.format === 'currency' || col.format === 'percentage';
-      if (isNumeric) {
-        // Number(value) preserva 0; nunca usar `Number(value) || 0` (subistitui 0 por 0, ok, mas perde NaN check)
-        const num = Number(value);
-        worksheet[cellRef] = { v: Number.isFinite(num) ? num : 0, t: 'n' };
-      } else {
-        // Bug fix: para valores 0/falsy mas válidos, não substituir por '' (era `value || ''`)
-        const safe = value === undefined || value === null ? '' : String(value);
-        worksheet[cellRef] = { v: safe, t: 's' };
-      }
-    });
-  });
-  
-  // Definir range da planilha
-  worksheet['!ref'] = 'A1:J50';
-  
-  // Configurar larguras das colunas
+
+  // Garantir que linhas vazias do template também tenham as fórmulas (como no original)
+  for (let r = ITEM_START + dataRows.length; r <= ITEM_END; r++) {
+    setF(`I${r}`, `E${r}*((G${r})*(1+(H${r})))`);
+    setF(`K${r}`, `H${r}*G${r}`);
+  }
+
+  // Range da planilha
+  worksheet['!ref'] = 'A1:T80';
+
+  // Merges (replicam o template oficial)
+  worksheet['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 1, c: 8 } },   // A1:I2 PEDIDO DE VENDA
+    { s: { r: 6, c: 0 }, e: { r: 6, c: 1 } },   // A7:B7 CLIENTE
+    { s: { r: 13, c: 0 }, e: { r: 13, c: 1 } }, // A14:B14 TRANSPORTADORA
+    { s: { r: 17, c: 0 }, e: { r: 17, c: 2 } }, // A18:C18 Dados Adicionais
+    { s: { r: 14, c: 6 }, e: { r: 14, c: 8 } }, // G15:I15 1-Emitente ou 2-Destinatario
+    { s: { r: 23, c: 0 }, e: { r: 23, c: 8 } }, // A24:I24 Qualquer dúvida
+    // Headers e itens com Descrição em B:D
+    { s: { r: 24, c: 1 }, e: { r: 24, c: 3 } }, // B25:D25 "Descrição"
+    ...Array.from({ length: ITEM_END - ITEM_START + 1 }, (_, i) => ({
+      s: { r: ITEM_START - 1 + i, c: 1 },
+      e: { r: ITEM_START - 1 + i, c: 3 },
+    })),
+  ];
+
+  // Larguras de coluna (A-T)
   worksheet['!cols'] = [
-    { wch: 3 },  // A - vazia
-    { wch: 20 }, // B - labels
-    { wch: 15 }, // C - Cód Prod
-    { wch: 45 }, // D - Descrição
-    { wch: 10 }, // E - Qtde
-    { wch: 10 }, // F - %Desc
-    { wch: 15 }, // G - Preço Unit
-    { wch: 12 }, // H - IPI
-    { wch: 15 }, // I - Total
-    { wch: 3 },  // J - vazia
+    { wch: 12 }, // A - Cód Prod
+    { wch: 18 }, // B - Descrição (merged até D)
+    { wch: 18 }, // C
+    { wch: 18 }, // D
+    { wch: 8 },  // E - Qtde
+    { wch: 8 },  // F - %Desc
+    { wch: 12 }, // G - Preço Unit
+    { wch: 8 },  // H - IPI
+    { wch: 12 }, // I - Total
+    { wch: 4 },  // J
+    { wch: 12 }, // K - Tot. IPI
+    { wch: 4 },  // L
+    { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
+    { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
   ];
   
   return worksheet;
@@ -437,7 +492,7 @@ export const exportarPedido = (
     
     // Caso especial JAWEB: estrutura com cabeçalho PEDIDO DE VENDA
     if (formato === 'jaweb' && format.hasHeaderStructure) {
-      worksheet = criarWorksheetJAWEB(dataRows, format);
+      worksheet = criarWorksheetJAWEB(dataRows, format, pedido.cabecalho);
     } else {
       worksheet = XLSX.utils.json_to_sheet(dataRows, {
         header: format.columns.map(col => col.header),

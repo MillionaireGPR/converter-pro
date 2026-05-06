@@ -134,7 +134,7 @@ describe('E2E Mercos Export', () => {
 // E2E Jaweb: pedido -> XLSX estrutura JAWEB
 // ───────────────────────────────────────────────────────────────
 
-describe('E2E Jaweb Export (Pedidos Clink/Moment/Flash)', () => {
+describe('E2E Jaweb Export (estrutura EXATA do template oficial)', () => {
   const buildPedidoTeste = (): PedidoProcessado => ({
     itens: [
       buildItemPedido('F0211', 'Garrafa de azeite vidro 250ml', 12, 22.5),
@@ -142,89 +142,127 @@ describe('E2E Jaweb Export (Pedidos Clink/Moment/Flash)', () => {
     ],
     bruto: {
       nomeArquivo: 'pedido-flash.xlsx',
-      linhas: [],
-      linhas2D: [],
-      headerRowIndex: 0,
+      linhas: [], linhas2D: [], headerRowIndex: 0,
       headersDetectados: ['Código', 'Descrição', 'Qtd', 'Preço'],
     },
     mapeamento: {
-      codigo: 'Código',
-      descricao: 'Descrição',
-      quantidade: 'Qtd',
-      preco: 'Preço',
-      total: null,
-      observacoes: null,
-      referenciaPedido: null,
+      codigo: 'Código', descricao: 'Descrição', quantidade: 'Qtd',
+      preco: 'Preço', total: null, observacoes: null, referenciaPedido: null,
+    },
+    cabecalho: {
+      numero: '12961',
+      dataEmissao: '17/04/2026',
+      vendedor: 'JOSEF AMARAL',
+      clienteRazaoSocial: 'COMERCIAL NG DE ARMARINHO LTDA - EPP',
+      clienteCnpj: '24.934.598/0001-54',
+      clienteIE: '07330791001-13',
+      clienteEndereco: 'CNG 06 LOTE 02 S/N LOJA / SOBRELOJA 01',
+      clienteBairro: 'TAGUATINGA',
+      clienteCidade: 'BRASILIA',
+      clienteUF: 'DF',
+      clienteCEP: '72130-065',
+      clienteTelefone: '(61) 3033-8245',
+      clienteEmail: 'ngatacado@hotmail.com',
+      transpNome: 'SONIC TRANSPORTE',
+      transpTelefone: '11-2528-5677',
     },
     stats: { totalItens: 2, itensOk: 2, itensIncompletos: 0, itensErro: 0 },
     destino: 'jaweb',
   });
 
-  it('cabecalho "PEDIDO DE VENDA" aparece em B2', async () => {
-    const pedido = buildPedidoTeste();
-    const result = exportarPedido(pedido, 'jaweb');
-
-    expect(result.format).toBe('jaweb');
-    expect(result.filename).toMatch(/\.xlsx$/);
-
+  it('"PEDIDO DE VENDA" em A1 + instrucoes em L1', async () => {
+    const result = exportarPedido(buildPedidoTeste(), 'jaweb');
     const wb = await blobToWorkbook(result.blob);
     const sheet = wb.Sheets['Pedido'];
-    expect(sheet['B2'].v).toBe('PEDIDO DE VENDA');
+    expect(sheet['A1'].v).toBe('PEDIDO DE VENDA');
+    expect(sheet['L1'].v).toContain('Campos Obrigatórios');
   });
 
-  it('campos de cliente (FORNECEDOR, CLIENTE, CNPJ, etc) presentes nas linhas 4-13', async () => {
-    const pedido = buildPedidoTeste();
-    const result = exportarPedido(pedido, 'jaweb');
+  it('linhas 4-8: DATA, VENDEDOR, TAB.PRECO, PEDIDO EXTERNO em coluna G + valores em I', async () => {
+    const result = exportarPedido(buildPedidoTeste(), 'jaweb');
     const wb = await blobToWorkbook(result.blob);
     const sheet = wb.Sheets['Pedido'];
-
-    expect(sheet['B4'].v).toBe('FORNECEDOR:');
-    expect(sheet['B5'].v).toBe('CLIENTE:');
-    expect(sheet['B6'].v).toBe('CNPJ:');
-    expect(sheet['B7'].v).toBe('ENDEREÇO:');
-    expect(sheet['B11'].v).toBe('UF:');
-    expect(sheet['B13'].v).toBe('FONE:');
+    expect(sheet['G4'].v).toBe('DATA:*');
+    expect(sheet['I4'].v).toBe('17/04/2026');
+    expect(sheet['G5'].v).toBe('VENDEDOR:');
+    expect(sheet['I5'].v).toBe('JOSEF AMARAL');
+    expect(sheet['G7'].v).toBe('TAB.PRECO*:');
+    expect(sheet['G8'].v).toBe('PEDIDO EXTERNO:');
+    expect(sheet['I8'].v).toBe('12961');
   });
 
-  it('cabecalho da tabela na linha 26 e dados a partir da linha 27', async () => {
-    const pedido = buildPedidoTeste();
-    const result = exportarPedido(pedido, 'jaweb');
+  it('CLIENTE em A7 + dados em linhas 8-12', async () => {
+    const result = exportarPedido(buildPedidoTeste(), 'jaweb');
     const wb = await blobToWorkbook(result.blob);
     const sheet = wb.Sheets['Pedido'];
-
-    // Linha 26: cabeçalhos
-    expect(sheet['B26'].v).toBe('Cód Prod.');
-    expect(sheet['C26'].v).toBe('Descrição');
-    expect(sheet['D26'].v).toBe('Qtde');
-    expect(sheet['E26'].v).toBe('%Desc');
-    expect(sheet['F26'].v).toBe('Preço Unit');
-    expect(sheet['G26'].v).toBe('IPI');
-    expect(sheet['H26'].v).toBe('Total');
-
-    // Linha 27: primeiro item
-    expect(sheet['B27'].v).toBe('F0211');
-    expect(sheet['C27'].v).toBe('Garrafa de azeite vidro 250ml');
-    expect(sheet['D27'].v).toBe(12);
-    expect(sheet['E27'].v).toBe(0); // %Desc fixo 0
-    expect(sheet['F27'].v).toBe(22.5);
-    expect(sheet['G27'].v).toBe(0); // IPI fixo 0
-
-    // Linha 28: segundo item
-    expect(sheet['B28'].v).toBe('F0492');
-    expect(sheet['D28'].v).toBe(6);
+    expect(sheet['A7'].v).toBe('CLIENTE');
+    expect(sheet['A8'].v).toBe('CNPJ/CPF:*');
+    expect(sheet['B8'].v).toBe('24934598000154'); // sem pontuação
+    expect(sheet['C8'].v).toBe('IE:');
+    expect(sheet['D8'].v).toBe('07330791001-13');
+    expect(sheet['A9'].v).toBe('RzSocial:');
+    expect(sheet['B9'].v).toBe('COMERCIAL NG DE ARMARINHO LTDA - EPP');
+    expect(sheet['A10'].v).toBe('Endereco:');
+    expect(sheet['B10'].v).toContain('CNG 06');
+    expect(sheet['A11'].v).toBe('Bairro:');
+    expect(sheet['B11'].v).toBe('TAGUATINGA');
+    expect(sheet['C11'].v).toBe('Cidade:');
+    expect(sheet['F11'].v).toBe('UF:');
+    expect(sheet['G11'].v).toBe('DF');
+    expect(sheet['H11'].v).toBe('CEP:');
+    expect(sheet['I11'].v).toBe('72130-065');
   });
 
-  it('totais em B19-B23 (SUBTOTAL, DESCONTO, IPI, FRETE, TOTAL)', async () => {
-    const pedido = buildPedidoTeste();
-    const result = exportarPedido(pedido, 'jaweb');
+  it('TRANSPORTADORA em A14 + RzSocial em B16', async () => {
+    const result = exportarPedido(buildPedidoTeste(), 'jaweb');
     const wb = await blobToWorkbook(result.blob);
     const sheet = wb.Sheets['Pedido'];
+    expect(sheet['A14'].v).toBe('TRANSPORTADORA');
+    expect(sheet['F14'].v).toBe('Frete');
+    expect(sheet['A16'].v).toBe('RzSocial:');
+    expect(sheet['B16'].v).toBe('SONIC TRANSPORTE');
+  });
 
-    expect(sheet['B19'].v).toBe('SUBTOTAL:');
-    expect(sheet['B20'].v).toBe('DESCONTO:');
-    expect(sheet['B21'].v).toBe('IPI:');
-    expect(sheet['B22'].v).toBe('FRETE:');
-    expect(sheet['B23'].v).toBe('TOTAL:');
+  it('totais como FORMULAS (nao valores estaticos)', async () => {
+    const result = exportarPedido(buildPedidoTeste(), 'jaweb');
+    const wb = await blobToWorkbook(result.blob);
+    const sheet = wb.Sheets['Pedido'];
+    expect(sheet['D19'].v).toBe('Total Qtd: ');
+    expect(sheet['E19'].f).toBe('SUM(E26:E64)');
+    expect(sheet['I19'].f).toBe('I22-I20');
+    expect(sheet['I20'].f).toBe('SUM(K26:K64)');
+    expect(sheet['I22'].f).toBe('SUM(I26:I64)');
+  });
+
+  it('cabecalho da tabela na LINHA 25 (nao 26)', async () => {
+    const result = exportarPedido(buildPedidoTeste(), 'jaweb');
+    const wb = await blobToWorkbook(result.blob);
+    const sheet = wb.Sheets['Pedido'];
+    expect(sheet['A25'].v).toBe('Cód Prod.*');
+    expect(sheet['B25'].v).toBe('Descrição');
+    expect(sheet['E25'].v).toBe('Qtde*');
+    expect(sheet['F25'].v).toBe('%Desc');
+    expect(sheet['G25'].v).toBe('Preço Unit*');
+    expect(sheet['H25'].v).toBe('IPI');
+    expect(sheet['I25'].v).toBe('Total');
+    expect(sheet['K25'].v).toBe('Tot. IPI');
+  });
+
+  it('itens comecam na LINHA 26 (nao 27) com formulas em I e K', async () => {
+    const result = exportarPedido(buildPedidoTeste(), 'jaweb');
+    const wb = await blobToWorkbook(result.blob);
+    const sheet = wb.Sheets['Pedido'];
+    // Item 1 na linha 26
+    expect(sheet['A26'].v).toBe('F0211');
+    expect(sheet['B26'].v).toBe('Garrafa de azeite vidro 250ml');
+    expect(sheet['E26'].v).toBe(12);
+    expect(sheet['G26'].v).toBe(22.5);
+    // Fórmulas em I26 e K26 (idênticas ao template)
+    expect(sheet['I26'].f).toBe('E26*((G26)*(1+(H26)))');
+    expect(sheet['K26'].f).toBe('H26*G26');
+    // Item 2 na linha 27
+    expect(sheet['A27'].v).toBe('F0492');
+    expect(sheet['E27'].v).toBe(6);
   });
 });
 
