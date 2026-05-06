@@ -9,6 +9,7 @@ import { useApp } from "@/context/AppContext";
 import { processarPedido } from "@/core/orders/orderParser";
 import { exportarPedido, validarPedidoParaExportacao, downloadExportedFile, EXPORT_FORMATS, type FormatoExportacao } from "@/core/orders/orderExporter";
 import type { ItemPedidoNormalizado, PedidoProcessado } from "@/core/orders/orderTypes";
+import { parseMercosOrderPdf } from "@/core/orders/mercosOrderPdfParser";
 
 export default function ConversaoPedidos() {
   const { registrarHistorico } = useApp();
@@ -30,10 +31,10 @@ export default function ConversaoPedidos() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validar extensão
+    // Validar extensão (PDF agora aceito para pedido Mercos)
     const ext = file.name.split(".").pop()?.toLowerCase();
-    if (!["xlsx", "xls", "csv"].includes(ext || "")) {
-      toast.error("Formato inválido. Use .xlsx, .xls ou .csv");
+    if (!["xlsx", "xls", "csv", "pdf"].includes(ext || "")) {
+      toast.error("Formato inválido. Use .xlsx, .xls, .csv ou .pdf");
       return;
     }
 
@@ -41,7 +42,10 @@ export default function ConversaoPedidos() {
     setNomeArquivo(file.name);
 
     try {
-      const resultado = await processarPedido(file, destino);
+      // PDF Mercos -> usa parser dedicado (extrai cabeçalho + itens)
+      const resultado = ext === "pdf"
+        ? await parseMercosOrderPdf(file)
+        : await processarPedido(file, destino);
       setPedido(resultado);
 
       toast.success(
@@ -182,7 +186,7 @@ export default function ConversaoPedidos() {
         type="file"
         ref={fileInputRef}
         className="hidden"
-        accept=".xlsx,.xls,.csv"
+        accept=".xlsx,.xls,.csv,.pdf"
         onChange={handleFileChange}
       />
 
@@ -261,7 +265,7 @@ export default function ConversaoPedidos() {
                 <>
                   <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
                   <p className="text-sm font-medium">Upload do pedido</p>
-                  <p className="text-xs text-muted-foreground">.xlsx, .xls, .csv</p>
+                  <p className="text-xs text-muted-foreground">.xlsx, .xls, .csv, .pdf (Mercos)</p>
                 </>
               )}
             </div>
