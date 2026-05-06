@@ -507,9 +507,11 @@ const validateAndFixRows = (
       // Verifica se a linha tem algum campo preenchido
       const hasAnyValue = Object.values(row).some(v => v !== undefined && v !== null && v !== '');
 
-      // Tenta encontrar código na linha (comum em códigos de produto)
+      // Tenta encontrar código na linha (cobertura abrangente para todos os fornecedores).
+      // Aceita: 1-4 letras + 2+ digitos (F0211, FL1234, DXP25, DZ04, BM361645) OU
+      //        digitos puros 4+ (153060 FASTNEO, 7898100211940 EAN)
       const rowText = Object.values(row).join(' ');
-      const hasCode = /[A-Z]{2,4}\d{3,}/i.test(rowText) || /\b\d{4,}\b/.test(rowText);
+      const hasCode = /[A-Z]{1,4}\d{2,}/i.test(rowText) || /\d{4,}/.test(rowText);
 
       // Verifica se é uma linha "fantasma" (vazia ou sem código quando deveria ter)
       if (!hasAnyValue || (!hasCode && hasAnyValue)) {
