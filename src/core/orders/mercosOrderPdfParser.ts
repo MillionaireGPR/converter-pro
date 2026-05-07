@@ -1,9 +1,12 @@
 // ===================================================================
 // PARSER DE PEDIDO PDF DO MERCOS → JAW WEB
-// Recebe o PDF "Pedido modelo de exportação do Mercos" e extrai:
-//  - Cabeçalho (cliente, fornecedor, transportadora, datas)
-//  - Itens (código, descrição, qtde, desconto, preço, subtotal)
-// Saída: PedidoProcessado pronto para exportação em formato JAW WEB.
+// Estratégia: análise POSICIONAL (X/Y) das spans extraídas pelo PDF.js
+// O PDF do Mercos tem layout tabular com cada item em ~3 linhas próximas:
+//   - linha A (texto x≈147): primeira parte da descrição
+//   - linha B (anchor, x=39 #, x=51 código, x≈344 qtde, x≈384 desc%, x≈480 preço, x≈537 subtotal)
+//   - linha C (x≈147): segunda parte da descrição
+// Agrupamos por Y (com tolerância) e identificamos o anchor pelo padrão
+// "número-código no início da linha".
 // ===================================================================
 
 import type {
@@ -12,9 +15,8 @@ import type {
   ItemPedidoNormalizado,
 } from './orderTypes';
 
-// Carregamento dinâmico do PDF.js (mesma lib usada no pdfParser principal)
+// PDF.js dinâmico
 let pdfjsLib: any = null;
-
 const loadPdfJs = async (): Promise<any> => {
   if (pdfjsLib) return pdfjsLib;
   const version = '5.6.205';
@@ -25,59 +27,20 @@ const loadPdfJs = async (): Promise<any> => {
   return pdfjs;
 };
 
-/**
- * Extrai o texto bruto concatenado de todas as páginas, preservando quebras
- * de linha aproximadas via análise de coordenadas Y.
- */
-export const extractMercosOrderText = async (file: File | ArrayBuffer): Promise<string> => {
-  const data = file instanceof File ? await file.arrayBuffer() : file;
-  const pdfjs = await loadPdfJs();
-  const doc = await pdfjs.getDocument({ data }).promise;
-  const linhas: string[] = [];
-
-  for (let i = 1; i <= doc.numPages; i++) {
-    const page = await doc.getPage(i);
-    const content = await page.getTextContent();
-    // Agrupa items por Y (linha) com tolerância
-    const itemsByY: Map<number, { x: number; str: string }[]> = new Map();
-    for (const it of content.items as any[]) {
-      const y = Math.round(it.transform[5]);
-      if (!itemsByY.has(y)) itemsByY.set(y, []);
-      itemsByY.get(y)!.push({ x: it.transform[4], str: it.str });
-    }
-    // Ordena Y descendente (PDF tem origem inferior-esquerda)
-    const ys = Array.from(itemsByY.keys()).sort((a, b) => b - a);
-    for (const y of ys) {
-      const itemsX = itemsByY.get(y)!.sort((a, b) => a.x - b.x);
-      linhas.push(itemsX.map(i => i.str).join(' ').replace(/\s+/g, ' ').trim());
-    }
-    linhas.push(''); // separador entre páginas
-  }
-  return linhas.join('\n');
-};
-
 // ───────────────────────────────────────────────────────────────
-// Helpers de parsing
+// Helpers
 // ───────────────────────────────────────────────────────────────
 
-const matchAfter = (text: string, label: RegExp, until: RegExp = /\n|$/): string => {
-  const re = new RegExp(label.source + '\\s*(.+?)(?=' + until.source + ')', 'i');
-  const m = text.match(re);
-  return m ? m[1].trim() : '';
-};
-
-const parseDescPercent = (raw: string): number => {
-  // "30%" => 0.30 ; "30% + 15%" => 1 - (1-0.30)*(1-0.15) = 0.405
+export const parseDescPercent = (raw: string): number => {
   if (!raw) return 0;
   const pcts = Array.from(raw.matchAll(/(\d+(?:[.,]\d+)?)\s*%/g))
     .map(m => Number(m[1].replace(',', '.')) / 100)
     .filter(n => !isNaN(n));
   if (pcts.length === 0) return 0;
-  // Composto cumulativo
   return 1 - pcts.reduce((acc, p) => acc * (1 - p), 1);
 };
 
-const parseBRL = (raw: string): number => {
+export const parseBRL = (raw: string): number => {
   if (!raw) return 0;
   const cleaned = raw
     .replace(/R\$\s*/gi, '')
@@ -88,163 +51,268 @@ const parseBRL = (raw: string): number => {
   return isNaN(n) ? 0 : n;
 };
 
+const UF_MAP: Record<string, string> = {
+  'Acre': 'AC', 'Alagoas': 'AL', 'Amapá': 'AP', 'Amazonas': 'AM',
+  'Bahia': 'BA', 'Ceará': 'CE', 'Distrito Federal': 'DF', 'Espírito Santo': 'ES',
+  'Goiás': 'GO', 'Maranhão': 'MA', 'Mato Grosso': 'MT', 'Mato Grosso do Sul': 'MS',
+  'Minas Gerais': 'MG', 'Pará': 'PA', 'Paraíba': 'PB', 'Paraná': 'PR',
+  'Pernambuco': 'PE', 'Piauí': 'PI', 'Rio de Janeiro': 'RJ', 'Rio Grande do Norte': 'RN',
+  'Rio Grande do Sul': 'RS', 'Rondônia': 'RO', 'Roraima': 'RR', 'Santa Catarina': 'SC',
+  'São Paulo': 'SP', 'Sergipe': 'SE', 'Tocantins': 'TO',
+};
+
+interface Span {
+  x: number;     // x0 (esquerda)
+  y: number;     // y já normalizado (top-down style: maior y = mais embaixo)
+  str: string;
+}
+
 // ───────────────────────────────────────────────────────────────
-// Parser principal
+// Extração spatial do PDF
+// ───────────────────────────────────────────────────────────────
+
+const extractSpans = async (file: File | ArrayBuffer): Promise<Span[][]> => {
+  const data = file instanceof File ? await file.arrayBuffer() : file;
+  const pdfjs = await loadPdfJs();
+  const doc = await pdfjs.getDocument({ data }).promise;
+  const pages: Span[][] = [];
+
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const viewport = page.getViewport({ scale: 1.0 });
+    const content = await page.getTextContent();
+    const spans: Span[] = [];
+    for (const it of content.items as any[]) {
+      const str = (it.str || '').trim();
+      if (!str) continue;
+      const x = it.transform[4];
+      // PDF.js Y é bottom-up; convertemos para top-down (para ordenação intuitiva)
+      const y = viewport.height - it.transform[5];
+      spans.push({ x, y, str });
+    }
+    spans.sort((a, b) => a.y - b.y || a.x - b.x);
+    pages.push(spans);
+  }
+  return pages;
+};
+
+// ───────────────────────────────────────────────────────────────
+// Parser de itens via posição (X/Y)
+// ───────────────────────────────────────────────────────────────
+
+interface ItemRaw {
+  numero: string;
+  codigo: string;
+  descricao: string;
+  qtde: number;
+  descontoStr: string;
+  preco: number;
+  subtotal: number;
+}
+
+const parseItensFromSpans = (allSpans: Span[]): ItemRaw[] => {
+  // Agrupa por Y com CENTRO FIXO (não média móvel — evitava mesclar linhas
+  // próximas de itens distintos quando a média gradualmente se deslocava).
+  const sorted = [...allSpans].sort((a, b) => a.y - b.y || a.x - b.x);
+  const linhas: { y: number; spans: Span[] }[] = [];
+  const TOL_Y = 2.5;
+  for (const s of sorted) {
+    let bucket = linhas.length > 0 ? linhas[linhas.length - 1] : null;
+    if (bucket && Math.abs(bucket.y - s.y) <= TOL_Y) {
+      bucket.spans.push(s);
+    } else {
+      linhas.push({ y: s.y, spans: [s] }); // y FIXO ao primeiro span do bucket
+    }
+  }
+  linhas.forEach(l => l.spans.sort((a, b) => a.x - b.x));
+
+  // ── Detecta limites verticais da TABELA de itens ──
+  // Topo: linha contendo "# Código Produto Qtde Desc Preço" (cabeçalho da tabela)
+  // Fundo: linha contendo "Valor total" (rodapé do pedido)
+  let yTabelaTop = -Infinity;
+  let yTabelaBottom = Infinity;
+  for (const linha of linhas) {
+    const texto = linha.spans.map(s => s.str).join(' ').toLowerCase();
+    if (
+      texto.includes('código') &&
+      texto.includes('produto') &&
+      texto.includes('qtde') &&
+      yTabelaTop === -Infinity
+    ) {
+      yTabelaTop = linha.y;
+    }
+    if (texto.includes('valor total') && linha.y > yTabelaTop) {
+      yTabelaBottom = Math.min(yTabelaBottom, linha.y);
+    }
+  }
+
+  // ── Detecta anchors apenas DENTRO da tabela ──
+  const anchorIdxs: number[] = [];
+  for (let i = 0; i < linhas.length; i++) {
+    if (linhas[i].y <= yTabelaTop || linhas[i].y >= yTabelaBottom) continue;
+    const sp = linhas[i].spans;
+    if (sp.length < 2) continue;
+    const s0 = sp[0], s1 = sp[1];
+    if (
+      s0.x < 50 && /^\d{1,3}$/.test(s0.str) &&
+      s1.x < 80 && /^[A-Z]{1,4}\d{2,8}$/i.test(s1.str)
+    ) {
+      anchorIdxs.push(i);
+    }
+  }
+
+  // Ordena anchors por Y para definir as faixas de descrição corretamente
+  anchorIdxs.sort((a, b) => linhas[a].y - linhas[b].y);
+
+  const itens: ItemRaw[] = [];
+
+  for (let ai = 0; ai < anchorIdxs.length; ai++) {
+    const anchorLine = linhas[anchorIdxs[ai]];
+    const sp = anchorLine.spans;
+
+    const numero = sp[0].str;
+    const codigo = sp[1].str;
+
+    const qtdeSpan = sp.find(s => s.x >= 330 && s.x <= 365 && /^\d+$/.test(s.str));
+    const descSpan = sp.filter(s => s.x >= 370 && s.x <= 410 && /%/.test(s.str));
+    const precoSpan = sp.find(s => s.x >= 450 && s.x <= 510 && /R\$/.test(s.str));
+    const subtotalSpan = sp.find(s => s.x >= 510 && s.x <= 560 && /R\$/.test(s.str));
+
+    // Faixa Y da descrição: do meio do anchor anterior até o meio do próximo
+    const prevAnchor = ai > 0 ? linhas[anchorIdxs[ai - 1]] : null;
+    const nextAnchor = ai < anchorIdxs.length - 1 ? linhas[anchorIdxs[ai + 1]] : null;
+    const yMin = prevAnchor ? (prevAnchor.y + anchorLine.y) / 2 : anchorLine.y - 35;
+    const yMax = nextAnchor ? (anchorLine.y + nextAnchor.y) / 2 : anchorLine.y + 35;
+
+    const descParts: { y: number; text: string }[] = [];
+    for (const linha of linhas) {
+      if (linha.y <= yMin || linha.y >= yMax) continue;
+      // INCLUI o anchor: alguns itens têm a descrição inline (mesma linha do código)
+      // O filtro X (140-320) já garante que não pegamos número/qtde/preço.
+      // Filtro X restrito: 140-320 (descrição-só, exclui colunas numéricas)
+      for (const s of linha.spans) {
+        if (s.x >= 140 && s.x <= 320) {
+          descParts.push({ y: linha.y, text: s.str });
+        }
+      }
+    }
+    descParts.sort((a, b) => a.y - b.y);
+    const descricao = descParts.map(p => p.text).join(' ').replace(/\s+/g, ' ').trim();
+
+    itens.push({
+      numero,
+      codigo,
+      descricao,
+      qtde: qtdeSpan ? Number(qtdeSpan.str) : 0,
+      descontoStr: descSpan.map(s => s.str).join(' ').trim(),
+      preco: precoSpan ? parseBRL(precoSpan.str) : 0,
+      subtotal: subtotalSpan ? parseBRL(subtotalSpan.str) : 0,
+    });
+  }
+
+  return itens;
+};
+
+// ───────────────────────────────────────────────────────────────
+// Cabeçalho (regex-based no texto da primeira página)
+// ───────────────────────────────────────────────────────────────
+
+const buildPageText = (spans: Span[]): string => {
+  // Reconstrói linhas por Y para parser de cabeçalho
+  const linhas: { y: number; spans: Span[] }[] = [];
+  for (const s of spans) {
+    const linha = linhas.find(l => Math.abs(l.y - s.y) <= 3);
+    if (linha) linha.spans.push(s);
+    else linhas.push({ y: s.y, spans: [s] });
+  }
+  linhas.sort((a, b) => a.y - b.y);
+  return linhas
+    .map(l => l.spans.sort((a, b) => a.x - b.x).map(s => s.str).join(' '))
+    .join('\n');
+};
+
+const parseCabecalho = (text: string): PedidoCabecalho => {
+  const cab: PedidoCabecalho = {};
+
+  cab.numero = text.match(/Pedido\s*N[ºo]?\s*([\d]+)/i)?.[1];
+
+  cab.fornecedorNome = text.match(/Representada:\s*(.+?)(?=\n|CNPJ:)/i)?.[1]?.trim();
+
+  const cnpjs = Array.from(text.matchAll(/CNPJ:\s*([\d./\-]+)/gi)).map(m => m[1].trim());
+  cab.fornecedorCnpj = cnpjs[0];
+  cab.clienteCnpj = cnpjs[1];
+
+  const telefones = Array.from(text.matchAll(/Telefone:\s*([(\d).\s\-)]+)/gi)).map(m => m[1].trim());
+  cab.fornecedorTelefone = telefones[0];
+  cab.clienteTelefone = telefones[1];
+  cab.transpTelefone = telefones[2];
+
+  cab.clienteRazaoSocial = text.match(/Cliente:\s*(.+?)(?=\s*Nome Fantasia:|\n)/i)?.[1]?.trim();
+  cab.clienteNomeFantasia = text.match(/Nome\s+Fantasia:\s*(.+?)(?=\n|CNPJ:)/i)?.[1]?.trim();
+  cab.clienteIE = text.match(/Inscri[çc][ãa]o\s+Estadual:\s*([\d./\-]+)/i)?.[1]?.trim();
+  cab.clienteEndereco = text.match(/Endere[çc]o:\s*(.+?)(?=\nBairro:|\sBairro:)/i)?.[1]?.trim();
+  cab.clienteBairro = text.match(/Bairro:\s*(.+?)(?=\s*CEP:|\n)/i)?.[1]?.trim();
+  cab.clienteCEP = text.match(/CEP:\s*([\d\-]+)/i)?.[1]?.trim();
+  cab.clienteCidade = text.match(/Cidade:\s*(.+?)(?=\s*Estado:|\n)/i)?.[1]?.trim();
+  const estado = text.match(/Estado:\s*(.+?)(?=\nTelefone:|\sTelefone:|\n)/i)?.[1]?.trim();
+  if (estado) cab.clienteUF = UF_MAP[estado] || (estado.length === 2 ? estado : '');
+  cab.clienteEmail = text.match(/E-?mail:\s*([\w.\-+]+@[\w.\-]+\.\w+)/i)?.[1]?.trim();
+  cab.clienteContato = text.match(/Contato:\s*(.+?)(?=\n|#)/i)?.[1]?.trim();
+
+  cab.vendedor = text.match(/Vendedor:\s*(.+?)(?=\n|Transportadora)/i)?.[1]?.trim();
+  cab.dataEmissao = text.match(/Data\s+de\s+Emiss[ãa]o:\s*(\d{2}\/\d{2}\/\d{4})/i)?.[1];
+  cab.condicaoPagamento = text.match(/Condi[çc][ãa]o\s+de\s+Pagamento:\s*(.+?)(?=\n|Data)/i)?.[1]?.trim();
+  cab.transpNome = text.match(/Transportadora:\s*(.+?)(?=\n|Telefone:)/i)?.[1]?.trim();
+
+  const infoMatch = text.match(/Informa[çc][õo]es\s+adicionais:\s*([\s\S]+?)(?=N[ÃA]O\s+RESPONDER|SAC|$)/i);
+  if (infoMatch) cab.informacoesAdicionais = infoMatch[1].trim().replace(/\s+/g, ' ');
+
+  const valorMatch = text.match(/Valor\s+total:\s*R?\$\s*([\d.,]+)/i);
+  if (valorMatch) cab.valorTotal = parseBRL(valorMatch[1]);
+
+  return cab;
+};
+
+// ───────────────────────────────────────────────────────────────
+// Função pública
 // ───────────────────────────────────────────────────────────────
 
 export const parseMercosOrderPdf = async (
   file: File | ArrayBuffer
 ): Promise<PedidoProcessado> => {
-  const text = await extractMercosOrderText(file);
+  const pages = await extractSpans(file);
 
-  // ── Cabeçalho ──
-  const cab: PedidoCabecalho = {};
+  // Cabeçalho: extrair de TODAS as páginas concatenadas (texto reconstituído)
+  const allText = pages.map(buildPageText).join('\n');
+  const cabecalho = parseCabecalho(allText);
 
-  // Pedido Nº
-  const numMatch = text.match(/Pedido\s*N[ºo]?\s*([\d]+)/i);
-  if (numMatch) cab.numero = numMatch[1];
-
-  // Representada (fornecedor)
-  const repMatch = text.match(/Representada:\s*(.+?)(?=\n|CNPJ:)/i);
-  if (repMatch) cab.fornecedorNome = repMatch[1].trim();
-
-  // CNPJ do fornecedor (primeiro CNPJ depois de "Representada:")
-  const cnpjs = Array.from(text.matchAll(/CNPJ:\s*([\d./\-]+)/gi)).map(m => m[1].trim());
-  if (cnpjs[0]) cab.fornecedorCnpj = cnpjs[0];
-  if (cnpjs[1]) cab.clienteCnpj = cnpjs[1];
-
-  // Telefone do fornecedor (primeiro Telefone)
-  const telefones = Array.from(text.matchAll(/Telefone:\s*([(\d).\s\-]+)/gi)).map(m => m[1].trim());
-  if (telefones[0]) cab.fornecedorTelefone = telefones[0];
-  if (telefones[1]) cab.clienteTelefone = telefones[1];
-
-  // Cliente (Razão Social)
-  const cliMatch = text.match(/Cliente:\s*(.+?)(?=\s*Nome Fantasia:|\n)/i);
-  if (cliMatch) cab.clienteRazaoSocial = cliMatch[1].trim();
-
-  const fantasiaMatch = text.match(/Nome\s+Fantasia:\s*(.+?)(?=\n|CNPJ:)/i);
-  if (fantasiaMatch) cab.clienteNomeFantasia = fantasiaMatch[1].trim();
-
-  // IE
-  const ieMatch = text.match(/Inscri[çc][ãa]o\s+Estadual:\s*([\d./\-]+)/i);
-  if (ieMatch) cab.clienteIE = ieMatch[1].trim();
-
-  // Endereço, Bairro, CEP, Cidade, Estado
-  const enderecoMatch = text.match(/Endere[çc]o:\s*(.+?)(?=\nBairro:|\sBairro:)/i);
-  if (enderecoMatch) cab.clienteEndereco = enderecoMatch[1].trim();
-
-  const bairroMatch = text.match(/Bairro:\s*(.+?)(?=\s*CEP:|\n)/i);
-  if (bairroMatch) cab.clienteBairro = bairroMatch[1].trim();
-
-  const cepMatch = text.match(/CEP:\s*([\d\-]+)/i);
-  if (cepMatch) cab.clienteCEP = cepMatch[1].trim();
-
-  const cidadeMatch = text.match(/Cidade:\s*(.+?)(?=\s*Estado:|\n)/i);
-  if (cidadeMatch) cab.clienteCidade = cidadeMatch[1].trim();
-
-  const estadoMatch = text.match(/Estado:\s*(.+?)(?=\nTelefone:|\sTelefone:|\n)/i);
-  if (estadoMatch) {
-    const estado = estadoMatch[1].trim();
-    // Mapeamento UF
-    const ufMap: Record<string, string> = {
-      'Acre': 'AC', 'Alagoas': 'AL', 'Amapá': 'AP', 'Amazonas': 'AM',
-      'Bahia': 'BA', 'Ceará': 'CE', 'Distrito Federal': 'DF', 'Espírito Santo': 'ES',
-      'Goiás': 'GO', 'Maranhão': 'MA', 'Mato Grosso': 'MT', 'Mato Grosso do Sul': 'MS',
-      'Minas Gerais': 'MG', 'Pará': 'PA', 'Paraíba': 'PB', 'Paraná': 'PR',
-      'Pernambuco': 'PE', 'Piauí': 'PI', 'Rio de Janeiro': 'RJ', 'Rio Grande do Norte': 'RN',
-      'Rio Grande do Sul': 'RS', 'Rondônia': 'RO', 'Roraima': 'RR', 'Santa Catarina': 'SC',
-      'São Paulo': 'SP', 'Sergipe': 'SE', 'Tocantins': 'TO',
-    };
-    cab.clienteUF = ufMap[estado] || (estado.length === 2 ? estado : '');
+  // Itens: processa CADA página separadamente (Y se repete entre páginas)
+  // depois agrega na ordem correta usando o # de cada item.
+  const rawItens: ItemRaw[] = [];
+  for (const pageSpans of pages) {
+    rawItens.push(...parseItensFromSpans(pageSpans));
   }
+  // Ordena pelo número do item para garantir sequência correta
+  rawItens.sort((a, b) => Number(a.numero) - Number(b.numero));
 
-  // Email do cliente
-  const emails = Array.from(text.matchAll(/E-?mail:\s*([\w.\-+]+@[\w.\-]+\.\w+)/gi)).map(m => m[1].trim());
-  if (emails[0]) cab.clienteEmail = emails[0];
+  const itens: ItemPedidoNormalizado[] = rawItens.map(r => ({
+    codigo: r.codigo,
+    descricao: r.descricao,
+    quantidade: r.qtde,
+    precoUnitario: r.preco,
+    total: r.subtotal,
+    desconto: parseDescPercent(r.descontoStr),
+    ipi: 0,
+    observacoes: r.descontoStr ? `Desc.: ${r.descontoStr}` : '',
+    referenciaPedido: cabecalho.numero || '',
+    status: r.codigo && r.qtde > 0 && r.preco > 0 ? 'ok' : 'incompleto',
+    erros: [],
+  }));
 
-  // Contato
-  const contatoMatch = text.match(/Contato:\s*(.+?)(?=\n|#)/i);
-  if (contatoMatch) cab.clienteContato = contatoMatch[1].trim();
-
-  // Vendedor
-  const vendedorMatch = text.match(/Vendedor:\s*(.+?)(?=\n|Transportadora)/i);
-  if (vendedorMatch) cab.vendedor = vendedorMatch[1].trim();
-
-  // Data Emissão
-  const dataMatch = text.match(/Data\s+de\s+Emiss[ãa]o:\s*(\d{2}\/\d{2}\/\d{4})/i);
-  if (dataMatch) cab.dataEmissao = dataMatch[1];
-
-  // Condição de Pagamento
-  const pagMatch = text.match(/Condi[çc][ãa]o\s+de\s+Pagamento:\s*(.+?)(?=\n|Data)/i);
-  if (pagMatch) cab.condicaoPagamento = pagMatch[1].trim();
-
-  // Transportadora
-  const transpMatch = text.match(/Transportadora:\s*(.+?)(?=\n|Telefone:)/i);
-  if (transpMatch) cab.transpNome = transpMatch[1].trim();
-
-  // Telefone da transportadora (vem depois de Transportadora:)
-  if (telefones[2]) cab.transpTelefone = telefones[2];
-
-  // Informações adicionais
-  const infoMatch = text.match(/Informa[çc][õo]es\s+adicionais:\s*(.+?)(?=N[ÃA]O\s+RESPONDER|SAC|$)/is);
-  if (infoMatch) cab.informacoesAdicionais = infoMatch[1].trim().replace(/\s+/g, ' ');
-
-  // Valor total (para conferência)
-  const valorMatch = text.match(/Valor\s+total:\s*R?\$\s*([\d.,]+)/i);
-  if (valorMatch) cab.valorTotal = parseBRL(valorMatch[1]);
-
-  // ── Itens ──
-  const itens: ItemPedidoNormalizado[] = [];
-
-  // Padrão: linha começa com número (#), depois código, descrição, qtde, desc, preço, subtotal
-  // Ex: "1 F0189 BOMBONIERE 500ML... 180 30% R$ 8,90 R$ 1.601,46"
-  // No texto extraído o PDF.js às vezes quebra entre linhas; vamos reagrupar.
-
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-  // Buffer para reagrupar descrição multi-linha
-  let buffer: string | null = null;
-
-  const itemRegex = /^(\d+)\s+([A-Z0-9]{2,12})\s+(.+?)\s+(\d+)\s+([\d%+\s]+%)\s+R\$\s*([\d.,]+)\s+R\$\s*([\d.,]+)$/;
-
-  for (const raw of lines) {
-    const line = (buffer ? buffer + ' ' : '') + raw;
-    const m = line.match(itemRegex);
-    if (m) {
-      const [, , codigo, descricao, qtdStr, descStr, precoStr, subtotalStr] = m;
-      const quantidade = Number(qtdStr) || 0;
-      const desconto = parseDescPercent(descStr);
-      const precoUnitario = parseBRL(precoStr);
-      const total = parseBRL(subtotalStr);
-      itens.push({
-        codigo: codigo.trim(),
-        descricao: descricao.trim().replace(/\s+/g, ' '),
-        quantidade,
-        precoUnitario,
-        total,
-        desconto,
-        ipi: 0,
-        observacoes: '',
-        referenciaPedido: cab.numero || '',
-        status: 'ok',
-        erros: [],
-      });
-      buffer = null;
-    } else {
-      // Linha não casou inteira — pode ser fragmento da próxima descrição
-      // Mantém em buffer para tentar com a próxima
-      if (/^\d+\s+[A-Z0-9]/.test(line)) {
-        buffer = line;
-      } else if (buffer) {
-        buffer = line; // sobrescreve com nova tentativa
-      }
-    }
-  }
-
-  // ── PedidoProcessado completo ──
   const stats = {
     totalItens: itens.length,
     itensOk: itens.filter(i => i.status === 'ok').length,
-    itensIncompletos: 0,
+    itensIncompletos: itens.filter(i => i.status === 'incompleto').length,
     itensErro: itens.filter(i => i.status === 'erro').length,
   };
 
@@ -266,8 +334,14 @@ export const parseMercosOrderPdf = async (
       referenciaPedido: null,
     },
     itens,
-    cabecalho: cab,
+    cabecalho,
     stats,
     destino: 'jaweb',
   };
+};
+
+// Compat com testes anteriores
+export const extractMercosOrderText = async (file: File | ArrayBuffer): Promise<string> => {
+  const pages = await extractSpans(file);
+  return pages.map(buildPageText).join('\n\n--- PAGE ---\n\n');
 };

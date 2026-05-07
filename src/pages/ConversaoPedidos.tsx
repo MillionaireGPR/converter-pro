@@ -10,6 +10,7 @@ import { processarPedido } from "@/core/orders/orderParser";
 import { exportarPedido, validarPedidoParaExportacao, downloadExportedFile, EXPORT_FORMATS, type FormatoExportacao } from "@/core/orders/orderExporter";
 import type { ItemPedidoNormalizado, PedidoProcessado } from "@/core/orders/orderTypes";
 import { parseMercosOrderPdf } from "@/core/orders/mercosOrderPdfParser";
+import { exportarPedidoJawebFromTemplate } from "@/core/orders/jawebTemplateExporter";
 
 export default function ConversaoPedidos() {
   const { registrarHistorico } = useApp();
@@ -73,7 +74,7 @@ export default function ConversaoPedidos() {
     }
   };
 
-  const handleExportar = () => {
+  const handleExportar = async () => {
     if (!destino) {
       toast.error("Selecione um destino primeiro.");
       return;
@@ -84,10 +85,37 @@ export default function ConversaoPedidos() {
     }
 
     try {
-      // Validar antes de exportar
       const formato = destino as FormatoExportacao;
+
+      // Caso especial JAWEB: usa template oficial preservando 100% do formato
+      if (formato === "jaweb") {
+        const { blob, filename } = await exportarPedidoJawebFromTemplate(pedido);
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+
+        await registrarHistorico({
+          arquivo: nomeArquivo,
+          fornecedor: "JAW WEB",
+          usuario: "Admin",
+          data: new Date().toISOString(),
+          tipoConversao: "Exportação JAW WEB (template oficial)",
+          qtdItens: pedido.itens.length,
+          status: "concluído",
+        });
+
+        toast.success(`JAW WEB exportado! ${pedido.itens.length} itens.`);
+        return;
+      }
+
+      // Demais formatos: validação + exportador padrão
       const issues = validarPedidoParaExportacao(pedido, formato);
-      
+
       const errors = issues.filter(i => i.severity === 'error');
       if (errors.length > 0) {
         toast.error(`${errors.length} erro(s) encontrados. Verifique os itens.`);
@@ -100,16 +128,13 @@ export default function ConversaoPedidos() {
         toast.warning(`${warnings.length} aviso(s). Exportando mesmo assim.`);
       }
 
-      // Exportar
       const resultado = exportarPedido(pedido, formato, {
         onlyValid: true,
         includeErrors: false,
       });
 
-      // Download
       downloadExportedFile(resultado);
 
-      // Registrar no histórico
       registrarHistorico({
         arquivo: nomeArquivo,
         fornecedor: EXPORT_FORMATS[formato].name,

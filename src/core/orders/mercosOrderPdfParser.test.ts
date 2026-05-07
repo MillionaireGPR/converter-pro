@@ -4,20 +4,11 @@
  * (que requer browser environment).
  */
 import { describe, it, expect } from 'vitest';
+import { parseDescPercent as parseDescExported, parseBRL as parseBRLExported } from './mercosOrderPdfParser';
 
-// Re-export internal helpers para testar (não exportados publicamente).
-// Para isso, replicamos a lógica aqui em forma testável.
-
-const parseDescPercent = (raw: string): number => {
-  if (!raw) return 0;
-  const pcts = Array.from(raw.matchAll(/(\d+(?:[.,]\d+)?)\s*%/g))
-    .map(m => Number(m[1].replace(',', '.')) / 100)
-    .filter(n => !isNaN(n));
-  if (pcts.length === 0) return 0;
-  return 1 - pcts.reduce((acc, p) => acc * (1 - p), 1);
-};
-
-const parseBRL = (raw: string): number => {
+// Aliases para compatibilidade com os testes
+const parseDescPercent = parseDescExported;
+const parseBRLLegacy = (raw: string): number => {
   if (!raw) return 0;
   const cleaned = raw
     .replace(/R\$\s*/gi, '')
@@ -45,16 +36,16 @@ describe('parseDescPercent', () => {
 
 describe('parseBRL', () => {
   it('"R$ 8,90" => 8.90', () => {
-    expect(parseBRL('R$ 8,90')).toBeCloseTo(8.90, 2);
+    expect(parseBRLExported('R$ 8,90')).toBeCloseTo(8.90, 2);
   });
   it('"R$ 1.601,46" => 1601.46 (separador de milhar BR)', () => {
-    expect(parseBRL('R$ 1.601,46')).toBeCloseTo(1601.46, 2);
+    expect(parseBRLExported('R$ 1.601,46')).toBeCloseTo(1601.46, 2);
   });
   it('"R$ 9.648,93" => 9648.93', () => {
-    expect(parseBRL('R$ 9.648,93')).toBeCloseTo(9648.93, 2);
+    expect(parseBRLExported('R$ 9.648,93')).toBeCloseTo(9648.93, 2);
   });
   it('vazio => 0', () => {
-    expect(parseBRL('')).toBe(0);
+    expect(parseBRLExported('')).toBe(0);
   });
 });
 
@@ -68,8 +59,8 @@ describe('regex de item de pedido Mercos', () => {
     expect(m![2]).toBe('F0189');
     expect(m![4]).toBe('180');
     expect(m![5].trim()).toBe('30%');
-    expect(parseBRL(m![6])).toBeCloseTo(8.90);
-    expect(parseBRL(m![7])).toBeCloseTo(1601.46);
+    expect(parseBRLExported(m![6])).toBeCloseTo(8.90);
+    expect(parseBRLExported(m![7])).toBeCloseTo(1601.46);
   });
 
   it('reconhece linha com desconto composto "30% + 15%"', () => {
@@ -87,7 +78,7 @@ describe('regex de item de pedido Mercos', () => {
     const m = linha.match(itemRegex);
     expect(m).toBeTruthy();
     expect(m![2]).toBe('F5116');
-    expect(parseBRL(m![7])).toBeCloseTo(420.00);
+    expect(parseBRLExported(m![7])).toBeCloseTo(420.00);
   });
 });
 
@@ -148,7 +139,7 @@ Valor total: R$ 9.648,93`;
   });
 
   it('extrai valor total', () => {
-    expect(parseBRL(sample.match(/Valor\s+total:\s*R?\$\s*([\d.,]+)/i)?.[1] || ''))
+    expect(parseBRLExported(sample.match(/Valor\s+total:\s*R?\$\s*([\d.,]+)/i)?.[1] || ''))
       .toBeCloseTo(9648.93, 2);
   });
 
