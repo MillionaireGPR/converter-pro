@@ -14,6 +14,7 @@ import { momentAdapter } from './moment';
 import { flashAdapter } from './flash';
 import { petrinAdapter } from './petrin';
 import { levivanAdapter } from './levivan';
+import { freecomAdapter } from './freecom';
 import { genericAdapter } from './generic';
 
 /** Lista completa de adapters registrados (ordem importa para detecção) */
@@ -28,6 +29,7 @@ const ADAPTERS: SupplierAdapter[] = [
   flashAdapter,
   petrinAdapter,
   levivanAdapter,
+  freecomAdapter,
 ];
 
 /** Busca um adapter pelo ID ou nome (case-insensitive) */
