@@ -504,13 +504,18 @@ const validateAndFixRows = (
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
 
+      // Filtra metadata (__rowNum__) ao avaliar conteúdo real da linha
+      const dataValues = Object.entries(row)
+        .filter(([k]) => k !== '__rowNum__')
+        .map(([, v]) => v);
+
       // Verifica se a linha tem algum campo preenchido
-      const hasAnyValue = Object.values(row).some(v => v !== undefined && v !== null && v !== '');
+      const hasAnyValue = dataValues.some(v => v !== undefined && v !== null && v !== '');
 
       // Tenta encontrar código na linha (cobertura abrangente para todos os fornecedores).
       // Aceita: 1-4 letras + 2+ digitos (F0211, FL1234, DXP25, DZ04, BM361645) OU
       //        digitos puros 4+ (153060 FASTNEO, 7898100211940 EAN)
-      const rowText = Object.values(row).join(' ');
+      const rowText = dataValues.join(' ');
       const hasCode = /[A-Z]{1,4}\d{2,}/i.test(rowText) || /\d{4,}/.test(rowText);
 
       // Verifica se é uma linha "fantasma" (vazia ou sem código quando deveria ter)
@@ -550,16 +555,31 @@ const validateAndFixRows = (
 };
 
 /**
- * Converte linhas de planilha em ProdutoBruto[]
+ * Converte linhas de planilha em ProdutoBruto[].
+ * IMPORTANTE: usa __rowNum__ que SheetJS injeta em cada row (0-based no Excel),
+ * em vez de derivar pela posição no array. Isso preserva a referência correta
+ * MESMO QUANDO HÁ LINHAS VAZIAS no meio dos dados (caso NIX HOUSE com produtos
+ * intercalados sem imagem). Sem isso, cada blank row anterior shiftava o
+ * matching de imagens em -1 → "as primeiras OK e o resto invertido".
  */
 const rowsToProdutosBrutos = (
   rows: Record<string, any>[],
   headerOffset: number = 0
 ): ProdutoBruto[] => {
-  return rows.map((row, idx) => ({
-    campos: { ...row },
-    linhaOrigem: idx + headerOffset + 2, // Converte índice 0 para Linha 2 (se cabeçalho na linha 1)
-  }));
+  return rows.map((row, idx) => {
+    // __rowNum__ é 0-based; Excel é 1-based → +1
+    const realRow = typeof (row as any).__rowNum__ === 'number'
+      ? (row as any).__rowNum__ + 1
+      : idx + headerOffset + 2; // fallback para o cálculo legado
+
+    // Remove __rowNum__ do campos para não vazar para o adapter
+    const { __rowNum__, ...camposLimpos } = row as any;
+
+    return {
+      campos: camposLimpos,
+      linhaOrigem: realRow,
+    };
+  });
 };
 
 /**
@@ -594,13 +614,16 @@ const readSpreadsheet = async (data: ArrayBuffer, tipo: TipoArquivo): Promise<Sp
     .map((h: any) => String(h || '').trim())
     .filter(Boolean);
 
-  // Lê como objetos a partir do header detectado
+  // Lê como objetos a partir do header detectado.
+  // SEM `blankrows: false` para SheetJS injetar __rowNum__ correto em CADA row.
+  // O filtro de blank rows acontece depois em validateAndFixRows, preservando
+  // __rowNum__ → linhaOrigem real do Excel para matching de imagens.
   const rows = XLSX.utils.sheet_to_json(worksheet, {
     range: headerRowIndex,
-    blankrows: false,
   }) as Record<string, any>[];
 
-  // Lê 2D estrutural para pareamento posicional
+  // Lê 2D estrutural para pareamento posicional (esse modo não suporta __rowNum__,
+  // mantém blankrows: false para evitar arrays vazios)
   const rows2D = XLSX.utils.sheet_to_json(worksheet, {
     header: 1,
     range: headerRowIndex,

@@ -88,15 +88,17 @@ const matchExcelImagesToProducts = (
           );
         }
         
-        // Tentativa 2: Matching por proximidade de linha (±5 linhas)
-        // Isso ajuda quando há diferença de offset entre abas
-        for (let offset = 1; offset <= 5; offset++) {
-          const produtosOffset = produtosPorLinha.get(img.sourceIndex + offset) || 
+        // Tentativa 2: Matching por proximidade APENAS ±1 linha.
+        // (Antes era ±5, mas isso causava matches errados em planilhas densas.
+        // Com __rowNum__ correto, o offset de 1 linha cobre apenas o caso de
+        // drawings ancorados na linha do título do produto vs próxima linha.)
+        for (let offset = 1; offset <= 1; offset++) {
+          const produtosOffset = produtosPorLinha.get(img.sourceIndex + offset) ||
                                  produtosPorLinha.get(img.sourceIndex - offset);
           if (produtosOffset && produtosOffset.length > 0) {
             matchedProduto = produtosOffset[0];
             matchMethod = `linha_offset_${offset}`;
-            console.log(`[ExcelImageMatcher] 🔄 Match por offset: ${img.originalName} -> ${matchedProduto.codigo} (linha ${img.sourceIndex} → ${matchedProduto.linhaOrigem})`);
+            console.log(`[ExcelImageMatcher] 🔄 Match por offset (±1): ${img.originalName} -> ${matchedProduto.codigo} (linha ${img.sourceIndex} → ${matchedProduto.linhaOrigem})`);
             break;
           }
         }
