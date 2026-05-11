@@ -3,14 +3,14 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/StatusBadge";
-import { useApp } from "@/context/AppContext";
+import { useFornecedores } from "@/context/FornecedoresContext";
 import { Building2, Edit, Package, Calendar, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 
 export default function Fornecedores() {
-  const { fornecedores, updateFornecedor, removeFornecedor, seedSuppliers, isLoading } = useApp();
+  const { fornecedores, updateFornecedor, removeFornecedor, seedSuppliers, isLoading } = useFornecedores();
   const navigate = useNavigate();
   const [editId, setEditId] = useState<string | null>(null);
   const [removeId, setRemoveId] = useState<string | null>(null);

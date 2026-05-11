@@ -5,13 +5,19 @@ import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/StatCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useApp } from "@/context/AppContext";
+import { useProdutos } from "@/context/ProdutosContext";
+import { useFornecedores } from "@/context/FornecedoresContext";
+import { useHistorico } from "@/context/HistoricoContext";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { useNavigate } from "react-router-dom";
 import { useMemo } from "react";
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { produtosPadronizados, fornecedores, historico, dashboard } = useApp();
+  const { dashboard } = useApp();
+  const { produtosPadronizados } = useProdutos();
+  const { fornecedores } = useFornecedores();
+  const { historico } = useHistorico();
 
   const chartDataFornecedor = useMemo(() => {
     const fills = ['hsl(262, 60%, 50%)', 'hsl(262, 70%, 65%)', 'hsl(262, 40%, 75%)', 'hsl(262, 30%, 82%)', 'hsl(220, 14%, 85%)'];

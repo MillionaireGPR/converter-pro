@@ -655,8 +655,9 @@ const readPDF = async (
     .filter(s => s.extractionConfidence >= 25)
     .map(s => s.pagina);
 
-  const avgConfidence = scores.length > 0
-    ? Math.round(scores.reduce((sum, s) => sum + s.extractionConfidence, 0) / scores.length)
+  const validScores = scores.filter(s => s.extractionConfidence >= 25);
+  const avgConfidence = validScores.length > 0
+    ? Math.round(validScores.reduce((sum, s) => sum + s.extractionConfidence, 0) / validScores.length)
     : 0;
 
   const metadata: Partial<ImportMetadata> = {

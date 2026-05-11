@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Upload, Download, ArrowRightLeft, CheckCircle, FileSpreadsheet, AlertTriangle, XCircle, List } from "lucide-react";
 import { toast } from "sonner";
-import { useApp } from "@/context/AppContext";
+import { useHistorico } from "@/context/HistoricoContext";
 import { processarPedido } from "@/core/orders/orderParser";
 import { exportarPedido, validarPedidoParaExportacao, downloadExportedFile, EXPORT_FORMATS, type FormatoExportacao } from "@/core/orders/orderExporter";
 import type { ItemPedidoNormalizado, PedidoProcessado } from "@/core/orders/orderTypes";
@@ -13,7 +13,7 @@ import { parseMercosOrderPdf } from "@/core/orders/mercosOrderPdfParser";
 import { exportarPedidoJawebFromTemplate } from "@/core/orders/jawebTemplateExporter";
 
 export default function ConversaoPedidos() {
-  const { registrarHistorico } = useApp();
+  const { registrarHistorico } = useHistorico();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [destino, setDestino] = useState("");

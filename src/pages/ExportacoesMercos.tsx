@@ -6,6 +6,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { useState, useMemo } from "react";
 import { useApp } from "@/context/AppContext";
+import { useFornecedores } from "@/context/FornecedoresContext";
+import { useProdutos } from "@/context/ProdutosContext";
 import { Download, CheckCircle, AlertTriangle, XCircle, Package, FileWarning, Search, Filter, ArrowUpDown, ArrowUp, ArrowDown, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
@@ -15,7 +17,9 @@ import { batchNormalizeToMercos } from "@/core/mercos/normalizeToMercos";
 import { generateMercosXLSX, generateErrorReport } from "@/core/mercos/exportMercos";
 
 export default function ExportacoesMercos() {
-  const { produtosPadronizados, fornecedores, exportacoesMercos, exportarMercos } = useApp();
+  const { exportacoesMercos, exportarMercos } = useApp();
+  const { fornecedores } = useFornecedores();
+  const { produtosPadronizados } = useProdutos();
   const navigate = useNavigate();
   const [precoMode, setPrecoMode] = useState<'tabela' | 'desconto'>('desconto');
   

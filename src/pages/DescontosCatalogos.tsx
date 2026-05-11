@@ -6,6 +6,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useApp } from "@/context/AppContext";
+import { useProdutos } from "@/context/ProdutosContext";
+import { useFornecedores } from "@/context/FornecedoresContext";
+import { useHistorico } from "@/context/HistoricoContext";
 import { supabase } from "@/integrations/supabase/client";
 import { Eye, FileDown, FileSpreadsheet, Save, Tag, Sparkles, Package, Percent, Lock, Unlock, Filter, Shield, ShieldCheck, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
@@ -16,7 +19,10 @@ import * as XLSX from "xlsx";
 import logo from "@/assets/logo-nunes.png";
 
 export default function DescontosCatalogos() {
-  const { produtosPadronizados, setProdutosPadronizados, fornecedores, aplicarDesconto, aplicarIpi, gerarCatalogo, registrarHistorico } = useApp();
+  const { gerarCatalogo } = useApp();
+  const { produtosPadronizados, setProdutosPadronizados, aplicarDesconto, aplicarIpi } = useProdutos();
+  const { fornecedores } = useFornecedores();
+  const { registrarHistorico } = useHistorico();
   const navigate = useNavigate();
   const [fornecedor, setFornecedor] = useState("");
   const [descontoPrincipal, setDescontoPrincipal] = useState("");

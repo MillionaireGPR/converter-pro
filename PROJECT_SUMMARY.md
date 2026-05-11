@@ -1,6 +1,6 @@
 # Converter Pro - Resumo do Projeto
 
-> **Data**: Maio 2026
+> **Última atualização**: Maio 2026
 > **Objetivo**: Sistema de conversão de catálogos PDF/Excel para produtos normalizados com extração automática de imagens
 
 ---
@@ -8,24 +8,23 @@
 ## 1. Arquitetura do Sistema
 
 ### Stack Tecnológico
-- **Frontend**: React + TypeScript + Vite + Tailwind CSS + shadcn/ui
-- **Backend**: Python + FastAPI + PyMuPDF (fitz) + Pillow
+- **Frontend**: React 18 + TypeScript + Vite 5 + Tailwind CSS 3 + shadcn/ui
+- **Backend**: Python + FastAPI + PyMuPDF (fitz) + OpenCV (headless) + Pillow
 - **Storage**: Supabase Storage (bucket "source-files")
-- **Database**: Supabase PostgreSQL
+- **Database**: Supabase PostgreSQL (com RLS para multi-tenancy)
+- **Deploy**: Vercel (frontend) + Render/Railway (backend Python)
 
 ### Fluxo de Dados
 ```
-PDF Upload → Frontend
+PDF Upload → Frontend (React)
     ↓
 PDF Parser (smartPdfInterpreter.ts) → Extrai texto + spatialContext (x, y, width, height, page)
     ↓
 Envio ao Backend Python (/process endpoint)
     ↓
-Extrator PyMuPDF → Extrai imagens com coordenadas
-    ↓
-Matcher (matcher.py) → Associa imagens a SKUs por proximidade espacial
-    ↓
-Colagens automáticas (múltiplas imagens por SKU)
+cv_extractor.py → Detecção adaptativa por página:
+  - Grid (1-4 V-lines): crop por célula via OpenCV Canny + HoughLinesP
+  - Embedded (0 ou >4 V-lines): imagens embedadas + matching Y-proximity
     ↓
 ZIP gerado → Upload Supabase → URL pública
     ↓
@@ -39,33 +38,36 @@ Frontend exibe botão "Baixar ZIP"
 ### 2.1 Extração de PDF (Gira e similares)
 - ✅ Parser semântico que detecta SKUs, preços, descrições
 - ✅ `spatialContext`: cada produto tem coordenadas (x, y, width, height, page)
-- ✅ Templates para fornecedores específicos
+- ✅ Templates para fornecedores específicos (11 templates)
 - ✅ Heurísticas genéricas como fallback
 
-### 2.2 Extração de Imagens (Backend Python)
+### 2.2 Extração de Imagens (Backend Python — OpenCV Adaptativo)
 - ✅ Endpoint `/process` recebe PDF + lista de SKUs com coordenadas
-- ✅ Extrai todas as imagens do PDF usando PyMuPDF
-- ✅ Preserva metadados: página, posição (x, y), dimensões
+- ✅ Estratégia **Grid**: detecção de linhas pontilhadas via Canny + HoughLinesP
+- ✅ Estratégia **Embedded**: imagens embedadas + matching por Y-proximity
+- ✅ Seleção automática de estratégia por página (1-4 V-interiores = Grid, senão Embedded)
+- ✅ **98.9% de cobertura** em testes E2E com 8 fornecedores (175 SKUs → 173 matches)
 
-### 2.3 Matching de Imagens (matcher.py)
-- ✅ Estratégia: **Grid/Colunas** (clustering automático em X)
-- ✅ Detecta 3 colunas automaticamente (padrão catálogos GIRA)
-- ✅ Atribui imagens à coluna mais próxima
-- ✅ Dentro da coluna, associa ao SKU mais próximo (distância ponderada: Y tem peso 1.5x)
-- ✅ Cria colagens para múltiplas imagens por SKU
-- ✅ Fallback: match por ordem se não houver coordenadas
-
-### 2.4 Pipeline Completo
+### 2.3 Pipeline Completo
 - ✅ Timeout de 120s para PDFs grandes
 - ✅ Retry logic no upload para Supabase (3 tentativas)
 - ✅ ZIP com imagens renomeadas (SKU.jpg)
 - ✅ Download direto do ZIP processado
+- ✅ Normalização automática de fundo branco em todas as imagens
+
+### 2.4 Conversão de Pedidos (Fase 2)
+- ✅ Parser de pedidos Excel (orderParser.ts)
+- ✅ Parser de PDF Mercos (mercosOrderPdfParser.ts)
+- ✅ Exportação para 6 formatos: Nunes, Clink, Gira, Genérico, ERP, JAWEB
+- ✅ Validação automática antes de exportar
 
 ### 2.5 Frontend
 - ✅ Card de métricas de imagens (total extraído, associado, não associado)
 - ✅ Botão "Baixar ZIP" quando processamento completo
 - ✅ Persistência do `zipUrl` no histórico (ConversaoSalva)
 - ✅ Badge "ZIP" no histórico para conversões processadas
+- ✅ Múltiplas categorias visuais simultâneas (REPOSIÇÃO + PREÇO FIXO, etc.)
+- ✅ Feature flags para controle de funcionalidades
 
 ---
 
@@ -75,25 +77,30 @@ Frontend exibe botão "Baixar ZIP"
 | Arquivo | Responsabilidade |
 |---------|------------------|
 | `src/core/pipeline/smartPdfInterpreter.ts` | Extrai produtos de PDF + preenche spatialContext |
+| `src/core/pipeline/importPipeline.ts` | Pipeline completo de importação |
 | `src/core/images/imageExtractionApi.ts` | Envia PDF + SKUs ao backend Python |
 | `src/core/engine.ts` | Orquestra pipeline, chama extração de imagens |
+| `src/core/supplierRules/registry.ts` | Registro central de fornecedores |
+| `src/core/orders/orderExporter.ts` | Exportação multi-formato de pedidos |
+| `src/core/mercos/exportMercos.ts` | Exportação no formato Mercos |
 | `src/pages/ConversaoProdutos.tsx` | UI de upload, processamento, exibição de resultados |
+| `src/pages/DescontosCatalogos.tsx` | Configuração de descontos por catálogo |
 | `src/context/AppContext.tsx` | Estado global, histórico de conversões, zipUrl |
 
 ### Backend (Python)
 | Arquivo | Responsabilidade |
 |---------|------------------|
-| `backend/image_extractor/main.py` | FastAPI app, endpoint `/process` |
-| `backend/image_extractor/extractor.py` | Extrai imagens de PDF com PyMuPDF |
-| `backend/image_extractor/matcher.py` | **CORE**: associa imagens a SKUs por coordenadas |
-| `backend/image_extractor/storage.py` | Upload ZIP para Supabase |
-| `backend/image_extractor/processor.py` | Orquestra extração → matching → ZIP |
+| `backend/image_extractor/main.py` | FastAPI app, endpoint `/process`, conversão de coordenadas |
+| `backend/image_extractor/cv_extractor.py` | **CORE**: OpenCV adaptativo (Grid + Embedded) |
+| `backend/image_extractor/storage.py` | Upload ZIP para Supabase Storage |
 
 ### Tipos e Interfaces
 | Arquivo | Responsabilidade |
 |---------|------------------|
 | `src/core/types/productPipeline.ts` | ProdutoNormalizadoV2 (inclui spatialContext) |
 | `src/core/images/imageTypes.ts` | Tipos para extração de imagens |
+| `src/core/orders/orderTypes.ts` | Tipos para conversão de pedidos |
+| `src/core/supplierRules/types.ts` | Interfaces de regras de fornecedor |
 
 ---
 
@@ -107,6 +114,7 @@ interface ProdutoNormalizadoV2 {
   nome: string;
   precoBase: number;
   precoFinal: number;
+  visualTags?: string[];
   // ... outros campos
   spatialContext?: {
     x: number;
@@ -126,7 +134,7 @@ interface ConversaoSalva {
   fornecedor: string;
   produtos: Produto[];
   imagens: { id, url, nome }[];
-  zipUrl?: string;  // NOVO: URL do ZIP do backend
+  zipUrl?: string;  // URL do ZIP do backend
   // ...
 }
 ```
@@ -148,29 +156,62 @@ interface ConversaoSalva {
 
 ---
 
-## 5. Status Atual do Image Matching
+## 5. Status Atual do Image Matching (OpenCV Adaptativo)
 
 ### ✅ O que funciona:
 - Extração de 1000+ imagens de PDFs grandes (65+ páginas)
-- **347 imagens associadas** de 441 produtos (~79% de sucesso)
-- Colagens automáticas funcionando
-- Download de ZIP com imagens renomeadas por SKU
+- **98.9% de cobertura** (173/175 SKUs associados corretamente em teste E2E)
+- Estratégia adaptativa por página (Grid vs Embedded)
+- Normalização de fundo branco em todas as imagens
+- 3x mais rápido que a versão anterior
+- Custo zero (OpenCV roda local)
 
-### ⚠️ Limitações conhecidas:
-- **97 imagens não associadas** (~21%) - geralmente imagens pequenas ou de decoração
-- Matching por proximidade pode ocasionalmente misturar produtos adjacentes
-- Não há validação visual automática das colagens
+### 📊 Resultados por Fornecedor (Teste E2E):
 
-### 📊 Estratégia atual do matcher:
-1. Detecta 3 colunas automaticamente pelas posições X dos SKUs
-2. Atribui cada imagem à coluna mais próxima (por centro X)
-3. Dentro da coluna, calcula distância até cada SKU
-4. Score: `distância_X * 0.5 + distância_Y * 1.5` (prioriza vertical)
-5. Máximo de 600px de distância
+| Fornecedor | SKUs | Match | % | Estratégia |
+|------------|------|-------|---|------------|
+| GIRA | 24 | 24 | 100% | Grid |
+| GOAL | 9 | 9 | 100% | Grid/Embedded misto |
+| NIXHOUSE | 5 | 5 | 100% | Grid |
+| LILA HOME | 12 | 12 | 100% | Grid |
+| CLINK | 24 | 24 | 100% | Embedded |
+| DAGIA | 6 | 6 | 100% | Embedded |
+| BM36/WC | 25 | 24 | 96% | Embedded |
+| FASTNEO | 70 | 69 | 98.6% | Grid/Embedded misto |
+| **TOTAL** | **175** | **173** | **98.9%** | |
+
+### 📊 Algoritmo (6 passos por página):
+1. Render PDF em 150 DPI → array NumPy
+2. Canny edge detection + HoughLinesP (maxLineGap=15)
+3. Filtro orientação (±2° de 0° horizontal ou 90° vertical)
+4. Clustering de linhas próximas (tolerância 40px) → grid coordinates
+5. Construção de células via interseções consecutivas
+6. Match SKU por posição + crop raster → PNG
 
 ---
 
-## 6. Configurações e Variáveis de Ambiente
+## 6. Fornecedores Suportados
+
+| Fornecedor | Regra | Template PDF |
+|-----------|-------|-------------|
+| BM36 | bm36.ts | bm36.template.ts |
+| Clink | clink.ts + clink-family-base.ts | clink.template.ts |
+| Flash | flash.ts | — |
+| Freecom | freecom.ts | — |
+| Goal Kids | goal-kids.ts | — |
+| Levivan | levivan.ts | — |
+| Lila Home | lila-home.ts | lila-home.template.ts |
+| Moment | moment.ts | moment.template.ts |
+| Neo Festas | neo-festas.ts | neo-festas.template.ts |
+| Nix House | nix.ts | nix.template.ts |
+| Petrin | petrin.ts | — |
+| Gira Imports | (via clink-family-base) | gira-imports.template.ts |
+| Dagia | (via clink-family-base) | dagia.template.ts |
+| Genérico | generic.ts | — |
+
+---
+
+## 7. Configurações e Variáveis de Ambiente
 
 ### .env (Frontend)
 ```
@@ -182,57 +223,55 @@ BUCKET_NAME=source-files
 
 ### Backend Python
 - Porta: 8000
-- Requer: `fitz` (PyMuPDF), `Pillow`, `supabase`, `fastapi`, `uvicorn`
+- Requer: `fitz` (PyMuPDF), `opencv-python-headless`, `Pillow`, `supabase`, `fastapi`, `uvicorn`
 
 ---
 
-## 7. Como Testar o Fluxo Completo
+## 8. Como Testar o Fluxo Completo
 
 1. Iniciar backend: `cd backend/image_extractor && python -m uvicorn main:app --reload --port 8000`
 2. Iniciar frontend: `npm run dev`
 3. Acessar: `http://localhost:8080/conversao`
-4. Selecionar fornecedor "GIRA"
+4. Selecionar fornecedor (ex: "GIRA")
 5. Upload do PDF do catálogo
 6. Clicar "Processar Arquivo"
-7. Verificar logs no terminal Python:
-   - `[Matcher] Colunas detectadas: 3`
-   - `[Matcher] ✓ p65_imgX.jpg -> SKU (score: XXX)`
-   - `[Matcher] Total: XXX matches, XX não associadas`
+7. Verificar logs no terminal Python
 8. Baixar ZIP quando aparecer botão
 
+Ou usar o script integrado: `start-all.bat`
+
 ---
 
-## 8. Regras de Ouro (Não quebrar!)
+## 9. Regras de Ouro (Não quebrar!)
 
 1. **NUNCA volte ao Lovable** para edições - todas as mudanças são locais
-2. **Edições no backend Python** devem ser testadas localmente antes
-3. **Logs são essenciais** - sempre adicionar print() no Python para debug
-4. **Testar com 1 página primeiro** - não processar PDFs inteiros em dev
-5. **Preservar spatialContext** - sem coordenadas o matching falha
-6. **Timeout de 120s** para PDFs grandes no frontend
+2. **Estabilidade primeiro** - o que já funciona NÃO SE MEXE sem testes
+3. **Edições no backend Python** devem ser testadas localmente antes
+4. **Preservar spatialContext** - sem coordenadas o matching falha
+5. **Fases independentes** - NÃO misturar lógica da Fase 1 (Produtos) com Fase 2 (Pedidos)
+6. **Free-tier** - priorizar serviços gratuitos ou open-source
 
 ---
 
-## 9. Próximos Passos Sugeridos
+## 10. Testes
 
-### Prioridade Alta (Planilhas - novo contexto):
-- [ ] Revisar parser de Excel (.xlsx, .xls, .csv)
-- [ ] Validação de colunas obrigatórias
-- [ ] Mapeamento automático de headers
-- [ ] Preview de dados antes de importar
+```bash
+# Rodar todos os testes (173 testes, 15 suites)
+npm run test
 
-### Prioridade Média (PDFs):
-- [ ] Otimizar matcher para reduzir os 21% não associados
-- [ ] Adicionar visualização de bounding boxes (debug)
-- [ ] Validação manual de matches (UI para aprovar/rejeitar)
+# Testes do backend Python (cobertura por fornecedor)
+cd backend/image_extractor && python test_all_suppliers.py
 
-### Prioridade Baixa:
-- [ ] Exportação para Mercos com imagens embutidas
-- [ ] Dashboard de métricas de conversão
+# Type check
+npx tsc --noEmit
+
+# Lint
+npm run lint
+```
 
 ---
 
-## 10. Comandos Úteis
+## 11. Comandos Úteis
 
 ```bash
 # Iniciar tudo (Windows)
@@ -245,20 +284,14 @@ python -m uvicorn main:app --reload --port 8000
 # Frontend apenas
 npm run dev
 
-# Testar backend
+# Health check do backend
 http://localhost:8000/health
+
+# Build de produção
+npm run build
 ```
 
 ---
 
-## 11. Contatos e Recursos
-
-- **Projeto base**: Criado no Lovable (não editar lá!)
-- **Repositório**: GitHub conectado ao Windsurf
-- **Deploy**: Configurado para Railway/Render (não deployar ainda)
-- **Supabase**: Projeto ativo com bucket "source-files"
-
----
-
-**Resumo para novo chat:**
-> Sistema Converter Pro para importação de catálogos. PDFs processados via backend Python com matching espacial de imagens (347/441 imagens associadas). Planilhas Excel são o próximo foco. NUNCA editar no Lovable - tudo local. Stack: React+TS frontend, Python+FastAPI backend, Supabase storage.
+> **Resumo para novo chat:**
+> Sistema Converter Pro para importação de catálogos com 14 fornecedores suportados. PDFs processados via backend Python com OpenCV adaptativo (98.9% cobertura). Planilhas Excel importadas diretamente no frontend. Exportação multi-formato (Mercos, ERP, JAWEB). NUNCA editar no Lovable - tudo local. Stack: React 18 + TS + Vite frontend, Python + FastAPI + OpenCV backend, Supabase DB/Storage.

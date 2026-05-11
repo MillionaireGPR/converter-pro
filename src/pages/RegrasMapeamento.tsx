@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useApp } from "@/context/AppContext";
+import { useFornecedores } from "@/context/FornecedoresContext";
+import { useHistorico } from "@/context/HistoricoContext";
 import { ArrowRight, Plus, Trash2, Upload, FileSpreadsheet, Sparkles, Loader2, CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
@@ -12,7 +14,9 @@ import { useSearchParams } from "react-router-dom";
 import * as XLSX from 'xlsx';
 
 export default function RegrasMapeamento() {
-  const { regrasMapeamento, fornecedores, addRegra, updateRegra, removeRegra, detectedHeaders, setDetectedHeaders, conversoesSalvas } = useApp();
+  const { detectedHeaders, setDetectedHeaders } = useApp();
+  const { regrasMapeamento, fornecedores, addRegra, updateRegra, removeRegra } = useFornecedores();
+  const { conversoesSalvas } = useHistorico();
   const [searchParams] = useSearchParams();
   const [filtro, setFiltro] = useState(searchParams.get('fornecedor') || "todos");
   const [dialogOpen, setDialogOpen] = useState(false);

@@ -113,13 +113,22 @@ export const scorePdfPages = (
     if (hasCodePattern) confidence += 25;
     if (hasProductBlockPattern) confidence += 25;
 
+    // Compensação para catálogos válidos que não têm preço ou "CÓD:" explícito
+    if (hasText && hasCodePattern && confidence <= 50) {
+      // Se encontrarmos vários códigos, é definitivamente uma página de produtos
+      const codeMatches = text.match(new RegExp(codePattern, 'g')) || [];
+      if (codeMatches.length >= 3) {
+        confidence = Math.max(confidence, 80); // Garante pelo menos 80%
+      }
+    }
+
     return {
       pagina: p.pageNum,
       hasText,
       hasPricePattern,
       hasCodePattern,
       hasProductBlockPattern,
-      extractionConfidence: confidence,
+      extractionConfidence: Math.min(confidence, 100),
       usouOCR: false,
     };
   });

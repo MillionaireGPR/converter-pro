@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -7,6 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Upload, FileSpreadsheet, FileText, CheckCircle, AlertCircle, ArrowRight, Loader2, File as FileIcon, Info, History, Image, RotateCcw, Trash2, Clock, Package, Download } from "lucide-react";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useApp, Produto } from "@/context/AppContext";
+import { useFornecedores } from "@/context/FornecedoresContext";
+import { useHistorico } from "@/context/HistoricoContext";
+import { useProdutos } from "@/context/ProdutosContext";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { Progress } from "@/components/ui/progress";
@@ -23,12 +26,18 @@ import JSZip from "jszip";
 import { saveAs } from "file-saver";
 
 export default function ConversaoProdutos() {
-  const { fornecedores, addProdutosNormalizados, registrarHistorico, setDetectedHeaders, salvarConversao, conversoesSalvas, reabrirConversao, excluirConversao } = useApp();
+  const { setDetectedHeaders } = useApp();
+  const { fornecedores } = useFornecedores();
+  const { registrarHistorico, salvarConversao, conversoesSalvas, reabrirConversao, excluirConversao } = useHistorico();
+  const { addProdutosNormalizados, setProdutosPadronizados } = useProdutos();
   const [fornecedor, setFornecedor] = useState("");
   const [novoFornecedor, setNovoFornecedor] = useState("");
   const [tipoArquivo, setTipoArquivo] = useState("");
   const [state, setState] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
   const [progress, setProgress] = useState(0);
+  const [progressMsg, setProgressMsg] = useState("");
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [resultData, setResultData] = useState<{ total: number; ok: number; pendentes: number; erros: number; duplicados: number; fileName: string; fornNome: string } | null>(null);
@@ -39,6 +48,17 @@ export default function ConversaoProdutos() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
+  // Timer de progresso — conta segundos enquanto está processando
+  useEffect(() => {
+    if (state === 'processing') {
+      setElapsedSec(0);
+      timerRef.current = setInterval(() => setElapsedSec(s => s + 1), 1000);
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current);
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [state]);
+
   // Pegar últimas 5 conversões
   const ultimasConversoes = conversoesSalvas.slice(0, 5);
 
@@ -46,9 +66,17 @@ export default function ConversaoProdutos() {
   const handleReabrirDoHistorico = async (conversaoId: string) => {
     setReabrindoId(conversaoId);
     try {
-      await reabrirConversao(conversaoId);
-      toast.success("Conversão carregada! Redirecionando...");
-      navigate('/base');
+      const conversao = await reabrirConversao(conversaoId);
+      if (conversao) {
+        if (conversao.produtos && conversao.produtos.length > 0) {
+          setProdutosPadronizados(conversao.produtos);
+        }
+        if (conversao.headers && conversao.headers.length > 0) {
+          setDetectedHeaders(conversao.headers);
+        }
+        toast.success("Conversão carregada! Redirecionando...");
+        navigate('/base');
+      }
     } catch (error) {
       toast.error("Erro ao reabrir conversão");
     } finally {
@@ -207,7 +235,8 @@ export default function ConversaoProdutos() {
     if (!selectedFile) { toast.error("Selecione um arquivo para processar"); return; }
 
     setState('processing');
-    setProgress(10);
+    setProgress(5);
+    setProgressMsg('Preparando arquivo...');
     setImportMeta(null);
 
     try {
@@ -259,13 +288,29 @@ export default function ConversaoProdutos() {
       if (!supplier) throw new Error("Fornecedor não encontrado");
       if (!supplierId) throw new Error("ID do fornecedor não pôde ser resolvido para o relacionamento no banco.");
 
-      setProgress(20);
+      setProgress(15);
+      setProgressMsg(`Lendo e processando planilha de ${supplier.nome}...`);
       console.log(`[Pipeline] Processando com pipeline V2 para: ${supplier.nome}`);
+
+      // Progresso animado durante o processamento completo (pipeline + imagens)
+      const imgProgressInterval = setInterval(() => {
+        setProgress(prev => {
+          if (prev >= 90) { clearInterval(imgProgressInterval); return prev; }
+          // Atualiza mensagem conforme o progresso avança
+          if (prev === 40) setProgressMsg('Produtos identificados. Normalizando dados...');
+          if (prev === 55) setProgressMsg('Dados salvos. Extraindo imagens do PDF...');
+          if (prev === 70) setProgressMsg('Extraindo imagens (pode levar alguns minutos)...');
+          if (prev === 80) setProgressMsg('Finalizando extração de imagens...');
+          return prev + 1;
+        });
+      }, 2000); // Avança 1% a cada 2 segundos
 
       // Pipeline V2: aceita File diretamente (Excel, CSV ou PDF)
       const result = await processarArquivoV2(selectedFile, supplierId, supplier.nome);
+      clearInterval(imgProgressInterval);
 
-      setProgress(60);
+      setProgress(92);
+      setProgressMsg(`${result.produtos.length} produtos processados! Salvando...`);
       setImportMeta(result.metadata);
       setDetectedHeaders(result.metadata.camposDetectados);
 
@@ -273,7 +318,8 @@ export default function ConversaoProdutos() {
 
       // Salva no contexto e no Supabase
       await addProdutosNormalizados(result.produtos);
-      setProgress(85);
+      setProgress(95);
+      setProgressMsg('Salvando no histórico...');
 
       // Preparar dados da conversão para salvar no histórico
       // Se backend retornou ZIP, salva a URL. Senão, salva imagens individuais
@@ -520,15 +566,26 @@ export default function ConversaoProdutos() {
           {state === 'processing' && (
             <Card className="shadow-card overflow-hidden border-l-2 border-l-primary">
               <CardHeader className="py-2 px-3">
-                <CardTitle className="text-xs font-semibold flex items-center gap-2">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" /> Processando...
+                <CardTitle className="text-xs font-semibold flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                    Processando...
+                  </div>
+                  <span className="text-primary font-bold">{Math.min(progress, 100)}%</span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="px-3 pb-3 space-y-2">
-                <Progress value={Math.min(progress, 100)} className="h-1.5" />
-                <div className="rounded p-2 space-y-1 bg-muted/50">
-                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <FileIcon className="h-3 w-3" /> Lendo arquivo...
+                <Progress value={Math.min(progress, 100)} className="h-2" />
+                <div className="rounded p-2.5 space-y-1.5 bg-muted/50">
+                  <div className="flex items-center gap-1.5 text-xs text-foreground font-medium">
+                    <FileIcon className="h-3 w-3 text-primary" />
+                    {progressMsg || 'Preparando...'}
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                    <span>Tempo decorrido: {Math.floor(elapsedSec / 60)}:{String(elapsedSec % 60).padStart(2, '0')}</span>
+                    {progress >= 55 && progress < 92 && (
+                      <span className="text-primary animate-pulse">⚡ Extraindo imagens do PDF...</span>
+                    )}
                   </div>
                 </div>
               </CardContent>

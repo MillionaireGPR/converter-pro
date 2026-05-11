@@ -7,6 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useApp } from "@/context/AppContext";
+import { useProdutos } from "@/context/ProdutosContext";
+import { useFornecedores } from "@/context/FornecedoresContext";
 import { Search, Download, Tag, CheckCircle, Package, AlertTriangle, FileSpreadsheet, BookOpen, AlertCircle, Trash2, Filter, ArrowUpDown, ArrowUp, ArrowDown, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -15,7 +17,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 export default function BasePadronizada() {
-  const { produtosPadronizados, fornecedores, updateProduto, validarProdutos, aplicarDesconto, exportarMercos, limparBase } = useApp();
+  const { exportarMercos } = useApp();
+  const { produtosPadronizados, updateProduto, validarProdutos, aplicarDesconto, limparBase } = useProdutos();
+  const { fornecedores } = useFornecedores();
   const navigate = useNavigate();
   const [busca, setBusca] = useState("");
   const [filtroFornecedor, setFiltroFornecedor] = useState("todos");

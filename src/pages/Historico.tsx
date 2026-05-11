@@ -2,6 +2,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/StatusBadge";
+import { useHistorico } from "@/context/HistoricoContext";
+import { useProdutos } from "@/context/ProdutosContext";
 import { useApp } from "@/context/AppContext";
 import { History, RotateCcw, Inbox, Download, Trash2, Image } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -20,7 +22,9 @@ const routeMap: Record<string, string> = {
 };
 
 export default function Historico() {
-  const { historico, conversoesSalvas, reabrirConversao, excluirConversao, exportarImagensConversao } = useApp();
+  const { historico, conversoesSalvas, reabrirConversao, excluirConversao, exportarImagensConversao } = useHistorico();
+  const { setProdutosPadronizados } = useProdutos();
+  const { setDetectedHeaders } = useApp();
   const navigate = useNavigate();
   const [conversaoAtiva, setConversaoAtiva] = useState<string | null>(null);
 
@@ -36,6 +40,9 @@ export default function Historico() {
       setConversaoAtiva(null);
       
       if (resultado) {
+        if (resultado.produtos && resultado.produtos.length > 0) setProdutosPadronizados(resultado.produtos);
+        if (resultado.headers && resultado.headers.length > 0) setDetectedHeaders(resultado.headers);
+        
         // Navegar para a base padronizada onde os produtos foram carregados
         navigate('/base');
         return;

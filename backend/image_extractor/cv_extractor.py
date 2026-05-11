@@ -10,7 +10,7 @@ ESTRATÉGIA:
 6. Decodifica corretamente (handle JPEG, PNG, BGRA, grayscale, CMYK)
 7. Fallback: crop do raster apenas se extract_image falhar
 
-SAÍDA: {sku}.png contendo APENAS a foto do produto (sem textos, bordas, grid)
+SAÍDA: {sku}.jpg contendo APENAS a foto do produto (sem textos, bordas, grid)
 """
 import os
 import cv2
@@ -27,14 +27,14 @@ def extract_cells_via_cv(
     pdf_path: str,
     skus_list: list,
     output_folder: str,
-    scale: float = 2.0
+    scale: float = 1.5
 ) -> Tuple[List[Dict], List[Dict]]:
     """
     Extrai a imagem do produto para cada SKU.
 
     Estratégia adaptativa por página:
-    - Grid     : 1-4 V-lines internas → célula → imagem maior na célula
-    - Embedded : 0 ou >4 V-lines → imagem mais próxima por Y-proximity
+    - Grid     : 1-10 V-lines internas → CellMap → imagem estrutural na célula
+    - Embedded : 0 ou >10 V-lines → imagem mais próxima por Y-proximity
 
     Em ambos os casos, usa doc.extract_image() para qualidade perfeita.
     """
@@ -62,9 +62,11 @@ def extract_cells_via_cv(
             continue
         skus_by_page.setdefault(sc.get("page", 1), []).append(sku)
 
-    print(f"[CV] {len(skus_by_page)} páginas | {len(skus_list)} SKUs | logos filtrados: {len(logo_xrefs)}")
+    total_pages = len(skus_by_page)
+    print(f"[CV] {total_pages} páginas | {len(skus_list)} SKUs | logos filtrados: {len(logo_xrefs)}")
 
-    for page_num in sorted(skus_by_page.keys()):
+    sorted_pages = sorted(skus_by_page.keys())
+    for page_idx, page_num in enumerate(sorted_pages):
         page_skus = skus_by_page[page_num]
         page = doc.load_page(page_num - 1)
 
@@ -84,9 +86,10 @@ def extract_cells_via_cv(
 
         page_imgs = _get_page_embedded_images(page, logo_xrefs)
 
-        print(f"[CV] Página {page_num}: {width}x{height}px | {n_interior_v} V-internas | {len(page_imgs)} imgs", end="")
+        pct = int((page_idx + 1) / total_pages * 100)
+        print(f"[CV] [{page_idx+1}/{total_pages} {pct}%] Pág {page_num}: {n_interior_v} V-int | {len(page_imgs)} imgs", end="")
 
-        if 1 <= n_interior_v <= 4:
+        if 1 <= n_interior_v <= 10:
             print(f" → GRID ({len(h_coords)}H×{len(v_coords)}V)")
             pm, pu = _match_via_grid(doc, page, raster, h_coords, v_coords,
                                      page_skus, page_imgs, scale, output_folder, page_num)
@@ -142,8 +145,27 @@ def _finalize_coords(raw: list, tolerance: float, min_count: int,
 
 
 # ─────────────────────────────────────────────────────────────
-# Estratégia A: Grid (catálogos com linhas pontilhadas)
+# Estratégia A: Column-First (catálogos com layout em grid)
 # ─────────────────────────────────────────────────────────────
+
+def _cluster_coords(coords: List[float], tolerance: float = 20.0) -> List[float]:
+    """Agrupa coordenadas X próximas e retorna os centros de cada grupo."""
+    if not coords:
+        return []
+    sorted_coords = sorted(coords)
+    clusters = []
+    current_cluster = [sorted_coords[0]]
+    
+    for x in sorted_coords[1:]:
+        if x - current_cluster[-1] <= tolerance:
+            current_cluster.append(x)
+        else:
+            clusters.append(sum(current_cluster) / len(current_cluster))
+            current_cluster = [x]
+    if current_cluster:
+        clusters.append(sum(current_cluster) / len(current_cluster))
+        
+    return clusters
 
 def _match_via_grid(
     doc: fitz.Document,
@@ -157,170 +179,127 @@ def _match_via_grid(
     output_folder: str,
     page_num: int
 ) -> Tuple[List[Dict], List[Dict]]:
+    """
+    Estratégia Column-First:
+    1. Usa posições X dos SKUs (confiáveis) para descobrir colunas
+    2. Atribui cada imagem à coluna mais próxima
+    3. Dentro de cada coluna, emparelha SKU↔Imagem pela ordem Y
+       (imagem mais próxima acima do SKU = match correto)
+
+    Não depende da detecção de grid do OpenCV para emparelhamento.
+    """
     height, width = raster.shape[:2]
-    h_s = sorted(h_coords)
-    v_s = sorted(v_coords)
 
-    cells = []
-    for i in range(len(h_s) - 1):
-        for j in range(len(v_s) - 1):
-            cells.append({
-                "h_idx": i, "v_idx": j,
-                "y_min": int(h_s[i]), "y_max": int(h_s[i + 1]),
-                "x_min": int(v_s[j]), "x_max": int(v_s[j + 1]),
-            })
-
-    matches, unmatched = [], []
-    used_xrefs: set = set()
-
-    # Ordena SKUs por (Y, X) para matching consistente top-down, left-right
-    sorted_skus = sorted(page_skus,
-                         key=lambda s: (s.get("spatialContext", {}).get("y", 0),
-                                        s.get("spatialContext", {}).get("x", 0)))
-
-    for sku in sorted_skus:
+    # ═══════════════════════════════════════════════════════
+    # FASE 1: Filtrar SKUs válidos
+    # ═══════════════════════════════════════════════════════
+    valid_skus: list = []
+    unmatched: List[Dict] = []
+    for sku in page_skus:
         sc = sku.get("spatialContext", {})
-        sku_x, sku_y = sc.get("x"), sc.get("y")
-        if sku_x is None or sku_y is None:
+        if sc.get("x") is not None and sc.get("y") is not None:
+            valid_skus.append(sku)
+        else:
             unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "no_coords"})
-            continue
 
-        sx, sy = sku_x * scale, sku_y * scale
+    if not valid_skus:
+        return [], unmatched
 
-        # Encontra célula que contém o SKU
-        sku_cell = next(
-            (c for c in cells if c["x_min"] <= sx <= c["x_max"] and c["y_min"] <= sy <= c["y_max"]),
-            None
-        )
-        if not sku_cell:
-            unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "outside_grid"})
-            continue
+    # ═══════════════════════════════════════════════════════
+    # FASE 2: Descobrir colunas via clustering de X dos SKUs
+    # ═══════════════════════════════════════════════════════
+    sku_xs = [s["spatialContext"]["x"] for s in valid_skus]
+    col_centers = _cluster_coords(sku_xs, tolerance=25)
+    n_cols = len(col_centers)
 
-        # Lista de células candidatas para foto: SKU cell + células acima na mesma coluna
-        search_cells = [sku_cell]
-        hi, vi = sku_cell["h_idx"], sku_cell["v_idx"]
-        for steps_up in range(1, len(h_s)):
-            above_h = hi - steps_up
-            if above_h < 0:
-                break
-            above = next((c for c in cells if c["h_idx"] == above_h and c["v_idx"] == vi), None)
-            if above:
-                search_cells.append(above)
+    if n_cols == 0:
+        return [], [{"sku": s.get("sku"), "page": page_num, "reason": "no_columns"} for s in valid_skus]
 
-        # Encontra imagens não usadas cujo centro cai em alguma célula candidata
-        # (filtra células muito pequenas — separadores e zonas de texto)
-        best_img = None
-        cell_imgs: List[Dict] = []          # todas imagens dentro da célula encontrada
-        chosen_cell_pdf = None              # bounds da célula escolhida (PDF-points)
-        MIN_CELL_H_PTS = 50
-        for candidate_cell in search_cells:
-            cell_h_pts = (candidate_cell["y_max"] - candidate_cell["y_min"]) / scale
-            if cell_h_pts < MIN_CELL_H_PTS:
+    # ═══════════════════════════════════════════════════════
+    # FASE 3: Atribuir SKUs e imagens às colunas
+    # ═══════════════════════════════════════════════════════
+    col_skus: Dict[int, list] = {i: [] for i in range(n_cols)}
+    col_imgs: Dict[int, list] = {i: [] for i in range(n_cols)}
+
+    for sku in valid_skus:
+        x = sku["spatialContext"]["x"]
+        col = min(range(n_cols), key=lambda i: abs(col_centers[i] - x))
+        col_skus[col].append(sku)
+
+    for img in page_imgs:
+        col = min(range(n_cols), key=lambda i: abs(col_centers[i] - img["cx"]))
+        col_imgs[col].append(img)
+
+    total_imgs = sum(len(v) for v in col_imgs.values())
+    print(f"  [ColMatch] {n_cols} colunas | {len(valid_skus)} SKUs | {total_imgs} imgs")
+
+    # ═══════════════════════════════════════════════════════
+    # FASE 4: Emparelhar SKU↔Imagem dentro de cada coluna
+    # Regra: para cada SKU, a imagem correta é a mais
+    # próxima ACIMA dele na mesma coluna.
+    # Processa SKUs de cima para baixo para evitar conflitos.
+    # ═══════════════════════════════════════════════════════
+    matches: List[Dict] = []
+
+    for col_idx in range(n_cols):
+        skus_sorted = sorted(col_skus[col_idx],
+                             key=lambda s: s["spatialContext"]["y"])
+        imgs_sorted = sorted(col_imgs[col_idx],
+                             key=lambda p: p["cy"])
+        used_xrefs: set = set()
+
+        for sku in skus_sorted:
+            sku_y = sku["spatialContext"]["y"]
+            sku_code = sku.get("sku", "UNKNOWN")
+
+            # Encontrar imagem mais próxima acima (ou na mesma altura)
+            best_img = None
+            best_dist = float("inf")
+
+            for img in imgs_sorted:
+                if img["xref"] in used_xrefs:
+                    continue
+                dy = sku_y - img["cy"]  # positivo = imagem acima do SKU
+                if dy < -30:  # imagem muito abaixo do SKU → pular
+                    continue
+                dist = abs(dy)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_img = img
+
+            if not best_img:
+                unmatched.append({"sku": sku_code, "page": page_num, "reason": "no_img_in_col"})
                 continue
-            cell_pdf = fitz.Rect(
-                candidate_cell["x_min"] / scale,
-                candidate_cell["y_min"] / scale,
-                candidate_cell["x_max"] / scale,
-                candidate_cell["y_max"] / scale,
-            )
-            inside = [
-                p for p in page_imgs
-                if p["xref"] not in used_xrefs
-                and cell_pdf.x0 <= p["cx"] <= cell_pdf.x1
-                and cell_pdf.y0 <= p["cy"] <= cell_pdf.y1
-            ]
-            if inside:
-                cell_imgs = inside
-                chosen_cell_pdf = cell_pdf
-                # Variações: pega a maior como referência (uma imagem composta resolve sozinha)
-                best_img = max(inside, key=lambda p: p["area"])
-                break
 
-        # Fallback 1: imagem com sobreposição significativa com qualquer célula candidata
-        if best_img is None:
-            for candidate_cell in search_cells:
-                cell_h_pts = (candidate_cell["y_max"] - candidate_cell["y_min"]) / scale
-                if cell_h_pts < MIN_CELL_H_PTS:
-                    continue
-                cell_pdf = fitz.Rect(
-                    candidate_cell["x_min"] / scale, candidate_cell["y_min"] / scale,
-                    candidate_cell["x_max"] / scale, candidate_cell["y_max"] / scale,
-                )
-                cell_area = (cell_pdf.x1 - cell_pdf.x0) * (cell_pdf.y1 - cell_pdf.y0)
-                best_overlap = 0.0
-                for p in page_imgs:
-                    if p["xref"] in used_xrefs:
-                        continue
-                    r = p["rect"]
-                    ox = max(0.0, min(r.x1, cell_pdf.x1) - max(r.x0, cell_pdf.x0))
-                    oy = max(0.0, min(r.y1, cell_pdf.y1) - max(r.y0, cell_pdf.y0))
-                    overlap = ox * oy
-                    if overlap > best_overlap and overlap > min(cell_area, p["area"]) * 0.15:
-                        best_overlap = overlap
-                        best_img = p
-                if best_img:
-                    break
-
-        # Fallback 2: imagem mais próxima acima do SKU na mesma coluna
-        if best_img is None:
-            best_img = _find_image_above_sku(page_imgs, sku_x, sku_y,
-                                             sku_cell["x_min"] / scale,
-                                             sku_cell["x_max"] / scale,
-                                             used_xrefs)
-
-        if best_img is not None:
-            # CASO 1: Múltiplas imagens separadas na mesma célula (variações de cor exibidas
-            # lado a lado, ex: TP1991 com 6 caixinhas como 6 JPEGs distintos).
-            # Solução: raster crop dos bounds da célula → captura a composição visual completa.
-            if len(cell_imgs) >= 2 and chosen_cell_pdf is not None:
-                # Marca todas as imagens da célula como usadas (todas pertencem a esse SKU)
-                for p in cell_imgs:
-                    used_xrefs.add(p["xref"])
-                # Composição: bounding box que cobre todas as imagens da célula (com inset pequeno)
-                bbox = fitz.Rect(chosen_cell_pdf)
-                inset = 2 / scale
-                bbox = fitz.Rect(bbox.x0 + inset, bbox.y0 + inset,
-                                 bbox.x1 - inset, bbox.y1 - inset)
-                img_arr = _crop_raster_at_pdf_rect(bbox, raster, width, height, scale)
-                if img_arr is not None and img_arr.size > 0:
-                    filepath = _save_image(img_arr, sku.get("sku", "UNKNOWN"), output_folder)
-                    matches.append(_make_match(sku, page_num, filepath, "grid_composition"))
-                    continue
-
-            # CASO 2: Uma única imagem (composta ou simples) → doc.extract_image (qualidade perfeita)
             used_xrefs.add(best_img["xref"])
-            img_arr = _extract_perfect_image(doc, best_img, raster, width, height, scale)
+
+            # Verificar variações (múltiplas imagens agrupadas no mesmo Y)
+            grouped = [best_img]
+            for other in imgs_sorted:
+                if other["xref"] in used_xrefs:
+                    continue
+                if abs(other["cy"] - best_img["cy"]) < 15:
+                    grouped.append(other)
+                    used_xrefs.add(other["xref"])
+
+            if len(grouped) >= 2:
+                # Composição: crop do bounding box de todas as imagens
+                union = fitz.Rect(grouped[0]["rect"])
+                for g in grouped[1:]:
+                    union |= g["rect"]
+                img_arr = _crop_raster_at_pdf_rect(union, raster, width, height, scale)
+                match_type = "col_composition"
+            else:
+                img_arr = _extract_perfect_image(doc, best_img, raster, width, height, scale)
+                match_type = "col_match"
+
             if img_arr is not None and img_arr.size > 0:
-                filepath = _save_image(img_arr, sku.get("sku", "UNKNOWN"), output_folder)
-                matches.append(_make_match(sku, page_num, filepath, "grid"))
-                continue
+                filepath = _save_image(img_arr, sku_code, output_folder)
+                matches.append(_make_match(sku, page_num, filepath, match_type))
+            else:
+                unmatched.append({"sku": sku_code, "page": page_num, "reason": "extract_failed"})
 
-        # Fallback 3: nenhuma imagem embedada disponível — crop do raster na célula-de-foto.
-        # Usa a primeira célula candidata acima com altura suficiente.
-        target_cell = None
-        for candidate_cell in search_cells[1:]:  # pula sku_cell (texto), começa na de cima
-            cell_h_pts = (candidate_cell["y_max"] - candidate_cell["y_min"]) / scale
-            if cell_h_pts >= MIN_CELL_H_PTS:
-                target_cell = candidate_cell
-                break
-        if target_cell is None:
-            target_cell = sku_cell  # último recurso: célula do próprio SKU
-
-        inset = 2 / scale
-        crop_rect = fitz.Rect(
-            (target_cell["x_min"] / scale) + inset,
-            (target_cell["y_min"] / scale) + inset,
-            (target_cell["x_max"] / scale) - inset,
-            (target_cell["y_max"] / scale) - inset,
-        )
-        img_arr = _crop_raster_at_pdf_rect(crop_rect, raster, width, height, scale)
-        if img_arr is None or img_arr.size == 0:
-            unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "empty_crop"})
-            continue
-
-        filepath = _save_image(img_arr, sku.get("sku", "UNKNOWN"), output_folder)
-        matches.append(_make_match(sku, page_num, filepath, "grid_raster"))
-
+    print(f"  [ColMatch] Resultado: {len(matches)} matches | {len(unmatched)} unmatched")
     return matches, unmatched
 
 
@@ -578,11 +557,19 @@ def _detect_logo_xrefs(doc: fitz.Document) -> set:
 
 
 def _save_image(img_rgb: np.ndarray, sku_code: str, output_folder: str) -> str:
-    """Salva {sku}.png. img_rgb é numpy array RGB."""
+    """Salva {sku}.jpg. img_rgb é numpy array RGB."""
     clean = "".join(c for c in sku_code if c.isalnum() or c in ("-", "_"))
-    filepath = os.path.join(output_folder, f"{clean}.png")
+    filepath = os.path.join(output_folder, f"{clean}.jpg")
     bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
-    cv2.imwrite(filepath, bgr)
+    
+    # Redimensiona mantendo proporção se for muito grande (evitar limites do Supabase)
+    max_dim = 600
+    h, w = bgr.shape[:2]
+    if h > max_dim or w > max_dim:
+        scale = max_dim / max(h, w)
+        bgr = cv2.resize(bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        
+    cv2.imwrite(filepath, bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
     return filepath
 
 
