@@ -60,23 +60,72 @@ export const extractImagesViaBackend = async (
       throw new Error(`Backend retornou ${response.status}: ${errorText}`);
     }
     
-    const result = await response.json();
-    console.log('[ImageExtractionApi] Backend respondeu:', result);
+    const initialResult = await response.json();
+    console.log('[ImageExtractionApi] Backend respondeu:', initialResult);
     
-    if (result.status === 'success') {
+    if (initialResult.status === 'error') {
+      throw new Error(`Erro no backend: ${initialResult.message}`);
+    }
+
+    // Se o backend retornar sucesso imediato (ex: PDF sem imagens)
+    if (initialResult.status === 'success') {
       return {
-        totalImagesFound: result.matchesCount || 0,
-        totalImagesMatched: result.matchesCount || 0,
-        totalImagesUnmatched: 0,
-        images: [], // Backend retorna ZIP, não imagens individuais
+        totalImagesFound: initialResult.matchesCount || 0,
+        totalImagesMatched: initialResult.matchesCount || 0,
+        totalImagesUnmatched: initialResult.unmatchedCount || 0,
+        images: [],
         unmatchedImages: [],
-        zipUrl: result.zipUrl,
+        zipUrl: initialResult.zipUrl,
         warnings: [],
         errors: []
       };
     }
-    
-    return null;
+
+    console.log(`[ImageExtractionApi] Job ${jobId} iniciado em background. Iniciando polling...`);
+
+    // Polling: Pergunta ao servidor a cada 5 segundos se terminou
+    while (true) {
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      
+      try {
+        const statusResponse = await fetch(`${BACKEND_URL}/status/${jobId}`);
+        if (!statusResponse.ok) {
+          console.warn(`[ImageExtractionApi] Erro na rede ao checar status (${statusResponse.status}). Tentando novamente...`);
+          continue;
+        }
+        
+        const statusData = await statusResponse.json();
+        
+        if (statusData.status === 'success') {
+          console.log(`[ImageExtractionApi] Extração concluída! ZIP: ${statusData.zipUrl}`);
+          return {
+            totalImagesFound: statusData.matchesCount || 0,
+            totalImagesMatched: statusData.matchesCount || 0,
+            totalImagesUnmatched: statusData.unmatchedCount || 0,
+            images: [],
+            unmatchedImages: [],
+            zipUrl: statusData.zipUrl,
+            warnings: [],
+            errors: []
+          };
+        }
+        
+        if (statusData.status === 'error') {
+          throw new Error(`Backend falhou durante extração: ${statusData.message}`);
+        }
+        
+        if (statusData.status === 'not_found') {
+          throw new Error('Servidor reiniciou ou perdeu o job (not_found).');
+        }
+
+        console.log(`[ImageExtractionApi] Job ${jobId} ainda em processamento...`);
+      } catch (err) {
+        if (err instanceof Error && err.message.includes('Backend falhou')) {
+          throw err;
+        }
+        console.warn('[ImageExtractionApi] Falha no polling, ignorando e aguardando...', err);
+      }
+    }
     
   } catch (error: any) {
     console.error('[ImageExtractionApi] Erro:', error);

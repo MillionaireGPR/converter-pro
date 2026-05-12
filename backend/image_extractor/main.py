@@ -11,7 +11,7 @@ import json
 import zipfile
 import uvicorn
 import fitz
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 
 from cv_extractor import extract_cells_via_cv
@@ -79,12 +79,66 @@ def _build_zip_from_matches(output_folder: str, matches: list) -> str:
     return zip_path
 
 
+# Dicionário global em memória para guardar status das extrações
+JOB_STATUS = {}
+
+def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, output_folder: str, page_heights: dict, total_pages: int):
+    try:
+        # 4. Converter Y dos SKUs: PDF.js (Y-up) -> PyMuPDF (Y-down)
+        skus_list = _convert_sku_y_coords(skus_list, page_heights)
+
+        # 5. Extração via OpenCV: nova estratégia Column-First
+        print("[Main] Extração de imagens (Estratégia Column-First)")
+        matches, unmatched = extract_cells_via_cv(pdf_local_path, skus_list, output_folder)
+        total_images = len(matches)
+
+        if not matches:
+            JOB_STATUS[jobId] = {
+                "status": "success",
+                "message": "Nenhuma imagem de produto extraída do PDF",
+                "zipUrl": None,
+                "matchesCount": 0,
+                "totalPages": total_pages,
+                "totalImages": 0,
+            }
+            return
+
+        # 6. Montar ZIP com imagens extraídas
+        zip_path = _build_zip_from_matches(output_folder, matches)
+
+        # 7. Upload do ZIP para Supabase
+        zip_remote_path = f"{jobId}/imagens_extraidas.zip"
+        print(f"Fazendo upload do ZIP -> {zip_remote_path}")
+        zip_url = upload_file_to_supabase(zip_path, zip_remote_path)
+        print(f"ZIP disponivel em: {zip_url}")
+
+        print(f"Job {jobId} concluido com sucesso!")
+        JOB_STATUS[jobId] = {
+            "status": "success",
+            "zipUrl": zip_url,
+            "matchesCount": len(matches),
+            "unmatchedCount": len(unmatched),
+            "totalPages": total_pages,
+            "totalImages": total_images,
+        }
+
+    except Exception as e:
+        import traceback
+        print(f"Erro no Job {jobId}: {e}")
+        print(traceback.format_exc())
+        JOB_STATUS[jobId] = {
+            "status": "error",
+            "message": str(e),
+            "details": traceback.format_exc(),
+        }
+
 # ─────────────────────────────────────────────────────────────
 # Endpoint principal
 # ─────────────────────────────────────────────────────────────
 
 @app.post("/process")
 async def process_pdf(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     jobId: str = Form(...),
     supplier: str = Form(...),
@@ -93,6 +147,8 @@ async def process_pdf(
 ):
     print(f"\n--- Iniciando Job: {jobId} ---")
     print(f"Arquivo: {file.filename}, Fornecedor: {supplier}")
+    
+    JOB_STATUS[jobId] = {"status": "processing", "progress": 0}
 
     output_folder = f"temp/{jobId}"
     os.makedirs(output_folder, exist_ok=True)
@@ -109,56 +165,33 @@ async def process_pdf(
         skus_list = json.loads(skus) if skus else []
         print(f"SKUs recebidos: {len(skus_list)}")
 
-        # 3. Obter altura das páginas para conversão Y
+        # 3. Obter altura das páginas (rápido)
         page_heights = _get_page_heights(pdf_local_path)
         total_pages = len(page_heights)
 
-        # 4. Converter Y dos SKUs: PDF.js (Y-up) -> PyMuPDF (Y-down)
-        skus_list = _convert_sku_y_coords(skus_list, page_heights)
+        # Disparar tarefa em background
+        background_tasks.add_task(
+            _run_extraction_task,
+            jobId,
+            pdf_local_path,
+            skus_list,
+            output_folder,
+            page_heights,
+            total_pages
+        )
 
-        # 5. Extração via OpenCV: detecção de linhas pontilhadas + crop de células
-        print("[Main] Extração via OpenCV (detecção de células com linhas pontilhadas)")
-        matches, unmatched = extract_cells_via_cv(pdf_local_path, skus_list, output_folder)
-        total_images = len(matches)
-
-        if not matches:
-            return {
-                "status": "success",
-                "message": "Nenhuma imagem de produto extraída do PDF",
-                "zipUrl": None,
-                "matchesCount": 0,
-                "totalPages": total_pages,
-                "totalImages": 0,
-            }
-
-        # 6. Montar ZIP com imagens extraídas
-        zip_path = _build_zip_from_matches(output_folder, matches)
-
-        # 7. Upload do ZIP para Supabase
-        zip_remote_path = f"{jobId}/imagens_extraidas.zip"
-        print(f"Fazendo upload do ZIP -> {zip_remote_path}")
-        zip_url = upload_file_to_supabase(zip_path, zip_remote_path)
-        print(f"ZIP disponivel em: {zip_url}")
-
-        print(f"Job {jobId} concluido com sucesso!")
-        return {
-            "status": "success",
-            "zipUrl": zip_url,
-            "matchesCount": len(matches),
-            "unmatchedCount": len(unmatched),
-            "totalPages": total_pages,
-            "totalImages": total_images,
-        }
+        return {"status": "processing", "jobId": jobId}
 
     except Exception as e:
         import traceback
-        print(f"Erro no Job {jobId}: {e}")
-        print(traceback.format_exc())
-        return {
-            "status": "error",
-            "message": str(e),
-            "details": traceback.format_exc(),
-        }
+        print(f"Erro ao iniciar Job {jobId}: {e}")
+        JOB_STATUS[jobId] = {"status": "error", "message": str(e)}
+        return {"status": "error", "message": str(e)}
+
+@app.get("/status/{job_id}")
+async def get_status(job_id: str):
+    # Se o job não existir na memória (servidor reiniciou ou id errado), retorna not_found
+    return JOB_STATUS.get(job_id, {"status": "not_found"})
 
 
 if __name__ == "__main__":
