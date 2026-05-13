@@ -66,19 +66,9 @@ export const processarArquivoV2 = async (
   try {
      const { runImageExtraction } = await import('./images/imageExtractionPipeline');
      
-     // Timeout de segurança de 300s para PDFs grandes (65+ paginas, upload incluido)
-     const TIMEOUT_MS = 300000;
-     console.log(`[Engine] Iniciando extração de imagens com timeout de ${TIMEOUT_MS}ms...`);
+     console.log(`[Engine] Iniciando extração de imagens (aguardando via Polling)...`);
      
-     imageResults = await Promise.race([
-       runImageExtraction(file, result.produtosNormalizados, options.supplierName || 'desconhecido'),
-       new Promise<null>((resolve) => 
-         setTimeout(() => {
-           console.warn(`[Engine] Timeout na extração de imagens após ${TIMEOUT_MS}ms`);
-           resolve(null);
-         }, TIMEOUT_MS)
-       )
-     ]);
+     imageResults = await runImageExtraction(file, result.produtosNormalizados, options.supplierName || 'desconhecido');
      
   } catch(e) {
      console.error("[Engine] Erro ao extrair imagens:", e);

@@ -206,10 +206,10 @@ def _match_via_grid(
         return [], unmatched
 
     # ═══════════════════════════════════════════════════════
-    # FASE 2: Descobrir colunas via clustering de X dos SKUs
+    # FASE 2: Descobrir colunas via clustering de X (SKUs + Imagens)
     # ═══════════════════════════════════════════════════════
-    sku_xs = [s["spatialContext"]["x"] for s in valid_skus]
-    col_centers = _cluster_coords(sku_xs, tolerance=25)
+    all_xs = [s["spatialContext"]["x"] for s in valid_skus] + [img["cx"] for img in page_imgs]
+    col_centers = _cluster_coords(all_xs, tolerance=60)
     n_cols = len(col_centers)
 
     if n_cols == 0:
