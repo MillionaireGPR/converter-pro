@@ -43,6 +43,7 @@ export interface ResultadoExtracaoImagens {
   totalImagesUnmatched: number;
   images: ImagemAssociadaProduto[];
   unmatchedImages: ImagemExtraida[];
+  unmatchedSkusDetails?: any[]; // {sku: string, page: number, reason: string}[]
   zipUrl?: string;  // URL do ZIP gerado pelo backend
   warnings: string[];
   errors: string[];

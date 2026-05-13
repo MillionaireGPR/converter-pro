@@ -682,6 +682,27 @@ export default function ConversaoProdutos() {
                     Baixar ZIP
                   </Button>
                 )}
+                
+                {/* NOVO: Botão Baixar Relatório (Sem Match) */}
+                {imageResult?.unmatchedSkusDetails && imageResult.unmatchedSkusDetails.length > 0 && (
+                  <Button 
+                    size="sm" 
+                    variant="outline"
+                    className="h-9 border-warning/50 bg-warning/10 text-warning hover:bg-warning/20 hover:text-warning"
+                    onClick={() => {
+                      const linhas = ["RELATÓRIO DE SKUS SEM IMAGEM\n============================"];
+                      imageResult.unmatchedSkusDetails!.forEach(det => {
+                        linhas.push(`SKU: ${det.sku} | Página: ${det.page} | Motivo: ${det.reason}`);
+                      });
+                      const blob = new Blob([linhas.join('\n')], { type: "text/plain;charset=utf-8" });
+                      saveAs(blob, `relatorio_falhas_match.txt`);
+                      toast.success("Relatório de falhas baixado!");
+                    }}
+                  >
+                    <Download className="h-3.5 w-3.5 mr-1" />
+                    Relatório Falhas ({imageResult.unmatchedSkusDetails.length})
+                  </Button>
+                )}
                 {/* ✅ NOVO: Botão Download Imagens (Excel - imagens individuais) */}
                 {!imageResult?.zipUrl && imageResult?.images && imageResult.images.length > 0 && (
                   <Button 

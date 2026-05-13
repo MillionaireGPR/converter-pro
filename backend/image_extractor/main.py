@@ -120,6 +120,7 @@ def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, outpu
             "unmatchedCount": len(unmatched),
             "totalPages": total_pages,
             "totalImages": total_images,
+            "unmatchedSkus": unmatched,
         }
 
     except Exception as e:

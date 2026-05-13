@@ -104,6 +104,7 @@ export const extractImagesViaBackend = async (
             totalImagesUnmatched: statusData.unmatchedCount || 0,
             images: [],
             unmatchedImages: [],
+            unmatchedSkusDetails: statusData.unmatchedSkus || [],
             zipUrl: statusData.zipUrl,
             warnings: [],
             errors: []
