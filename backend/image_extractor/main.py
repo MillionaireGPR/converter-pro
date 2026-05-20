@@ -69,6 +69,65 @@ def _convert_sku_y_coords(skus_list: list, page_heights: dict) -> list:
     return skus_list
 
 
+def _infer_spatial_context(pdf_path: str, skus_list: list) -> list:
+    """
+    Para SKUs sem spatialContext, busca o código diretamente no PDF via PyMuPDF
+    (page.search_for) e injeta posição (x,y,width,height,page). Isso permite ao
+    OpenCV mapear imagens mesmo quando o frontend não conseguiu extrair coords
+    (caso NIX/FOLIA onde PDF.js fragmenta o texto de forma agressiva).
+    """
+    sem_ctx = [s for s in skus_list if not s.get("spatialContext")]
+    if not sem_ctx:
+        return skus_list
+
+    print(f"[Main] Inferindo spatialContext para {len(sem_ctx)} SKUs sem coordenadas (busca no PDF)...")
+
+    doc = fitz.open(pdf_path)
+    inferidos = 0
+    paginas_indexadas = {}  # cache de page -> instance
+
+    for sku in sem_ctx:
+        codigo = sku.get("sku")
+        if not codigo:
+            continue
+
+        # Buscar em todas as páginas (preferindo a página declarada se houver)
+        prefer_page = sku.get("page") or (sku.get("spatialContext", {}) or {}).get("page")
+        pages_to_search = list(range(len(doc)))
+        if isinstance(prefer_page, int) and 1 <= prefer_page <= len(doc):
+            # Coloca a página preferida no início
+            pages_to_search = [prefer_page - 1] + [p for p in pages_to_search if p != prefer_page - 1]
+
+        found_rect = None
+        found_page_num = None
+
+        for pi in pages_to_search:
+            if pi not in paginas_indexadas:
+                paginas_indexadas[pi] = doc.load_page(pi)
+            page = paginas_indexadas[pi]
+            # search_for retorna lista de Rect com posições do texto
+            rects = page.search_for(codigo)
+            if rects:
+                found_rect = rects[0]
+                found_page_num = pi + 1  # 1-based
+                break
+
+        if found_rect and found_page_num:
+            sku["spatialContext"] = {
+                "x": (found_rect.x0 + found_rect.x1) / 2,
+                "y": (found_rect.y0 + found_rect.y1) / 2,
+                "width": found_rect.x1 - found_rect.x0,
+                "height": found_rect.y1 - found_rect.y0,
+                "page": found_page_num,
+            }
+            # Já está em coords PyMuPDF (Y-down) — não precisa converter
+            inferidos += 1
+
+    doc.close()
+    print(f"[Main] spatialContext inferido em {inferidos}/{len(sem_ctx)} SKUs via busca textual")
+    return skus_list
+
+
 def _build_zip_from_matches(output_folder: str, matches: list) -> str:
     """Monta o ZIP final com as imagens renderizadas e retorna o caminho local."""
     zip_path = os.path.join(output_folder, "imagens_extraidas.zip")
@@ -84,8 +143,13 @@ JOB_STATUS = {}
 
 def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, output_folder: str, page_heights: dict, total_pages: int):
     try:
-        # 4. Converter Y dos SKUs: PDF.js (Y-up) -> PyMuPDF (Y-down)
+        # 4. Converter Y dos SKUs com spatialContext (PDF.js Y-up -> PyMuPDF Y-down)
         skus_list = _convert_sku_y_coords(skus_list, page_heights)
+
+        # 4b. Inferir spatialContext via busca textual no PDF (para SKUs sem coords).
+        # Isso resgata o flow quando o frontend não conseguiu extrair posição
+        # via PDF.js (caso comum em NIX/FOLIA com texto fragmentado).
+        skus_list = _infer_spatial_context(pdf_local_path, skus_list)
 
         # 5. Extração via OpenCV: nova estratégia Column-First
         print("[Main] Extração de imagens (Estratégia Column-First)")

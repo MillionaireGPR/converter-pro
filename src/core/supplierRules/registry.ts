@@ -15,6 +15,9 @@ import { flashAdapter } from './flash';
 import { petrinAdapter } from './petrin';
 import { levivanAdapter } from './levivan';
 import { freecomAdapter } from './freecom';
+import { giraAdapter } from './gira';
+import { foliaAdapter } from './folia';
+import { dagiaAdapter } from './dagia';
 import { genericAdapter } from './generic';
 
 /** Lista completa de adapters registrados (ordem importa para detecção) */
@@ -30,6 +33,9 @@ const ADAPTERS: SupplierAdapter[] = [
   petrinAdapter,
   levivanAdapter,
   freecomAdapter,
+  giraAdapter,
+  foliaAdapter,
+  dagiaAdapter,
 ];
 
 /** Busca um adapter pelo ID ou nome (case-insensitive) */

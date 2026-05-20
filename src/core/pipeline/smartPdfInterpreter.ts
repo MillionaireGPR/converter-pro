@@ -1,6 +1,55 @@
 import { ProdutoBruto } from '../types/productPipeline';
 import { PdfTemplate } from '../pdfTemplates/types';
-import { PdfPageData } from './pdfParser';
+import { PdfPageData, PdfTextItem } from './pdfParser';
+
+/**
+ * Encontra o item de texto PDF.js que contém (ou cobre) um SKU.
+ * Lida com fragmentação do PDF.js: o SKU pode estar em 1 item ("NX020"),
+ * espalhado em 2-3 items adjacentes ("NX" + "020"), ou ter um prefixo
+ * concatenado com texto vizinho ("CD:NX020" ou "Ref:GC0220").
+ *
+ * Estratégia em 4 camadas:
+ *   1. Match exato em um único item (it.str.includes(sku))
+ *   2. Concatenação posicional de TODOS os items da página com mapeamento
+ *      char-índice → item-índice
+ *   3. Match pela parte numérica do SKU (4+ dígitos)
+ *   4. Match case-insensitive
+ */
+const findItemForSku = (
+  items: PdfTextItem[],
+  sku: string
+): PdfTextItem | undefined => {
+  if (!sku || !items || items.length === 0) return undefined;
+
+  // Camada 1: match exato
+  let item = items.find(it => it.str && it.str.includes(sku));
+  if (item) return item;
+
+  // Camada 2: concatenação posicional
+  let joined = '';
+  const charToItemIdx: number[] = [];
+  for (let k = 0; k < items.length; k++) {
+    const s = items[k].str || '';
+    for (let c = 0; c < s.length; c++) charToItemIdx.push(k);
+    joined += s;
+  }
+
+  let skuIdx = joined.indexOf(sku);
+  if (skuIdx < 0) {
+    // Camada 4: case-insensitive
+    skuIdx = joined.toLowerCase().indexOf(sku.toLowerCase());
+  }
+  if (skuIdx >= 0) return items[charToItemIdx[skuIdx]];
+
+  // Camada 3: parte numérica (3+ dígitos, para NX020 → "020")
+  const digits = sku.match(/\d{3,}/)?.[0];
+  if (digits) {
+    const digitsIdx = joined.indexOf(digits);
+    if (digitsIdx >= 0) return items[charToItemIdx[digitsIdx]];
+  }
+
+  return undefined;
+};
 
 /**
  * Motor semântico para interpretar páginas de PDF e convertê-las em blocos de ProdutoBruto.
@@ -34,39 +83,9 @@ export const interpretPdfSemantically = (
             textoBruto: block.trim(),
           };
 
-          // Buscar coordenadas do SKU no mapa da página.
-          // PDF.js fragmenta texto em múltiplos items (ex: "BM361645" pode virar
-          // "BM" + "36" + "1645" ou "CD:" + " BM361645"). Para garantir match,
-          // construímos um índice posicional do texto completo da página.
+          // Buscar coordenadas do SKU (lookup robusto compartilhado)
           if (campos['codigo']) {
-            const sku = campos['codigo'] as string;
-            let item = page.items.find(it => it.str.includes(sku));
-
-            // Fallback robusto: concatenação posicional de TODOS os items.
-            // Mapeia cada caractere do texto concatenado de volta ao item de origem.
-            if (!item) {
-              let joined = '';
-              const charToItemIdx: number[] = [];
-              for (let k = 0; k < page.items.length; k++) {
-                const s = page.items[k].str || '';
-                for (let c = 0; c < s.length; c++) charToItemIdx.push(k);
-                joined += s;
-              }
-              const skuIdx = joined.indexOf(sku);
-              if (skuIdx >= 0) {
-                item = page.items[charToItemIdx[skuIdx]];
-              } else {
-                // Última tentativa: match pela parte numérica (4+ dígitos do SKU)
-                const digits = sku.match(/\d{4,}/)?.[0];
-                if (digits) {
-                  const digitsIdx = joined.indexOf(digits);
-                  if (digitsIdx >= 0) {
-                    item = page.items[charToItemIdx[digitsIdx]];
-                  }
-                }
-              }
-            }
-
+            const item = findItemForSku(page.items, campos['codigo'] as string);
             if (item) {
               prod.spatialContext = {
                 x: item.x,
@@ -77,7 +96,7 @@ export const interpretPdfSemantically = (
               };
             }
           }
-          
+
           produtos.push(prod);
         }
       
@@ -145,8 +164,8 @@ export const interpretPdfSemantically = (
             textoBruto: blockText,
           };
 
-          // Buscar coordenadas do SKU
-          const item = page.items.find(it => it.str.includes(codeMatches[i].code));
+          // Buscar coordenadas do SKU (lookup robusto compartilhado)
+          const item = findItemForSku(page.items, codeMatches[i].code);
           if (item) {
             prod.spatialContext = {
               x: item.x,

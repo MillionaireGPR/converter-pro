@@ -33,19 +33,16 @@ export const extractImagesViaBackend = async (
       spatialContext: p.spatialContext || null  // {x, y, width, height, page}
     }));
 
-    // Backend só consegue mapear SKUs com spatialContext válido — filtra antes
-    // de enviar para evitar processar páginas sem produtos mapeados.
-    const skus = allSkus.filter(s => s.spatialContext != null);
-    const skipped = allSkus.length - skus.length;
-
-    console.log(`[ImageExtractionApi] ${skus.length}/${allSkus.length} SKUs com spatialContext valido`);
-    if (skipped > 0) {
-      console.warn(`[ImageExtractionApi] ${skipped} SKUs sem spatialContext serao ignorados pelo backend`);
+    // Estratégia: envia TODOS os SKUs ao backend, mesmo sem spatialContext.
+    // O backend tenta inferir posição quando spatialContext está ausente
+    // (busca textual no PDF). Antes filtravamos e o resultado era ZERO matches
+    // em catalogos onde o lookup de spatialContext falhava (NIX / FOLIA / DAGIA).
+    const withCoords = allSkus.filter(s => s.spatialContext != null).length;
+    console.log(`[ImageExtractionApi] ${withCoords}/${allSkus.length} SKUs com spatialContext valido (resto sera resolvido no backend)`);
+    if (allSkus.length > 0) {
+      console.log(`[ImageExtractionApi] Exemplo SKU[0]:`, allSkus[0]);
     }
-    if (skus.length > 0) {
-      console.log(`[ImageExtractionApi] Exemplo SKU[0]:`, skus[0]);
-    }
-    formData.append('skus', JSON.stringify(skus));
+    formData.append('skus', JSON.stringify(allSkus));
     
     // 3. Chamar backend Python
     console.log(`[ImageExtractionApi] Chamando backend: ${BACKEND_URL}/process`);

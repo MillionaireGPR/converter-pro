@@ -18,9 +18,19 @@ export const genericAdapter: SupplierAdapter = {
     descricao: ['descricao', 'desc', 'produto', 'nome', 'descrcompl', 'description', 'nomedoproduto', 'item', 'denominacao'],
     descricaoComplementar: ['descricaocomplementar', 'obs', 'observacao', 'detalhes', 'complemento', 'compl'],
     preco: ['preco', 'pvenda', 'valor', 'valorunitario', 'precodetabela', 'tabela', 'base', 'custo', 'netprice', 'precoliquido', 'vlr', 'vl', 'precovenda', 'vlrunit'],
-    precoPromocional: ['precopromocional', 'promocional', 'oferta', 'precoespecial', 'especial'],
+    precoPromocional: ['precopromocional', 'promocional', 'oferta', 'precoespecial', 'especial', 'promo'],
     unidade: ['un', 'unidade', 'und', 'uom', 'unidademedida'],
-    quantidadeCaixa: ['qtdcaixa', 'caixa', 'qtcaixa', 'embalagemmaster', 'quantcx', 'cx', 'multiplo', 'emb', 'embalagem', 'moq', 'packingunit', 'pccx', 'pccaixa'],
+    // Cobre: GIRA (QT CX -> qtcx), FOLIA (ITENS CX -> itenscx), DAGIA (CX -> cx),
+    // PETRIN (Cx c/ N), genérico (qtdcaixa/quantcx/etc).
+    quantidadeCaixa: [
+      'qtdcaixa', 'caixa', 'qtcaixa', 'qtcx', 'qtdcx', 'embalagemmaster',
+      'quantcx', 'quantidadecaixa', 'qtdecaixa',
+      'cx', 'multiplo', 'emb', 'embalagem', 'moq',
+      'packingunit', 'pccx', 'pccaixa', 'pcscx',
+      'itenscx', 'itenscaixa', 'itenscaix', 'qtitens',
+      'masterbox', 'embmaster', 'unidadescaixa', 'unidcaixa',
+      'pacote', 'pcs', 'unidadespacote'
+    ],
     embalagem: ['embalagem', 'emb', 'pack', 'packing'],
     categoria: ['categoria', 'familia', 'linha', 'grupo', 'genero', 'productgroup', 'tipo'],
     ncm: ['ncm', 'ncmsh', 'classificacaofiscal'],
