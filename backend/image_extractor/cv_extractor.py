@@ -241,46 +241,84 @@ def _match_via_grid(
     # ═══════════════════════════════════════════════════════
     matches: List[Dict] = []
 
+    # Helper: detecta SKUs que são VARIAÇÕES do mesmo produto base
+    # (ex: NX445-A, NX445-P, NX445-V compartilham a imagem do NX445)
+    import re as _re
+    def _base_sku(code: str) -> str:
+        # Remove sufixos comuns: -A, -P, -V, -01, /A, etc.
+        return _re.sub(r"[-_/][A-Z0-9]{1,3}$", "", str(code))
+
+    # Pool global de imagens usadas (para detectar conflitos cross-column)
+    used_xrefs_global: set = set()
+    # Mapa: sku_code → imagem matched (para variantes pegarem a mesma)
+    variant_cache: Dict[str, Dict] = {}
+
     for col_idx in range(n_cols):
         skus_sorted = sorted(col_skus[col_idx],
                              key=lambda s: s["spatialContext"]["y"])
         imgs_sorted = sorted(col_imgs[col_idx],
                              key=lambda p: p["cy"])
-        used_xrefs: set = set()
 
         for sku in skus_sorted:
             sku_y = sku["spatialContext"]["y"]
             sku_code = sku.get("sku", "UNKNOWN")
+            base = _base_sku(sku_code)
+
+            # FAST-PATH para variantes: se o base já recebeu uma imagem na página,
+            # reaproveita a mesma imagem para a variante (ex: NX445-A,-P,-V)
+            if base != sku_code and base in variant_cache:
+                cached = variant_cache[base]
+                img_arr_var = _extract_perfect_image(doc, cached, raster, width, height, scale)
+                if img_arr_var is not None and img_arr_var.size > 0:
+                    fp = _save_image(img_arr_var, sku_code, output_folder)
+                    matches.append(_make_match(sku, page_num, fp, "variant_share"))
+                    continue
 
             # Encontrar imagem mais próxima acima (ou na mesma altura)
+            # Tolerância aumentada de -30 para -100 (catálogo NIX tem balões
+            # de SKU sobrepondo a imagem com Y praticamente igual)
             best_img = None
             best_dist = float("inf")
 
-            for img in imgs_sorted:
-                if img["xref"] in used_xrefs:
-                    continue
-                dy = sku_y - img["cy"]  # positivo = imagem acima do SKU
-                if dy < -30:  # imagem muito abaixo do SKU → pular
-                    continue
-                dist = abs(dy)
-                if dist < best_dist:
-                    best_dist = dist
-                    best_img = img
+            def _try_match(candidates):
+                nonlocal best_img, best_dist
+                for img in candidates:
+                    if img["xref"] in used_xrefs_global:
+                        continue
+                    dy = sku_y - img["cy"]
+                    if dy < -100:  # imagem MUITO abaixo do SKU → pular
+                        continue
+                    dist = abs(dy)
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_img = img
+
+            _try_match(imgs_sorted)
+
+            # FALLBACK CROSS-COLUMN: se nenhuma imagem na coluna do SKU,
+            # busca em colunas adjacentes (±1) pela imagem mais próxima.
+            if not best_img:
+                for nearby_col in (col_idx - 1, col_idx + 1):
+                    if 0 <= nearby_col < n_cols:
+                        _try_match(col_imgs[nearby_col])
+                if best_img:
+                    print(f"    [ColMatch] {sku_code}: match cross-col (col_idx={col_idx})")
 
             if not best_img:
                 unmatched.append({"sku": sku_code, "page": page_num, "reason": "no_img_in_col"})
                 continue
 
-            used_xrefs.add(best_img["xref"])
+            used_xrefs_global.add(best_img["xref"])
+            variant_cache[base] = best_img
 
             # Verificar variações (múltiplas imagens agrupadas no mesmo Y)
             grouped = [best_img]
             for other in imgs_sorted:
-                if other["xref"] in used_xrefs:
+                if other["xref"] in used_xrefs_global:
                     continue
                 if abs(other["cy"] - best_img["cy"]) < 15:
                     grouped.append(other)
-                    used_xrefs.add(other["xref"])
+                    used_xrefs_global.add(other["xref"])
 
             if len(grouped) >= 2:
                 # Composição: crop do bounding box de todas as imagens

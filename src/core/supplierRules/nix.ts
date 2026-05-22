@@ -214,7 +214,7 @@ const extractNixProducts = (
     } else if (precoBase > 0) {
       preco = precoBase;
     } else {
-      // Tentativa final: procurar em todas as chaves por valor numérico que pareça preço
+      // Tentativa 1: procurar em todas as chaves por valor numérico que pareça preço
       for (const [key, value] of Object.entries(campos)) {
         const keyNorm = norm(key);
         if (keyNorm.includes('prec') || keyNorm.includes('valor') || keyNorm.includes('vlr')) {
@@ -222,6 +222,25 @@ const extractNixProducts = (
           if (valNum > 0) {
             preco = valNum;
             warnings.push(`Preço encontrado no campo ${key}: R$ ${preco.toFixed(2)}`);
+            break;
+          }
+        }
+      }
+
+      // Tentativa 2 (PDF): scan no textoBruto exigindo CONTEXTO de preço.
+      // Aceita APENAS números que tenham 'R$' antes OU 'unid'/'un' depois,
+      // evitando casar com NCM (8211.92.10 viraria preço de R$ 8211).
+      if (preco <= 0) {
+        const textoBruto = String((bruto as any).textoBruto || '');
+        // (grupo 1) R$ prefix  OR  (grupo 2) seguido de "unid"/"un"
+        const re = /R\s*\$\s*(\d{1,4}(?:\.\d{3})*[.,]\d{2})|(\d{1,4}(?:\.\d{3})*[.,]\d{2})\s*\/?\s*(?:unid|UNID|un\b|UN\b)/g;
+        let match;
+        while ((match = re.exec(textoBruto)) !== null) {
+          const raw = (match[1] || match[2]).replace(/\./g, '').replace(',', '.');
+          const num = parseFloat(raw);
+          if (!isNaN(num) && num >= 0.10 && num <= 9999.99) {
+            preco = num;
+            warnings.push(`Preço extraido do texto: R$ ${preco.toFixed(2)}`);
             break;
           }
         }
