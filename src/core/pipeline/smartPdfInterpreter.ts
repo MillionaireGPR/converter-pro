@@ -100,6 +100,73 @@ export const interpretPdfSemantically = (
           produtos.push(prod);
         }
       
+      // ── Pass de enriquecimento POSICIONAL de PREÇO ──
+      // Em catálogos grid (NIX, similar), PDF.js extrai texto fora de ordem.
+      // O bloco do produto pode não conter o seu próprio "R$ X,XX".
+      // Solução: para cada produto sem preço, busca nos page.items o item
+      // com texto de preço mais PRÓXIMO ESPACIALMENTE do SKU (mesma coluna X
+      // + abaixo ou próximo do Y do SKU).
+      const pageProductsForPrice = produtos.slice(pageStartIdx);
+      const semPreco = pageProductsForPrice.filter(p => {
+        const v = p.campos['preco'];
+        if (v === undefined || v === null || v === '') return true;
+        const num = parseFloat(String(v).replace(/[^\d.,]/g, '').replace(',', '.'));
+        return !num || num <= 0;
+      });
+      if (semPreco.length > 0 && page.items && page.items.length > 0) {
+        // Coleta items que parecem ser preços com posição.
+        // Aceita "R$ 6,99", "R$6,99", "6,99 unid", "6,99/unid"
+        const priceItems: { x: number; y: number; value: number }[] = [];
+        for (const it of page.items) {
+          if (!it.str) continue;
+          const s = String(it.str);
+          const m = s.match(/R\s*\$\s*(\d{1,4}(?:\.\d{3})*[.,]\d{2})|(\d{1,4}(?:\.\d{3})*[.,]\d{2})\s*\/?\s*(?:unid|UNID|un\b|UN\b)/);
+          if (!m) continue;
+          const raw = (m[1] || m[2]).replace(/\./g, '').replace(',', '.');
+          const num = parseFloat(raw);
+          if (!isNaN(num) && num >= 0.10 && num <= 9999.99) {
+            priceItems.push({ x: it.x, y: it.y, value: num });
+          }
+        }
+
+        if (priceItems.length > 0) {
+          // Para cada produto sem preço, encontra preço mais próximo do SKU.
+          // Critério de proximidade:
+          //   - mesma coluna X (tolerância 80pt) PESO ALTO
+          //   - abaixo do SKU (Y menor em PDF.js bottom-up) PESO MÉDIO
+          //   - distância euclidiana PESO BAIXO
+          const usedPriceIdx: Set<number> = new Set();
+          for (const prod of semPreco) {
+            const sc = prod.spatialContext;
+            if (!sc || sc.x === undefined || sc.y === undefined) continue;
+
+            let bestIdx = -1;
+            let bestScore = Infinity;
+            for (let pi = 0; pi < priceItems.length; pi++) {
+              if (usedPriceIdx.has(pi)) continue;
+              const p = priceItems[pi];
+              const dx = Math.abs(p.x - sc.x);
+              const dy = sc.y - p.y; // positivo = preço abaixo do SKU (PDF.js Y-up)
+              // Rejeita se muito longe horizontalmente OU muito acima do SKU
+              if (dx > 100) continue;
+              if (dy < -20) continue; // preço acima do SKU (improvável)
+              // Score: prioriza mesma coluna, depois abaixo, depois distância
+              const score = dx * 1.5 + Math.max(0, dy) * 0.5 + Math.max(0, -dy) * 3;
+              if (score < bestScore) {
+                bestScore = score;
+                bestIdx = pi;
+              }
+            }
+            if (bestIdx >= 0) {
+              usedPriceIdx.add(bestIdx);
+              const p = priceItems[bestIdx];
+              // Formato compatível com adapter: string com vírgula
+              prod.campos['preco'] = p.value.toFixed(2).replace('.', ',');
+            }
+          }
+        }
+      }
+
       // ── GIRA: Reparação de IPI por página (grid-layout PDF) ──
       // No layout em grid, PDF.js lê TP codes na linha 1 e IPI na linha 3.
       // O blockExtractor corta no próximo TP, então blocos da coluna 1 e 2
