@@ -168,6 +168,21 @@ const extractNixProducts = (
       continue;
     }
 
+    // PRÉ-FILTRO: rejeitar brutos sem código E sem descrição reconhecíveis.
+    // Quando vindo do PDF parser, blocos espúrios (rodapés/cabeçalhos/quebras)
+    // criavam ~172 "produtos com erro" que poluíam o resultado final.
+    const codigoPreliminar = toStr(getNixValue(campos, [
+      'REFERÊNCIA', 'referência', 'referencia', 'ref', 'codigo', 'código', 'cod'
+    ]));
+    if (!codigoPreliminar) {
+      // tentativa via fallback do bruto.textoBruto (PDF parser preenche)
+      const textoBruto = (bruto as any).textoBruto || '';
+      const m = String(textoBruto).match(/\bNX\d{2,6}\b/i);
+      if (!m) {
+        continue; // SEM código NX → não é produto, descarta silenciosamente
+      }
+    }
+
     const erros: string[] = [];
     const warnings: string[] = [];
 

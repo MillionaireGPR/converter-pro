@@ -138,8 +138,79 @@ def _build_zip_from_matches(output_folder: str, matches: list) -> str:
     return zip_path
 
 
-# Dicionário global em memória para guardar status das extrações
-JOB_STATUS = {}
+# Dicionário em memória + persistência em disco.
+# IMPORTANTE: Render reinicia o serviço (idle 15min, deploy, OOM) e ZERA
+# o dict em memória — frontend ficava em polling eterno sem feedback.
+# Solução: cada update do status também escreve em temp/<jobId>/status.json
+# e lemos do disco quando o jobId não estiver na memória.
+JOB_STATUS: dict = {}
+_STATUS_DIR = "temp"
+
+
+def _status_file_path(job_id: str) -> str:
+    return os.path.join(_STATUS_DIR, job_id, "status.json")
+
+
+def _save_status(job_id: str, payload: dict) -> None:
+    """Persiste o status do job em disco para sobreviver a restarts."""
+    import time
+    payload = {**payload, "updatedAt": time.time()}
+    JOB_STATUS[job_id] = payload
+    try:
+        path = _status_file_path(job_id)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[Status] Falha ao persistir {job_id}: {e}")
+
+
+# Job é considerado "zombie" se está como processing mas o registro de status
+# é mais antigo que isso e o processo Python perdeu o BackgroundTask.
+ZOMBIE_PROCESSING_THRESHOLD_SEC = 60 * 8  # 8 minutos
+
+
+def _load_status(job_id: str) -> dict:
+    """Lê status do disco se não estiver em memória (após restart).
+    Detecta jobs zombie (processing há muito tempo após restart do servidor)."""
+    import time
+    data = None
+    if job_id in JOB_STATUS:
+        data = JOB_STATUS[job_id]
+    else:
+        try:
+            path = _status_file_path(job_id)
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    JOB_STATUS[job_id] = data  # re-popula cache
+        except Exception as e:
+            print(f"[Status] Falha ao ler {job_id} do disco: {e}")
+
+    if not data:
+        return {"status": "not_found"}
+
+    # Detecção de zombie: status=processing + sem update há mais que threshold
+    # + tarefa não está mais no BackgroundTasks (não temos como saber, mas se
+    # passou do threshold após restart, é provável zombie).
+    if data.get("status") == "processing":
+        updated_at = data.get("updatedAt", 0)
+        age = time.time() - updated_at
+        if age > ZOMBIE_PROCESSING_THRESHOLD_SEC:
+            # Marca como erro para o frontend parar de polling
+            zombie_status = {
+                "status": "error",
+                "message": (
+                    f"Job interrompido (o servidor foi reiniciado durante o "
+                    f"processamento — comum no plano free do Render após "
+                    f"~15min de idle ou deploy). Reenvie o arquivo."
+                ),
+                "wasZombie": True,
+            }
+            _save_status(job_id, zombie_status)
+            return zombie_status
+
+    return data
 
 def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, output_folder: str, page_heights: dict, total_pages: int):
     try:
@@ -157,14 +228,14 @@ def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, outpu
         total_images = len(matches)
 
         if not matches:
-            JOB_STATUS[jobId] = {
+            _save_status(jobId, {
                 "status": "success",
                 "message": "Nenhuma imagem de produto extraída do PDF",
                 "zipUrl": None,
                 "matchesCount": 0,
                 "totalPages": total_pages,
                 "totalImages": 0,
-            }
+            })
             return
 
         # 6. Montar ZIP com imagens extraídas
@@ -177,7 +248,7 @@ def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, outpu
         print(f"ZIP disponivel em: {zip_url}")
 
         print(f"Job {jobId} concluido com sucesso!")
-        JOB_STATUS[jobId] = {
+        _save_status(jobId, {
             "status": "success",
             "zipUrl": zip_url,
             "matchesCount": len(matches),
@@ -185,17 +256,17 @@ def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, outpu
             "totalPages": total_pages,
             "totalImages": total_images,
             "unmatchedSkus": unmatched,
-        }
+        })
 
     except Exception as e:
         import traceback
         print(f"Erro no Job {jobId}: {e}")
         print(traceback.format_exc())
-        JOB_STATUS[jobId] = {
+        _save_status(jobId, {
             "status": "error",
             "message": str(e),
             "details": traceback.format_exc(),
-        }
+        })
 
 # ─────────────────────────────────────────────────────────────
 # Endpoint principal
@@ -212,11 +283,10 @@ async def process_pdf(
 ):
     print(f"\n--- Iniciando Job: {jobId} ---")
     print(f"Arquivo: {file.filename}, Fornecedor: {supplier}")
-    
-    JOB_STATUS[jobId] = {"status": "processing", "progress": 0}
 
     output_folder = f"temp/{jobId}"
     os.makedirs(output_folder, exist_ok=True)
+    _save_status(jobId, {"status": "processing", "progress": 0})
 
     try:
         # 1. Salvar PDF localmente
@@ -250,13 +320,13 @@ async def process_pdf(
     except Exception as e:
         import traceback
         print(f"Erro ao iniciar Job {jobId}: {e}")
-        JOB_STATUS[jobId] = {"status": "error", "message": str(e)}
+        _save_status(jobId, {"status": "error", "message": str(e)})
         return {"status": "error", "message": str(e)}
 
 @app.get("/status/{job_id}")
 async def get_status(job_id: str):
-    # Se o job não existir na memória (servidor reiniciou ou id errado), retorna not_found
-    return JOB_STATUS.get(job_id, {"status": "not_found"})
+    # Lê do disco se nao estiver em memoria (sobrevive a restarts do Render)
+    return _load_status(job_id)
 
 
 if __name__ == "__main__":
