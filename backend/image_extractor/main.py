@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from cv_extractor import extract_cells_via_cv
 from storage import upload_file_to_supabase
+from gemini_extractor import extract_with_fallback as gemini_extract
 
 app = FastAPI(title="Converter-Pro Image Extractor")
 
@@ -327,6 +328,74 @@ async def process_pdf(
 async def get_status(job_id: str):
     # Lê do disco se nao estiver em memoria (sobrevive a restarts do Render)
     return _load_status(job_id)
+
+
+# ─────────────────────────────────────────────────────────────
+# Endpoint AI: extração estruturada de produtos via Gemini Vision
+# ─────────────────────────────────────────────────────────────
+
+@app.post("/extract_products_ai")
+async def extract_products_ai(
+    file: UploadFile = File(...),
+    supplier: str = Form(""),
+):
+    """
+    Extrai produtos estruturados (codigo, nome, preco, qtde caixa, ipi, ncm, etc)
+    de um PDF de catálogo usando Gemini Vision.
+
+    Resolve os 91 erros do NIX, FOLIA, e qualquer catálogo onde PDF.js extrai
+    texto fora de ordem. Substitui regex+heurística por LLM com visão.
+
+    Returns:
+      {
+        "success": bool,
+        "model": str,
+        "produtos": [ProdutoEstruturado],
+        "fornecedor_detectado": str,
+        "total_paginas": int,
+        "elapsed_seconds": float,
+        "confianca": float (0-1),
+        "error": str | None
+      }
+    """
+    import tempfile
+
+    print(f"\n--- Iniciando extração AI: {file.filename} ---")
+    print(f"Fornecedor: {supplier}")
+
+    # Salva PDF temporariamente
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            content = await file.read()
+            tmp.write(content)
+            pdf_path = tmp.name
+        print(f"PDF salvo: {len(content)} bytes -> {pdf_path}")
+
+        # Chama Gemini com fallback automático Flash → Pro
+        result = gemini_extract(pdf_path)
+
+        # Limpa arquivo temporário
+        try:
+            os.unlink(pdf_path)
+        except OSError:
+            pass
+
+        if result.get("success"):
+            print(f"[AI] OK: {len(result['produtos'])} produtos | confiança={result.get('confianca', 0):.0%}")
+        else:
+            print(f"[AI] FALHA: {result.get('error')}")
+
+        return result
+
+    except Exception as e:
+        import traceback
+        print(f"Erro na extração AI: {e}")
+        print(traceback.format_exc())
+        return {
+            "success": False,
+            "produtos": [],
+            "error": str(e),
+        }
 
 
 if __name__ == "__main__":

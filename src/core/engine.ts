@@ -59,17 +59,57 @@ export const processarArquivoV2 = async (
     if (adapter) options.forceAdapter = adapter;
   }
 
+  // ─── Pipeline base + AI extraction em PARALELO ───
+  // Pipeline base = regex/heurística (rápido, ~1-3s)
+  // AI extraction = Gemini Vision (lento ~30-90s, mas preciso)
+  // Rodamos ambos em paralelo para não atrasar a UI.
+  const isPdf = file.name.toLowerCase().endsWith('.pdf');
+
+  const aiPromise = isPdf
+    ? (async () => {
+        try {
+          const { extractProductsViaGemini } = await import('./pipeline/geminiExtractionApi');
+          return await extractProductsViaGemini(file, options.supplierName || '');
+        } catch (e) {
+          console.warn('[Engine] AI extraction falhou:', e);
+          return null;
+        }
+      })()
+    : Promise.resolve(null);
+
   const result: PipelineResult = await runImportPipeline(file, options);
-  
+
+  // Aguarda AI (com timeout). Se chegar, faz MERGE inteligente que corrige
+  // preços zerados, qtde caixa faltante, IPI ausente, etc.
+  try {
+    const aiResult = await aiPromise;
+    if (aiResult && aiResult.success && aiResult.produtos.length > 0) {
+      const { mergeProdutosComAI } = await import('./pipeline/geminiExtractionApi');
+      const { merged, enriched, added } = mergeProdutosComAI(
+        result.produtosNormalizados,
+        aiResult.produtos,
+      );
+      result.produtosNormalizados = merged;
+      console.log(
+        `[Engine] ✓ AI merge: ${enriched} produtos enriquecidos, ${added} adicionados. ` +
+        `Modelo: ${aiResult.model} | Confiança: ${((aiResult.confianca || 0) * 100).toFixed(0)}%`
+      );
+    } else if (aiResult && !aiResult.success) {
+      console.warn(`[Engine] AI retornou falha: ${aiResult.error}`);
+    }
+  } catch (e) {
+    console.warn('[Engine] Merge AI falhou (não-crítico):', e);
+  }
+
   // Roda a extração de imagens paralelamente/logo após o pipeline base
   let imageResults = null;
   try {
      const { runImageExtraction } = await import('./images/imageExtractionPipeline');
-     
+
      console.log(`[Engine] Iniciando extração de imagens (aguardando via Polling)...`);
-     
+
      imageResults = await runImageExtraction(file, result.produtosNormalizados, options.supplierName || 'desconhecido');
-     
+
   } catch(e) {
      console.error("[Engine] Erro ao extrair imagens:", e);
   }
