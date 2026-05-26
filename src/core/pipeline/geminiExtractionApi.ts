@@ -41,91 +41,139 @@ export interface ResultadoExtracaoAI {
 }
 
 /**
- * Chama o endpoint AI do backend Python com RETRY automático.
- * Render free/starter pode retornar 502/503 transitórios durante deploy ou
- * sob carga. Retry com backoff resolve isso sem incomodar o usuário.
+ * Chama o endpoint AI com ARQUITETURA ASSÍNCRONA (upload + polling).
+ *
+ * Por que assíncrona:
+ *   - PDFs grandes (NIX 12MB / 106 páginas) podem levar 60-180s no Gemini
+ *   - Render mata conexões HTTP longas → 502 Bad Gateway
+ *   - Polling permite jobs de QUALQUER duração sem timeout HTTP
+ *
+ * Fluxo:
+ *   1. POST /extract_products_ai → retorna {jobId, status: 'processing'} (~5s só upload)
+ *   2. GET /extract_products_ai_status/{jobId} a cada 5s (polling)
+ *   3. Quando status='success' ou 'error', termina o loop
  */
 export const extractProductsViaGemini = async (
   file: File,
   fornecedor: string = '',
   maxAttempts: number = 3
 ): Promise<ResultadoExtracaoAI | null> => {
-  console.log('[GeminiAI] Iniciando extração via Gemini Vision...');
+  console.log('[GeminiAI] Iniciando extração via Gemini Vision (modo assíncrono)...');
 
-  // Pre-load do FormData (criar uma vez, reutilizar entre retries)
-  const buildFormData = () => {
-    const fd = new FormData();
-    fd.append('file', file);
-    fd.append('supplier', fornecedor);
-    return fd;
-  };
+  // Gera jobId único do cliente (será reutilizado em polling)
+  const jobId = `ai_${crypto.randomUUID()}`;
 
+  // ─── ETAPA 1: Upload do PDF + dispatch da background task ───
+  let uploadOk = false;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 300_000); // 5min
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('supplier', fornecedor);
+      fd.append('jobId', jobId);
+
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 120_000); // 2min para upload
 
       const response = await fetch(`${BACKEND_URL}/extract_products_ai`, {
         method: 'POST',
-        body: buildFormData(),
-        signal: controller.signal,
+        body: fd,
+        signal: ctrl.signal,
       });
-      clearTimeout(timeoutId);
+      clearTimeout(tid);
 
-      // Retry em 502/503/504 (gateway/upstream transitórios)
       if ([502, 503, 504].includes(response.status)) {
-        console.warn(`[GeminiAI] HTTP ${response.status} na tentativa ${attempt}/${maxAttempts}, retry em ${attempt * 3}s...`);
+        console.warn(`[GeminiAI] Upload HTTP ${response.status} tentativa ${attempt}/${maxAttempts}, retry em ${attempt * 3}s...`);
         if (attempt < maxAttempts) {
           await new Promise(r => setTimeout(r, attempt * 3000));
           continue;
         }
-      }
-
-      if (!response.ok) {
-        const txt = await response.text().catch(() => '');
-        console.error(`[GeminiAI] HTTP ${response.status}:`, txt.slice(0, 200));
-        return {
-          success: false,
-          model: '',
-          produtos: [],
-          fornecedor_detectado: '',
-          total_paginas: 0,
-          error: `Backend retornou ${response.status}`,
-        };
-      }
-
-      const result = (await response.json()) as ResultadoExtracaoAI;
-      if (result.success) {
-        console.log(
-          `[GeminiAI] ✓ ${result.produtos.length} produtos extraídos | ` +
-          `modelo=${result.model} | confiança=${((result.confianca || 0) * 100).toFixed(0)}%`
-        );
-      } else {
-        console.warn('[GeminiAI] Backend retornou falha:', result.error);
-      }
-      return result;
-    } catch (err: any) {
-      const isTransient =
-        err.name === 'TypeError' ||  // "Failed to fetch" - rede/CORS/server cap
-        err.message?.includes('Failed to fetch') ||
-        err.message?.includes('HTTP2_PROTOCOL_ERROR');
-
-      if (err.name === 'AbortError') {
-        console.warn('[GeminiAI] Timeout na extração AI (>5min)');
         return null;
       }
 
-      if (isTransient && attempt < maxAttempts) {
-        console.warn(`[GeminiAI] Erro transitório na tentativa ${attempt}/${maxAttempts}: ${err.message}. Retry em ${attempt * 3}s...`);
+      if (!response.ok) {
+        console.error(`[GeminiAI] Upload falhou HTTP ${response.status}`);
+        return null;
+      }
+
+      const body = await response.json();
+      if (body?.status === 'processing' || body?.status === 'success') {
+        uploadOk = true;
+        break;
+      }
+      console.error('[GeminiAI] Upload retornou status inesperado:', body);
+      return null;
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.warn('[GeminiAI] Upload timeout (>2min)');
+        return null;
+      }
+      const transient =
+        err.name === 'TypeError' ||
+        err.message?.includes('Failed to fetch') ||
+        err.message?.includes('HTTP2_PROTOCOL_ERROR');
+      if (transient && attempt < maxAttempts) {
+        console.warn(`[GeminiAI] Upload erro transitório tentativa ${attempt}/${maxAttempts}: ${err.message}. Retry em ${attempt * 3}s...`);
         await new Promise(r => setTimeout(r, attempt * 3000));
         continue;
       }
-
-      console.error('[GeminiAI] Erro definitivo na chamada AI:', err);
+      console.error('[GeminiAI] Upload erro definitivo:', err);
       return null;
     }
   }
 
+  if (!uploadOk) return null;
+
+  // ─── ETAPA 2: Polling até status final ───
+  console.log(`[GeminiAI] Upload OK (job=${jobId}), aguardando processamento...`);
+  const startedAt = Date.now();
+  const maxPollMs = 10 * 60 * 1000; // 10min máximo total
+  const pollIntervalMs = 5000;       // poll a cada 5s
+  let consecutivePollErrors = 0;
+
+  while (Date.now() - startedAt < maxPollMs) {
+    await new Promise(r => setTimeout(r, pollIntervalMs));
+
+    try {
+      const r = await fetch(`${BACKEND_URL}/extract_products_ai_status/${jobId}`);
+      if (!r.ok) {
+        consecutivePollErrors++;
+        if (consecutivePollErrors > 3) {
+          console.warn(`[GeminiAI] Polling falhou ${consecutivePollErrors}x consecutivas (HTTP ${r.status}), abortando`);
+          return null;
+        }
+        continue;
+      }
+      consecutivePollErrors = 0;
+      const data = await r.json();
+
+      if (data.status === 'success' && data.ai_result) {
+        const result = data.ai_result as ResultadoExtracaoAI;
+        console.log(
+          `[GeminiAI] ✓ ${result.produtos.length} produtos extraídos | ` +
+          `modelo=${result.model} | confiança=${((result.confianca || 0) * 100).toFixed(0)}%`
+        );
+        return result;
+      }
+      if (data.status === 'error') {
+        console.warn('[GeminiAI] Backend retornou erro:', data.ai_result?.error || data.message);
+        return data.ai_result || {
+          success: false, model: '', produtos: [],
+          fornecedor_detectado: '', total_paginas: 0,
+          error: data.message || 'erro no backend',
+        };
+      }
+      // Continua polling: status = 'processing' / outro
+    } catch (err: any) {
+      consecutivePollErrors++;
+      if (consecutivePollErrors > 3) {
+        console.warn(`[GeminiAI] ${consecutivePollErrors} erros consecutivos no polling, abortando`);
+        return null;
+      }
+    }
+  }
+
+  console.warn(`[GeminiAI] Polling timeout (>10min)`);
   return null;
 };
 

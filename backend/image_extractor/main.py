@@ -347,79 +347,107 @@ async def get_status(job_id: str):
 # Endpoint AI: extração estruturada de produtos via Gemini Vision
 # ─────────────────────────────────────────────────────────────
 
-@app.post("/extract_products_ai")
-async def extract_products_ai(
-    file: UploadFile = File(...),
-    supplier: str = Form(""),
-):
-    """
-    Extrai produtos estruturados (codigo, nome, preco, qtde caixa, ipi, ncm, etc)
-    de um PDF de catálogo usando Gemini Vision.
-
-    Resolve os 91 erros do NIX, FOLIA, e qualquer catálogo onde PDF.js extrai
-    texto fora de ordem. Substitui regex+heurística por LLM com visão.
-
-    Returns:
-      {
-        "success": bool,
-        "model": str,
-        "produtos": [ProdutoEstruturado],
-        "fornecedor_detectado": str,
-        "total_paginas": int,
-        "elapsed_seconds": float,
-        "confianca": float (0-1),
-        "error": str | None
-      }
-    """
-    import tempfile
-
-    print(f"\n--- Iniciando extração AI: {file.filename} ---")
-    print(f"Fornecedor: {supplier}")
-
-    # LAZY IMPORT: só carrega google-generativeai aqui, não no startup
+def _run_ai_extraction_task(ai_job_id: str, pdf_path: str, supplier: str):
+    """BackgroundTask: roda Gemini sem bloquear a request HTTP do cliente."""
     try:
+        # LAZY IMPORT: só importa aqui, mantém startup leve
         from gemini_extractor import extract_with_fallback as gemini_extract
-    except Exception as e:
-        print(f"Erro ao importar gemini_extractor: {e}")
-        return {
-            "success": False,
-            "produtos": [],
-            "error": f"Gemini não disponível: {e}",
-        }
 
-    # Salva PDF temporariamente
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            content = await file.read()
-            tmp.write(content)
-            pdf_path = tmp.name
-        print(f"PDF salvo: {len(content)} bytes -> {pdf_path}")
-
-        # Chama Gemini com fallback automático Flash → Pro
+        print(f"[AI BG] Iniciando job {ai_job_id} (supplier={supplier})...")
         result = gemini_extract(pdf_path)
 
-        # Limpa arquivo temporário
-        try:
-            os.unlink(pdf_path)
-        except OSError:
-            pass
-
         if result.get("success"):
-            print(f"[AI] OK: {len(result['produtos'])} produtos | confiança={result.get('confianca', 0):.0%}")
+            print(f"[AI BG] {ai_job_id} OK: {len(result['produtos'])} produtos | confiança={result.get('confianca', 0):.0%}")
         else:
-            print(f"[AI] FALHA: {result.get('error')}")
+            print(f"[AI BG] {ai_job_id} FALHA: {result.get('error')}")
 
-        return result
+        _save_status(ai_job_id, {
+            "status": "success" if result.get("success") else "error",
+            "ai_result": result,  # contém produtos, model, confianca, etc.
+        })
 
     except Exception as e:
         import traceback
-        print(f"Erro na extração AI: {e}")
+        print(f"[AI BG] {ai_job_id} EXCEÇÃO: {e}")
         print(traceback.format_exc())
-        return {
-            "success": False,
-            "produtos": [],
-            "error": str(e),
-        }
+        _save_status(ai_job_id, {
+            "status": "error",
+            "ai_result": {
+                "success": False,
+                "produtos": [],
+                "error": str(e),
+            },
+        })
+    finally:
+        # Limpa o arquivo temporário do PDF
+        try:
+            if os.path.exists(pdf_path):
+                os.unlink(pdf_path)
+        except OSError:
+            pass
+
+
+@app.post("/extract_products_ai")
+async def extract_products_ai(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    supplier: str = Form(""),
+    jobId: str = Form(""),
+):
+    """
+    Inicia extração de produtos via Gemini Vision em BACKGROUND.
+
+    Retorna IMEDIATAMENTE {status: 'processing', jobId} para evitar timeouts
+    HTTP (Render mata conexões longas, gerando 502 Bad Gateway). Frontend
+    deve fazer polling em GET /extract_products_ai_status/{jobId}.
+
+    Resolve OOM e 502 com PDFs grandes (NIX 12MB / 106 páginas).
+    """
+    import tempfile
+    import uuid
+
+    # Gera jobId se não veio do frontend (compat com chamadas antigas)
+    ai_job_id = (jobId or "").strip() or f"ai_{uuid.uuid4()}"
+
+    print(f"\n--- AI extraction iniciada: {file.filename} (job={ai_job_id}) ---")
+    print(f"Fornecedor: {supplier}")
+
+    # Salva PDF no disco. Background task processa depois.
+    try:
+        output_folder = f"temp/{ai_job_id}"
+        os.makedirs(output_folder, exist_ok=True)
+        pdf_path = os.path.join(output_folder, "ai_input.pdf")
+
+        content = await file.read()
+        with open(pdf_path, "wb") as f:
+            f.write(content)
+        print(f"PDF salvo: {len(content)} bytes -> {pdf_path}")
+
+        # Marca como processando ANTES de disparar a task
+        _save_status(ai_job_id, {"status": "processing", "stage": "ai_extraction"})
+
+        # Dispara BackgroundTask - retorna agora, processa em paralelo
+        background_tasks.add_task(_run_ai_extraction_task, ai_job_id, pdf_path, supplier)
+
+        return {"status": "processing", "jobId": ai_job_id}
+
+    except Exception as e:
+        import traceback
+        print(f"Erro ao iniciar AI job {ai_job_id}: {e}")
+        print(traceback.format_exc())
+        _save_status(ai_job_id, {
+            "status": "error",
+            "ai_result": {"success": False, "produtos": [], "error": str(e)},
+        })
+        return {"status": "error", "message": str(e), "jobId": ai_job_id}
+
+
+@app.get("/extract_products_ai_status/{job_id}")
+async def get_ai_status(job_id: str):
+    """Polling endpoint para o resultado da extração AI assíncrona."""
+    data = _load_status(job_id)
+    # Compat: se job veio do disco, retorna como está
+    return data
 
 
 if __name__ == "__main__":
