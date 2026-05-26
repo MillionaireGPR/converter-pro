@@ -59,49 +59,43 @@ export const processarArquivoV2 = async (
     if (adapter) options.forceAdapter = adapter;
   }
 
-  // ─── Pipeline base + AI extraction em PARALELO ───
-  // Pipeline base = regex/heurística (rápido, ~1-3s)
-  // AI extraction = Gemini Vision (lento ~30-90s, mas preciso)
-  // Rodamos ambos em paralelo para não atrasar a UI.
-  const isPdf = file.name.toLowerCase().endsWith('.pdf');
-
-  const aiPromise = isPdf
-    ? (async () => {
-        try {
-          const { extractProductsViaGemini } = await import('./pipeline/geminiExtractionApi');
-          return await extractProductsViaGemini(file, options.supplierName || '');
-        } catch (e) {
-          console.warn('[Engine] AI extraction falhou:', e);
-          return null;
-        }
-      })()
-    : Promise.resolve(null);
-
+  // ─── Pipeline base (rápido, ~1-3s) ───
+  // Roda primeiro e libera a UI com resultado preliminar.
   const result: PipelineResult = await runImportPipeline(file, options);
 
-  // Aguarda AI (com timeout). Se chegar, faz MERGE inteligente que corrige
-  // preços zerados, qtde caixa faltante, IPI ausente, etc.
-  try {
-    const aiResult = await aiPromise;
-    if (aiResult && aiResult.success && aiResult.produtos.length > 0) {
-      const { mergeProdutosComAI } = await import('./pipeline/geminiExtractionApi');
-      const { merged, enriched, added } = mergeProdutosComAI(
-        result.produtosNormalizados,
-        aiResult.produtos,
-      );
-      result.produtosNormalizados = merged;
-      console.log(
-        `[Engine] ✓ AI merge: ${enriched} produtos enriquecidos, ${added} adicionados. ` +
-        `Modelo: ${aiResult.model} | Confiança: ${((aiResult.confianca || 0) * 100).toFixed(0)}%`
-      );
-    } else if (aiResult && !aiResult.success) {
-      console.warn(`[Engine] AI retornou falha: ${aiResult.error}`);
+  // ─── AI extraction (Gemini Vision) — SEQUENCIAL ao /process ───
+  // IMPORTANTE: NÃO rodar em paralelo com /process. Render Starter tem
+  // 512MB RAM e CPU compartilhada. Duas requests pesadas simultâneas
+  // causam OOM/HTTP2 protocol error. Rodamos AI primeiro (~30-90s),
+  // depois liberamos para /process processar imagens (~60s).
+  const isPdf = file.name.toLowerCase().endsWith('.pdf');
+  if (isPdf) {
+    try {
+      const { extractProductsViaGemini, mergeProdutosComAI } = await import('./pipeline/geminiExtractionApi');
+      const aiResult = await extractProductsViaGemini(file, options.supplierName || '');
+
+      if (aiResult && aiResult.success && aiResult.produtos.length > 0) {
+        const { merged, enriched, added } = mergeProdutosComAI(
+          result.produtosNormalizados,
+          aiResult.produtos,
+        );
+        result.produtosNormalizados = merged;
+        console.log(
+          `[Engine] ✓ AI merge: ${enriched} produtos enriquecidos, ${added} adicionados. ` +
+          `Modelo: ${aiResult.model} | Confiança: ${((aiResult.confianca || 0) * 100).toFixed(0)}%`
+        );
+      } else if (aiResult && !aiResult.success) {
+        console.warn(`[Engine] AI retornou falha (pipeline base segue): ${aiResult.error}`);
+      } else if (!aiResult) {
+        console.warn('[Engine] AI indisponível (pipeline base segue normalmente)');
+      }
+    } catch (e) {
+      console.warn('[Engine] AI extraction falhou (não-crítico):', e);
     }
-  } catch (e) {
-    console.warn('[Engine] Merge AI falhou (não-crítico):', e);
   }
 
-  // Roda a extração de imagens paralelamente/logo após o pipeline base
+  // ─── Extração de imagens (sequencial, depois da AI terminar) ───
+  // O backend já está livre da chamada AI, pode processar /process em paz.
   let imageResults = null;
   try {
      const { runImageExtraction } = await import('./images/imageExtractionPipeline');
