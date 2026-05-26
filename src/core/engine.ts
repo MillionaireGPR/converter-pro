@@ -63,34 +63,43 @@ export const processarArquivoV2 = async (
   // Roda primeiro e libera a UI com resultado preliminar.
   const result: PipelineResult = await runImportPipeline(file, options);
 
-  // ─── AI extraction (Gemini Vision) — SEQUENCIAL ao /process ───
-  // IMPORTANTE: NÃO rodar em paralelo com /process. Render Starter tem
-  // 512MB RAM e CPU compartilhada. Duas requests pesadas simultâneas
-  // causam OOM/HTTP2 protocol error. Rodamos AI primeiro (~30-90s),
-  // depois liberamos para /process processar imagens (~60s).
+  // ─── AI CIRÚRGICA: resgata APENAS os preços faltantes ───
+  // Pipeline base já tira 285 produtos em 2s. Só ~91 ficam sem preço.
+  // Em vez de pedir ao Gemini que refaça TUDO (~10min), pedimos apenas
+  // os preços específicos. Backend renderiza apenas as páginas relevantes
+  // como JPEG e chama Gemini Flash em PARALELO (6 workers). Tempo: ~30s.
   const isPdf = file.name.toLowerCase().endsWith('.pdf');
   if (isPdf) {
     try {
-      const { extractProductsViaGemini, mergeProdutosComAI } = await import('./pipeline/geminiExtractionApi');
-      const aiResult = await extractProductsViaGemini(file, options.supplierName || '');
+      const {
+        buildSkusByPageForRepair,
+        repairPricesViaGemini,
+        applyRepairedPrices,
+      } = await import('./pipeline/geminiExtractionApi');
 
-      if (aiResult && aiResult.success && aiResult.produtos.length > 0) {
-        const { merged, enriched, added } = mergeProdutosComAI(
-          result.produtosNormalizados,
-          aiResult.produtos,
-        );
-        result.produtosNormalizados = merged;
-        console.log(
-          `[Engine] ✓ AI merge: ${enriched} produtos enriquecidos, ${added} adicionados. ` +
-          `Modelo: ${aiResult.model} | Confiança: ${((aiResult.confianca || 0) * 100).toFixed(0)}%`
-        );
-      } else if (aiResult && !aiResult.success) {
-        console.warn(`[Engine] AI retornou falha (pipeline base segue): ${aiResult.error}`);
-      } else if (!aiResult) {
-        console.warn('[Engine] AI indisponível (pipeline base segue normalmente)');
+      const skusByPage = buildSkusByPageForRepair(result.produtosNormalizados);
+      const totalSkus = Object.values(skusByPage).reduce((acc, arr) => acc + arr.length, 0);
+
+      if (totalSkus > 0) {
+        console.log(`[Engine] ${totalSkus} produtos sem preço — chamando AI cirúrgica...`);
+        const repairResult = await repairPricesViaGemini(file, skusByPage);
+
+        if (repairResult && repairResult.success && Object.keys(repairResult.precos).length > 0) {
+          const { applied } = applyRepairedPrices(result.produtosNormalizados, repairResult.precos);
+          console.log(
+            `[Engine] ✓ AI repair: ${applied} preços resgatados em ${repairResult.elapsed?.toFixed(1) || '?'}s ` +
+            `(modelo ${repairResult.model})`
+          );
+        } else if (repairResult && !repairResult.success) {
+          console.warn(`[Engine] AI repair falhou (pipeline base segue): ${repairResult.error}`);
+        } else if (!repairResult) {
+          console.warn('[Engine] AI repair indisponível (pipeline base segue)');
+        }
+      } else {
+        console.log('[Engine] Pipeline base extraiu todos os preços — AI repair não necessário');
       }
     } catch (e) {
-      console.warn('[Engine] AI extraction falhou (não-crítico):', e);
+      console.warn('[Engine] AI repair falhou (não-crítico):', e);
     }
   }
 

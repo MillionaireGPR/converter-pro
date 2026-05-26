@@ -496,6 +496,77 @@ async def get_ai_status(job_id: str):
     return data
 
 
+# ─────────────────────────────────────────────────────────────
+# Endpoint AI CIRÚRGICO: resgata APENAS os preços faltantes
+# ~10-30s (vs ~10min do /extract_products_ai completo)
+# ─────────────────────────────────────────────────────────────
+
+@app.post("/repair_prices_ai")
+async def repair_prices_ai(
+    file: UploadFile = File(...),
+    skus_by_page: str = Form("{}"),
+):
+    """
+    Resgata preços de SKUs específicos usando Gemini Vision por PÁGINA.
+
+    Estratégia muito mais rápida que /extract_products_ai:
+      - Pipeline base já extraiu 285 produtos perfeitamente (2s)
+      - Só 91 estão com preço zerado
+      - Renderiza APENAS as páginas desses 91 SKUs como JPEG
+      - Chama Gemini Flash em PARALELO (6 workers)
+      - Output minimal: {sku: preco}
+      - Tempo total: ~10-30s vs ~10min
+
+    Args:
+      file: PDF do catálogo
+      skus_by_page: JSON {"4": ["NX020", "NX021"], "11": ["NX349"], ...}
+
+    Returns:
+      {success, model, precos: {sku: preco}, paginas_processadas, elapsed}
+    """
+    import tempfile
+
+    print(f"\n--- Repair prices AI: {file.filename} ---")
+
+    try:
+        from gemini_extractor import repair_prices_for_skus
+    except Exception as e:
+        return {"success": False, "precos": {}, "error": f"Gemini não disponível: {e}"}
+
+    try:
+        # Parse do JSON de SKUs por página
+        skus_map_raw = json.loads(skus_by_page) if skus_by_page else {}
+        # Normaliza chaves para int (JSON envia como string)
+        skus_map = {int(k): list(v) for k, v in skus_map_raw.items() if v}
+
+        if not skus_map:
+            return {"success": True, "precos": {}, "elapsed": 0, "paginas_processadas": 0}
+
+        total_skus = sum(len(s) for s in skus_map.values())
+        print(f"[RepairAI] {total_skus} SKUs distribuídos em {len(skus_map)} páginas")
+
+        # Salva PDF temp
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            content = await file.read()
+            tmp.write(content)
+            pdf_path = tmp.name
+
+        try:
+            result = repair_prices_for_skus(pdf_path, skus_map, max_workers=6)
+            return result
+        finally:
+            try:
+                os.unlink(pdf_path)
+            except OSError:
+                pass
+
+    except Exception as e:
+        import traceback
+        print(f"Erro repair_prices_ai: {e}")
+        print(traceback.format_exc())
+        return {"success": False, "precos": {}, "error": str(e)}
+
+
 if __name__ == "__main__":
     if "--serve" in sys.argv:
         # Porta vem da env var PORT (Render/Heroku injetam) ou 8000 local

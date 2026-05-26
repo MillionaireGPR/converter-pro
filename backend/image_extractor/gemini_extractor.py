@@ -80,6 +80,33 @@ def _ensure_initialized() -> bool:
 # Prompt estruturado (PT-BR) que define o schema de extração
 # ─────────────────────────────────────────────────────────────
 
+REPAIR_PROMPT_TEMPLATE = """Você é um assistente especializado em catálogos B2B brasileiros.
+
+Você receberá UMA página de catálogo PDF e uma lista de SKUs/códigos.
+Para cada SKU listado, encontre o PREÇO unitário do produto na página.
+
+SKUs a buscar nesta página:
+{skus_list}
+
+REGRAS:
+1. Preço em REAIS como número (ex: 6.99, NÃO "R$ 6,99"). Use ponto decimal.
+2. Catálogos brasileiros usam vírgula como decimal — converta (6,99 → 6.99).
+3. NÃO confunda NCM (formato XXXX.XX.XX) com preço.
+4. NÃO confunda IPI (geralmente 1-30%) com preço.
+5. Se um SKU NÃO aparecer nesta página, retorne null.
+6. Se o preço não estiver visível, retorne null.
+
+Retorne APENAS JSON puro (sem markdown, sem ```):
+{{
+  "precos": {{
+    "SKU1": 6.99,
+    "SKU2": 12.50,
+    "SKU3": null
+  }}
+}}
+"""
+
+
 EXTRACTION_PROMPT = """Você é um assistente especializado em extrair dados estruturados de catálogos brasileiros de fornecedores (B2B).
 
 Analise TODAS as páginas do PDF anexado e extraia CADA produto encontrado. Para cada produto identifique:
@@ -260,6 +287,162 @@ def extract_products_with_gemini(
         "error": "Falha após todas as tentativas",
         "model": model_name,
         "elapsed": time.time() - start,
+    }
+
+
+def _render_page_to_jpeg(pdf_path: str, page_num: int, dpi: int = 100) -> Optional[bytes]:
+    """Renderiza uma única página do PDF como JPEG em memória.
+
+    DPI 100 é suficiente para Gemini ler texto. Menor que 100 economiza
+    bandwidth/tokens sem perder qualidade.
+    """
+    try:
+        doc = fitz.open(pdf_path)
+        if page_num < 1 or page_num > len(doc):
+            doc.close()
+            return None
+        page = doc.load_page(page_num - 1)  # 0-based
+        # Renderiza com zoom adequado (72 DPI base * zoom)
+        zoom = dpi / 72.0
+        mat = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=mat)
+        jpeg_bytes = pix.tobytes("jpeg")
+        doc.close()
+        return jpeg_bytes
+    except Exception as e:
+        print(f"[Gemini] Falha ao renderizar página {page_num}: {e}")
+        return None
+
+
+def _repair_single_page(
+    pdf_path: str,
+    page_num: int,
+    skus_in_page: List[str],
+    model_name: str = MODEL_FLASH
+) -> Dict[str, float]:
+    """
+    Chama Gemini Vision em UMA página com lista pequena de SKUs.
+    Retorna {sku: preco}. Preços não encontrados são omitidos.
+    """
+    if not _ensure_initialized():
+        return {}
+
+    jpeg_bytes = _render_page_to_jpeg(pdf_path, page_num)
+    if not jpeg_bytes:
+        return {}
+
+    try:
+        # Monta o prompt com a lista de SKUs específicos
+        skus_text = "\n".join(f"- {s}" for s in skus_in_page)
+        prompt = REPAIR_PROMPT_TEMPLATE.format(skus_list=skus_text)
+
+        model = genai.GenerativeModel(model_name)
+        generation_config = genai.GenerationConfig(
+            temperature=0.0,
+            response_mime_type="application/json",
+            max_output_tokens=4096,  # SKUs são pequenos, resposta pequena
+        )
+
+        # Envia imagem inline + prompt (mais rápido que upload de arquivo)
+        response = model.generate_content(
+            [
+                {"mime_type": "image/jpeg", "data": jpeg_bytes},
+                prompt,
+            ],
+            generation_config=generation_config,
+            request_options={"timeout": 60},
+        )
+
+        raw = (response.text or "").strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`")
+            if raw.startswith("json"):
+                raw = raw[4:].strip()
+        data = json.loads(raw)
+        precos = data.get("precos", {})
+        # Filtra null/0 e converte para float
+        result = {}
+        for sku, preco in precos.items():
+            if preco is None:
+                continue
+            try:
+                v = float(preco)
+                if 0.10 <= v <= 9999.99:
+                    result[sku] = v
+            except (TypeError, ValueError):
+                continue
+        return result
+
+    except Exception as e:
+        print(f"[Gemini Repair] Falha pág {page_num} ({len(skus_in_page)} SKUs): {str(e)[:150]}")
+        return {}
+
+
+def repair_prices_for_skus(
+    pdf_path: str,
+    skus_by_page: Dict[int, List[str]],
+    max_workers: int = 6
+) -> Dict[str, Any]:
+    """
+    Repara preços de SKUs específicos no PDF, processando páginas em PARALELO.
+
+    Args:
+      pdf_path: caminho do PDF
+      skus_by_page: {numero_pagina: [sku1, sku2, ...]}
+      max_workers: paralelismo (6 é seguro p/ free tier 15 RPM Gemini Flash)
+
+    Returns:
+      {
+        "success": bool,
+        "model": str,
+        "precos": { "SKU1": 5.99, "SKU2": 12.50, ... },
+        "paginas_processadas": int,
+        "elapsed": float,
+        "error": str | None
+      }
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if not _ensure_initialized():
+        return {
+            "success": False, "model": MODEL_FLASH, "precos": {},
+            "paginas_processadas": 0, "elapsed": 0,
+            "error": "Gemini não configurado (GEMINI_API_KEY)",
+        }
+
+    start = time.time()
+    all_precos: Dict[str, float] = {}
+    paginas_processadas = 0
+
+    print(f"[Gemini Repair] Iniciando reparo de {sum(len(s) for s in skus_by_page.values())} SKUs em {len(skus_by_page)} páginas (paralelo={max_workers})")
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(_repair_single_page, pdf_path, pn, skus, MODEL_FLASH): pn
+            for pn, skus in skus_by_page.items()
+            if skus
+        }
+        for fut in as_completed(futures):
+            page_num = futures[fut]
+            try:
+                page_precos = fut.result()
+                if page_precos:
+                    all_precos.update(page_precos)
+                    paginas_processadas += 1
+                    print(f"[Gemini Repair] Pág {page_num}: {len(page_precos)} preços OK")
+            except Exception as e:
+                print(f"[Gemini Repair] Pág {page_num} erro: {e}")
+
+    elapsed = time.time() - start
+    print(f"[Gemini Repair] ✓ {len(all_precos)} preços resgatados em {elapsed:.1f}s")
+
+    return {
+        "success": True,
+        "model": MODEL_FLASH,
+        "precos": all_precos,
+        "paginas_processadas": paginas_processadas,
+        "elapsed": elapsed,
+        "error": None,
     }
 
 
