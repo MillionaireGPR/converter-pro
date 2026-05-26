@@ -42,9 +42,16 @@ app.add_middleware(
 )
 
 
+SERVICE_VERSION = "2026.05.27-repair-v2"  # incrementa a cada deploy de feature
+
+
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "service": "image-extractor"}
+    return {
+        "status": "healthy",
+        "service": "image-extractor",
+        "version": SERVICE_VERSION,
+    }
 
 
 # ─────────────────────────────────────────────────────────────
