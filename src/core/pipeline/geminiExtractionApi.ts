@@ -127,9 +127,10 @@ export const extractProductsViaGemini = async (
   // ─── ETAPA 2: Polling até status final ───
   console.log(`[GeminiAI] Upload OK (job=${jobId}), aguardando processamento...`);
   const startedAt = Date.now();
-  const maxPollMs = 10 * 60 * 1000; // 10min máximo total
+  const maxPollMs = 20 * 60 * 1000; // 20min máximo total (catálogos 100+ pgs)
   const pollIntervalMs = 5000;       // poll a cada 5s
   let consecutivePollErrors = 0;
+  let lastProgressLog = 0;
 
   while (Date.now() - startedAt < maxPollMs) {
     await new Promise(r => setTimeout(r, pollIntervalMs));
@@ -164,6 +165,12 @@ export const extractProductsViaGemini = async (
         };
       }
       // Continua polling: status = 'processing' / outro
+      // Log de progresso a cada 30s para o usuário ver que está vivo
+      const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+      if (elapsedSec - lastProgressLog >= 30) {
+        console.log(`[GeminiAI] Processando há ${elapsedSec}s (Gemini analisando ${file.size > 5_000_000 ? 'catálogo grande' : 'PDF'}...)`);
+        lastProgressLog = elapsedSec;
+      }
     } catch (err: any) {
       consecutivePollErrors++;
       if (consecutivePollErrors > 3) {
@@ -173,7 +180,7 @@ export const extractProductsViaGemini = async (
     }
   }
 
-  console.warn(`[GeminiAI] Polling timeout (>10min)`);
+  console.warn(`[GeminiAI] Polling timeout (>20min)`);
   return null;
 };
 

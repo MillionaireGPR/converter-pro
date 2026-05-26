@@ -180,8 +180,12 @@ def _save_status(job_id: str, payload: dict) -> None:
 
 
 # Job é considerado "zombie" se está como processing mas o registro de status
-# é mais antigo que isso e o processo Python perdeu o BackgroundTask.
-ZOMBIE_PROCESSING_THRESHOLD_SEC = 60 * 8  # 8 minutos
+# é mais antigo que isso E o processo Python perdeu o BackgroundTask.
+#
+# Render Starter NÃO derruba por idle (só Free). Catálogos NIX/grandes com
+# 285+ produtos podem levar 5-15min de Gemini (especialmente se cair em fallback
+# Pro). 30min é folga generosa que cobre 99% dos casos legítimos.
+ZOMBIE_PROCESSING_THRESHOLD_SEC = 60 * 30  # 30 minutos
 
 
 def _load_status(job_id: str) -> dict:
@@ -347,8 +351,48 @@ async def get_status(job_id: str):
 # Endpoint AI: extração estruturada de produtos via Gemini Vision
 # ─────────────────────────────────────────────────────────────
 
+def _heartbeat_loop(ai_job_id: str, stop_event):
+    """
+    Heartbeat: atualiza updatedAt a cada 90s enquanto Gemini processa.
+    Previne o zombie check de disparar em jobs longos legítimos.
+
+    Roda em thread separada porque a chamada do Gemini é bloqueante.
+    """
+    import threading
+    import time as _time
+
+    while not stop_event.is_set():
+        # Espera 90s OU stop_event (whichever first)
+        if stop_event.wait(timeout=90):
+            return
+        try:
+            # Re-grava o status atual com timestamp atualizado
+            existing = JOB_STATUS.get(ai_job_id, {})
+            if existing.get("status") == "processing":
+                _save_status(ai_job_id, {
+                    "status": "processing",
+                    "stage": existing.get("stage", "ai_extraction"),
+                    "elapsed": existing.get("elapsed", 0) + 90,
+                })
+                print(f"[AI BG Heartbeat] {ai_job_id} ainda processando...")
+        except Exception as e:
+            print(f"[AI BG Heartbeat] Falha (não-crítico): {e}")
+
+
 def _run_ai_extraction_task(ai_job_id: str, pdf_path: str, supplier: str):
-    """BackgroundTask: roda Gemini sem bloquear a request HTTP do cliente."""
+    """BackgroundTask: roda Gemini sem bloquear a request HTTP do cliente.
+
+    Heartbeat thread mantém `updatedAt` atualizado a cada 90s, evitando
+    zombie check em jobs longos (catálogos 100+ páginas podem levar 5-15min).
+    """
+    import threading
+
+    stop_heartbeat = threading.Event()
+    heartbeat = threading.Thread(
+        target=_heartbeat_loop, args=(ai_job_id, stop_heartbeat), daemon=True
+    )
+    heartbeat.start()
+
     try:
         # LAZY IMPORT: só importa aqui, mantém startup leve
         from gemini_extractor import extract_with_fallback as gemini_extract
@@ -379,6 +423,8 @@ def _run_ai_extraction_task(ai_job_id: str, pdf_path: str, supplier: str):
             },
         })
     finally:
+        # Para o heartbeat
+        stop_heartbeat.set()
         # Limpa o arquivo temporário do PDF
         try:
             if os.path.exists(pdf_path):
