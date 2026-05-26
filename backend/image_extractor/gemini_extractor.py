@@ -45,10 +45,13 @@ def _lazy_import_gemini() -> bool:
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
-# Modelos disponíveis (de mais barato → mais preciso)
-MODEL_FLASH = "gemini-2.5-flash"      # ~$0.001/página
-MODEL_PRO = "gemini-2.5-pro"          # ~$0.01/página
-MODEL_FLASH_LEGACY = "gemini-1.5-flash"  # fallback se 2.5 indisponível
+# Modelos Gemini atuais (lista verificada em 2026).
+# IMPORTANTE: gemini-1.5-flash foi DESCONTINUADO em 2025 (404 v1beta).
+# Mantemos uma cadeia de fallbacks com modelos ATIVOS apenas.
+MODEL_FLASH = "gemini-2.5-flash"          # padrão: rápido e barato
+MODEL_PRO = "gemini-2.5-pro"              # fallback: mais preciso
+MODEL_FLASH_STABLE = "gemini-2.0-flash"   # 2º fallback: estável intermediário
+MODEL_FLASH_LATEST = "gemini-flash-latest"  # 3º fallback: alias do Google
 
 
 _initialized = False
@@ -262,21 +265,40 @@ def extract_products_with_gemini(
 
 def extract_with_fallback(pdf_path: str) -> Dict[str, Any]:
     """
-    Extrai com Gemini 2.5 Flash primeiro (barato). Se < 80% de confiança ou
-    erro, escala para Gemini 2.5 Pro (mais preciso).
+    Extrai com cadeia de fallbacks (todos modelos atualmente ativos):
+      1. gemini-2.5-flash    (padrão: rápido e barato)
+      2. gemini-2.0-flash    (estável, se 2.5 falhar/quota)
+      3. gemini-flash-latest (alias mantido pelo Google)
+      4. gemini-2.5-pro      (último recurso: caro mas robusto)
 
-    Critério de confiança: % de produtos com codigo + nome + preco > 0.
+    Se confiança < 80%, escala para Pro para validar/melhorar.
     """
-    # Tentativa 1: Flash (barato e rápido)
-    result = extract_products_with_gemini(pdf_path, model_name=MODEL_FLASH)
+    # Cadeia de fallback de modelos (todos ATIVOS em 2026)
+    fallback_chain = [MODEL_FLASH, MODEL_FLASH_STABLE, MODEL_FLASH_LATEST, MODEL_PRO]
 
-    if not result.get("success"):
-        # Fallback automático para 1.5 Flash (caso 2.5 não disponível ainda)
-        print("[Gemini] 2.5 Flash falhou, tentando 1.5 Flash...")
-        result = extract_products_with_gemini(pdf_path, model_name=MODEL_FLASH_LEGACY)
+    result = None
+    last_error = None
+    for model in fallback_chain:
+        print(f"[Gemini] Tentando modelo: {model}")
+        result = extract_products_with_gemini(pdf_path, model_name=model)
+        if result.get("success"):
+            print(f"[Gemini] ✓ Sucesso com {model}")
+            break
+        last_error = result.get("error", "?")
+        # Se for erro 404 (modelo inexistente), tenta o próximo da cadeia
+        if "404" in str(last_error) or "not found" in str(last_error).lower():
+            print(f"[Gemini] {model} indisponível (404), próximo da cadeia...")
+            continue
+        # Outros erros (quota, timeout, etc): também tenta o próximo
+        print(f"[Gemini] {model} falhou: {last_error[:150]}, próximo da cadeia...")
 
-    if not result.get("success"):
-        return result
+    if not result or not result.get("success"):
+        return result or {
+            "success": False,
+            "produtos": [],
+            "error": f"Todos os modelos falharam. Ultimo erro: {last_error}",
+            "model": fallback_chain[-1],
+        }
 
     # Calcula confiança do resultado
     produtos = result["produtos"]
