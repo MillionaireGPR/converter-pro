@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.05.27-repair-v2"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.05.27-repair-v3-forced"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
@@ -508,6 +508,7 @@ async def get_ai_status(job_id: str):
 # ~10-30s (vs ~10min do /extract_products_ai completo)
 # ─────────────────────────────────────────────────────────────
 
+@app.post("/repair_prices_ai_v2")
 @app.post("/repair_prices_ai")
 async def repair_prices_ai(
     file: UploadFile = File(...),
