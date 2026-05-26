@@ -16,14 +16,27 @@ import base64
 import time
 from typing import List, Dict, Any, Optional
 
-try:
-    import google.generativeai as genai
-    GEMINI_AVAILABLE = True
-except ImportError:
-    GEMINI_AVAILABLE = False
-    print("[Gemini] AVISO: google-generativeai não instalado. AI extraction desabilitada.")
+# LAZY IMPORT: google-generativeai é uma lib pesada (~200MB) que estoura o
+# health check de 5s do Render no startup. Importamos só na primeira chamada.
+genai = None
+GEMINI_AVAILABLE = False
 
-import fitz  # PyMuPDF
+def _lazy_import_gemini() -> bool:
+    """Importa google.generativeai sob demanda. Evita travar startup do Render."""
+    global genai, GEMINI_AVAILABLE
+    if GEMINI_AVAILABLE:
+        return True
+    try:
+        import google.generativeai as _genai
+        genai = _genai
+        GEMINI_AVAILABLE = True
+        return True
+    except ImportError as e:
+        print(f"[Gemini] google-generativeai não instalado: {e}")
+        return False
+    except Exception as e:
+        print(f"[Gemini] Falha ao importar: {e}")
+        return False
 
 
 # ─────────────────────────────────────────────────────────────
@@ -41,11 +54,11 @@ MODEL_FLASH_LEGACY = "gemini-1.5-flash"  # fallback se 2.5 indisponível
 _initialized = False
 
 def _ensure_initialized() -> bool:
-    """Configura a API key (uma vez)."""
+    """Importa lib (lazy) + configura a API key (uma vez)."""
     global _initialized
     if _initialized:
         return True
-    if not GEMINI_AVAILABLE:
+    if not _lazy_import_gemini():
         return False
     if not GEMINI_API_KEY:
         print("[Gemini] ERRO: GEMINI_API_KEY não configurada nas env vars.")
@@ -53,6 +66,7 @@ def _ensure_initialized() -> bool:
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         _initialized = True
+        print("[Gemini] Inicializado com sucesso.")
         return True
     except Exception as e:
         print(f"[Gemini] Falha na configuração: {e}")

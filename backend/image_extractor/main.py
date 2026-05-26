@@ -16,16 +16,29 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from cv_extractor import extract_cells_via_cv
 from storage import upload_file_to_supabase
-from gemini_extractor import extract_with_fallback as gemini_extract
+
+# IMPORTANTE: gemini_extractor é importado LAZY no endpoint /extract_products_ai
+# (não no startup), porque google-generativeai é uma lib pesada que pode
+# estourar o health check de 5s do Render durante boot.
 
 app = FastAPI(title="Converter-Pro Image Extractor")
 
+# CORS: combo allow_origins=['*'] + allow_credentials=True eh INVALIDO
+# pela spec CORS (navegador rejeita). Usamos regex para cobrir centraldeconversao
+# + preview deploys do Vercel, mantendo credentials=False (nao precisamos).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[
+        "https://centraldeconversao.vercel.app",
+        "http://localhost:5173",
+        "http://localhost:8080",
+        "http://localhost:3000",
+    ],
+    allow_origin_regex=r"https://.*\.vercel\.app",  # cobre previews do Vercel
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 
@@ -362,6 +375,17 @@ async def extract_products_ai(
 
     print(f"\n--- Iniciando extração AI: {file.filename} ---")
     print(f"Fornecedor: {supplier}")
+
+    # LAZY IMPORT: só carrega google-generativeai aqui, não no startup
+    try:
+        from gemini_extractor import extract_with_fallback as gemini_extract
+    except Exception as e:
+        print(f"Erro ao importar gemini_extractor: {e}")
+        return {
+            "success": False,
+            "produtos": [],
+            "error": f"Gemini não disponível: {e}",
+        }
 
     # Salva PDF temporariamente
     try:
