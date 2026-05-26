@@ -527,6 +527,7 @@ async def repair_prices_ai(
     import tempfile
 
     print(f"\n--- Repair prices AI: {file.filename} ---")
+    print(f"[DEBUG] skus_by_page (raw, len={len(skus_by_page)}): {skus_by_page[:200]!r}")
 
     try:
         from gemini_extractor import repair_prices_for_skus
@@ -536,11 +537,15 @@ async def repair_prices_ai(
     try:
         # Parse do JSON de SKUs por página
         skus_map_raw = json.loads(skus_by_page) if skus_by_page else {}
+        print(f"[DEBUG] skus_map_raw type={type(skus_map_raw).__name__} keys={list(skus_map_raw.keys()) if isinstance(skus_map_raw, dict) else 'N/A'}")
         # Normaliza chaves para int (JSON envia como string)
         skus_map = {int(k): list(v) for k, v in skus_map_raw.items() if v}
+        print(f"[DEBUG] skus_map final: {skus_map}")
 
         if not skus_map:
-            return {"success": True, "precos": {}, "elapsed": 0, "paginas_processadas": 0}
+            print(f"[DEBUG] skus_map vazio, retornando early")
+            return {"success": True, "precos": {}, "elapsed": 0, "paginas_processadas": 0,
+                    "debug_received": skus_by_page[:200]}
 
         total_skus = sum(len(s) for s in skus_map.values())
         print(f"[RepairAI] {total_skus} SKUs distribuídos em {len(skus_map)} páginas")
