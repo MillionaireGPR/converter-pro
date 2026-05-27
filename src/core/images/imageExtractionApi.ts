@@ -133,19 +133,34 @@ export const extractImagesViaBackend = async (
 
     console.log(`[ImageExtractionApi] Job ${jobId} iniciado em background. Iniciando polling...`);
 
-    // Polling: Pergunta ao servidor a cada 5 segundos se terminou
-    while (true) {
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      
+    // Polling com TIMEOUT TOTAL e tolerância a falhas transitórias.
+    // Antes era while(true) infinito + not_found ignorado → user via 20min sem progresso.
+    const POLL_INTERVAL_MS = 5000;
+    const MAX_WAIT_MS = 6 * 60 * 1000; // 6 minutos (NIX 51 pgs costuma levar 2-4min)
+    const MAX_CONSECUTIVE_ERRORS = 6; // 6×5s = 30s tolerado de servidor down
+    const MAX_NOT_FOUND_CHECKS = 3; // 3 confirmações de not_found = job perdido
+    const t0 = Date.now();
+    let consecutiveErrors = 0;
+    let notFoundCount = 0;
+    let lastLog = 0;
+
+    while (Date.now() - t0 < MAX_WAIT_MS) {
+      await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+
       try {
         const statusResponse = await fetch(`${BACKEND_URL}/status/${jobId}`);
         if (!statusResponse.ok) {
-          console.warn(`[ImageExtractionApi] Erro na rede ao checar status (${statusResponse.status}). Tentando novamente...`);
+          consecutiveErrors++;
+          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            throw new Error(`Backend retornou ${statusResponse.status} em ${consecutiveErrors} pollings consecutivos — provavelmente caiu`);
+          }
+          console.warn(`[ImageExtractionApi] Erro HTTP ${statusResponse.status} no polling (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}). Tentando novamente...`);
           continue;
         }
-        
+        consecutiveErrors = 0;
+
         const statusData = await statusResponse.json();
-        
+
         if (statusData.status === 'success') {
           console.log(`[ImageExtractionApi] Extração concluída! ZIP: ${statusData.zipUrl}`);
           return {
@@ -160,24 +175,47 @@ export const extractImagesViaBackend = async (
             errors: []
           };
         }
-        
+
         if (statusData.status === 'error') {
           throw new Error(`Backend falhou durante extração: ${statusData.message}`);
         }
-        
+
         if (statusData.status === 'not_found') {
-          throw new Error('Servidor reiniciou ou perdeu o job (not_found).');
+          notFoundCount++;
+          if (notFoundCount >= MAX_NOT_FOUND_CHECKS) {
+            // Servidor confirmou not_found N vezes → job realmente perdido (restart)
+            throw new Error(
+              `Servidor reiniciou e perdeu o job (not_found confirmado ${notFoundCount}x). ` +
+              `Tente novamente.`
+            );
+          }
+          console.warn(`[ImageExtractionApi] not_found ${notFoundCount}/${MAX_NOT_FOUND_CHECKS}, aguardando confirmação...`);
+          continue;
         }
 
-        console.log(`[ImageExtractionApi] Job ${jobId} ainda em processamento...`);
-      } catch (err) {
-        if (err instanceof Error && err.message.includes('Backend falhou')) {
+        // status === 'processing'
+        const now = Date.now();
+        if (now - lastLog > 30_000) {
+          const elapsed = ((now - t0) / 1000).toFixed(0);
+          console.log(`[ImageExtractionApi] [${elapsed}s] Job ${jobId} ainda em processamento...`);
+          lastLog = now;
+        }
+      } catch (err: any) {
+        // Erros do backend (success=false, not_found confirmado): re-raise
+        if (err.message?.includes('Backend falhou') || err.message?.includes('Servidor reiniciou')) {
           throw err;
         }
-        console.warn('[ImageExtractionApi] Falha no polling, ignorando e aguardando...', err);
+        // Erros de rede transitórios: contar e continuar até MAX_CONSECUTIVE_ERRORS
+        consecutiveErrors++;
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          throw new Error(`Backend não responde após ${consecutiveErrors} tentativas: ${err.message}`);
+        }
+        console.warn(`[ImageExtractionApi] Falha de rede no polling (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}): ${err.message}`);
       }
     }
-    
+
+    throw new Error(`Timeout: extração de imagens não concluiu em ${MAX_WAIT_MS / 1000}s`);
+
   } catch (error: any) {
     console.error('[ImageExtractionApi] Erro:', error);
     return {

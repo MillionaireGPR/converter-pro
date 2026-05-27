@@ -139,10 +139,16 @@ export const repairPricesViaGemini = async (
   if (!jobId) return null;
 
   // ─── FASE 2: Polling até status terminal ───
-  // 51 páginas × ~3s / 3 workers = ~60s. Damos margem de 5min total.
+  // 51 páginas × ~3s / 3 workers = ~60s. Margem total 5min.
+  // Backend pode cair (OOM) durante processamento → toleramos N erros consecutivos
+  // mas se persistir, abortamos com erro claro em vez de poll infinito.
   const POLL_INTERVAL_MS = 3000;
   const MAX_WAIT_MS = 5 * 60 * 1000; // 5 min
+  const MAX_CONSECUTIVE_ERRORS = 10; // 10×3s = 30s tolerado de servidor down
+  const MAX_NOT_FOUND_CHECKS = 3;
   const t0 = Date.now();
+  let consecutiveErrors = 0;
+  let notFoundCount = 0;
   let lastLog = 0;
 
   while (Date.now() - t0 < MAX_WAIT_MS) {
@@ -150,10 +156,28 @@ export const repairPricesViaGemini = async (
     try {
       const statusResp = await fetch(`${BACKEND_URL}/repair_prices_ai_status/${jobId}`);
       if (!statusResp.ok) {
-        console.warn(`[GeminiRepair] Status HTTP ${statusResp.status}, continuando polling...`);
+        consecutiveErrors++;
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          console.error(`[GeminiRepair] Backend retornou HTTP ${statusResp.status} em ${consecutiveErrors} pollings — provavelmente caiu`);
+          return null;
+        }
+        console.warn(`[GeminiRepair] Status HTTP ${statusResp.status} (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}), continuando polling...`);
         continue;
       }
+      consecutiveErrors = 0;
+
       const data = await statusResp.json();
+
+      // not_found = servidor reiniciou e perdeu o job (filesystem efêmero)
+      if (data.status === 'not_found') {
+        notFoundCount++;
+        if (notFoundCount >= MAX_NOT_FOUND_CHECKS) {
+          console.error(`[GeminiRepair] Job perdido (not_found ${notFoundCount}x) — Render reiniciou`);
+          return null;
+        }
+        console.warn(`[GeminiRepair] not_found ${notFoundCount}/${MAX_NOT_FOUND_CHECKS}, aguardando...`);
+        continue;
+      }
 
       // Log de progresso a cada 15s
       const now = Date.now();
@@ -177,7 +201,12 @@ export const repairPricesViaGemini = async (
       }
       // status === 'processing' → continua polling
     } catch (err: any) {
-      console.warn('[GeminiRepair] Erro de rede em polling (continua):', err.message);
+      consecutiveErrors++;
+      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        console.error(`[GeminiRepair] Backend não responde após ${consecutiveErrors} pollings: ${err.message}`);
+        return null;
+      }
+      console.warn(`[GeminiRepair] Erro de rede no polling (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}): ${err.message}`);
     }
   }
 
