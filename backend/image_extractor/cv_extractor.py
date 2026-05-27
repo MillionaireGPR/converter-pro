@@ -37,7 +37,14 @@ def extract_cells_via_cv(
     - Embedded : 0 ou >10 V-lines → imagem mais próxima por Y-proximity
 
     Em ambos os casos, usa doc.extract_image() para qualidade perfeita.
+
+    Memória (otimizado para Render Starter 512MB):
+      - 1 página A4 raster @ scale=1.5 = ~890×1260×3 bytes = ~3.3MB
+      - Sem gc periódico, 51 páginas acumulavam ~170MB de rasters não-coletados
+      - Agora: del raster + gc.collect() a cada 10 páginas + libera pixmap
     """
+    import gc
+
     doc = fitz.open(pdf_path)
     matches: List[Dict] = []
     unmatched: List[Dict] = []
@@ -101,7 +108,15 @@ def extract_cells_via_cv(
         matches.extend(pm)
         unmatched.extend(pu)
 
+        # Libera memória explicitamente (Render Starter 512MB é apertado)
+        del raster, pix, page_imgs, h_lines, v_lines
+        page = None
+        if (page_idx + 1) % 10 == 0:
+            gc.collect()
+            print(f"[CV] gc.collect() em pág {page_idx+1}/{total_pages}")
+
     doc.close()
+    gc.collect()
     print(f"[CV] Total: {len(matches)} matches | {len(unmatched)} unmatched")
     return matches, unmatched
 
