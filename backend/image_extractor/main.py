@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.05.27-repair-v4-deep-debug"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.05.27-repair-v5-async"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
@@ -505,90 +505,160 @@ async def get_ai_status(job_id: str):
 
 # ─────────────────────────────────────────────────────────────
 # Endpoint AI CIRÚRGICO: resgata APENAS os preços faltantes
-# ~10-30s (vs ~10min do /extract_products_ai completo)
+# ARQUITETURA ASSÍNCRONA: POST retorna jobId imediato, frontend
+# faz polling em GET /repair_prices_ai_status/{job_id}.
 # ─────────────────────────────────────────────────────────────
+
+def _run_repair_task(job_id: str, pdf_path: str, skus_map: dict):
+    """Background task: chama Gemini para resgatar preços e persiste status."""
+    import time
+    import threading
+
+    # Heartbeat: atualiza updatedAt a cada 30s para evitar zombie detection
+    stop_heartbeat = threading.Event()
+    def heartbeat():
+        while not stop_heartbeat.is_set():
+            stop_heartbeat.wait(30)
+            if stop_heartbeat.is_set():
+                break
+            cur = _load_status(job_id)
+            if cur.get("status") == "processing":
+                _save_status(job_id, cur)  # apenas refresca updatedAt
+    hb_thread = threading.Thread(target=heartbeat, daemon=True)
+    hb_thread.start()
+
+    try:
+        from gemini_extractor import repair_prices_for_skus
+
+        api_key_set = bool(os.environ.get("GEMINI_API_KEY", "").strip())
+        api_key_len = len(os.environ.get("GEMINI_API_KEY", "").strip())
+
+        _save_status(job_id, {
+            "status": "processing",
+            "stage": "calling_gemini",
+            "totalSkus": sum(len(s) for s in skus_map.values()),
+            "totalPages": len(skus_map),
+            "debug_env": {
+                "gemini_key_set": api_key_set,
+                "gemini_key_len": api_key_len,
+                "service_version": SERVICE_VERSION,
+            },
+        })
+
+        # max_workers=3: mais conservador para evitar OOM no Render Starter (512MB)
+        result = repair_prices_for_skus(pdf_path, skus_map, max_workers=3)
+        result["debug_env"] = {
+            "gemini_key_set": api_key_set,
+            "gemini_key_len": api_key_len,
+            "service_version": SERVICE_VERSION,
+        }
+        result["status"] = "success"
+        _save_status(job_id, result)
+        print(f"[RepairTask] Job {job_id} concluído: {len(result.get('precos', {}))} preços")
+
+    except Exception as e:
+        import traceback
+        print(f"[RepairTask] Erro no job {job_id}: {e}")
+        print(traceback.format_exc())
+        _save_status(job_id, {
+            "status": "error",
+            "success": False,
+            "precos": {},
+            "error": str(e),
+            "details": traceback.format_exc()[:1000],
+        })
+    finally:
+        stop_heartbeat.set()
+        try:
+            os.unlink(pdf_path)
+        except OSError:
+            pass
+
 
 @app.post("/repair_prices_ai_v2")
 @app.post("/repair_prices_ai")
 async def repair_prices_ai(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     skus_by_page: str = Form("{}"),
 ):
     """
-    Resgata preços de SKUs específicos usando Gemini Vision por PÁGINA.
+    Resgata preços faltantes via Gemini Vision (ASSÍNCRONO).
 
-    Estratégia muito mais rápida que /extract_products_ai:
-      - Pipeline base já extraiu 285 produtos perfeitamente (2s)
-      - Só 91 estão com preço zerado
-      - Renderiza APENAS as páginas desses 91 SKUs como JPEG
-      - Chama Gemini Flash em PARALELO (6 workers)
-      - Output minimal: {sku: preco}
-      - Tempo total: ~10-30s vs ~10min
+    POST aqui dispara background task e retorna jobId imediato.
+    Frontend faz polling em /repair_prices_ai_status/{job_id}.
 
-    Args:
-      file: PDF do catálogo
-      skus_by_page: JSON {"4": ["NX020", "NX021"], "11": ["NX349"], ...}
-
-    Returns:
-      {success, model, precos: {sku: preco}, paginas_processadas, elapsed}
+    Por que assíncrono: 91 SKUs em 51 páginas × ~3s/page = ~150s,
+    mas Render gateway mata HTTP request em ~100-300s. Síncrono = 502.
     """
     import tempfile
+    import uuid
 
-    print(f"\n--- Repair prices AI: {file.filename} ---")
+    print(f"\n--- Repair prices AI (ASYNC): {file.filename} ---")
     print(f"[DEBUG] skus_by_page (raw, len={len(skus_by_page)}): {skus_by_page[:200]!r}")
 
-    try:
-        from gemini_extractor import repair_prices_for_skus
-    except Exception as e:
-        return {"success": False, "precos": {}, "error": f"Gemini não disponível: {e}"}
+    job_id = str(uuid.uuid4())
 
     try:
-        # Parse do JSON de SKUs por página
         skus_map_raw = json.loads(skus_by_page) if skus_by_page else {}
-        print(f"[DEBUG] skus_map_raw type={type(skus_map_raw).__name__} keys={list(skus_map_raw.keys()) if isinstance(skus_map_raw, dict) else 'N/A'}")
-        # Normaliza chaves para int (JSON envia como string)
         skus_map = {int(k): list(v) for k, v in skus_map_raw.items() if v}
-        print(f"[DEBUG] skus_map final: {skus_map}")
+        print(f"[DEBUG] skus_map final ({len(skus_map)} pgs, {sum(len(s) for s in skus_map.values())} SKUs)")
 
         if not skus_map:
-            print(f"[DEBUG] skus_map vazio, retornando early")
-            return {"success": True, "precos": {}, "elapsed": 0, "paginas_processadas": 0,
-                    "debug_received": skus_by_page[:200]}
-
-        total_skus = sum(len(s) for s in skus_map.values())
-        print(f"[RepairAI] {total_skus} SKUs distribuídos em {len(skus_map)} páginas")
-
-        # Salva PDF temp
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            content = await file.read()
-            tmp.write(content)
-            pdf_path = tmp.name
-
-        # Adiciona infos de env disponíveis (sem expor a key)
-        api_key_set = bool(os.environ.get("GEMINI_API_KEY", "").strip())
-        api_key_len = len(os.environ.get("GEMINI_API_KEY", "").strip())
-        print(f"[DEBUG] GEMINI_API_KEY: set={api_key_set}, len={api_key_len}")
-
-        try:
-            result = repair_prices_for_skus(pdf_path, skus_map, max_workers=6)
-            # Anexa diagnóstico ao response
-            result["debug_env"] = {
-                "gemini_key_set": api_key_set,
-                "gemini_key_len": api_key_len,
-                "service_version": SERVICE_VERSION,
+            # Early return síncrono: nada para fazer
+            return {
+                "jobId": job_id,
+                "status": "success",
+                "success": True,
+                "precos": {},
+                "paginas_processadas": 0,
+                "elapsed": 0,
+                "debug_received": skus_by_page[:200],
             }
-            return result
-        finally:
-            try:
-                os.unlink(pdf_path)
-            except OSError:
-                pass
+
+        # Persiste PDF em temp (job worker vai ler depois)
+        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+        content = await file.read()
+        tmp.write(content)
+        tmp.close()
+        pdf_path = tmp.name
+
+        # Status inicial
+        _save_status(job_id, {
+            "status": "processing",
+            "stage": "queued",
+            "totalSkus": sum(len(s) for s in skus_map.values()),
+            "totalPages": len(skus_map),
+        })
+
+        # Dispara background task
+        background_tasks.add_task(_run_repair_task, job_id, pdf_path, skus_map)
+
+        return {
+            "jobId": job_id,
+            "status": "processing",
+            "totalSkus": sum(len(s) for s in skus_map.values()),
+            "totalPages": len(skus_map),
+        }
 
     except Exception as e:
         import traceback
         print(f"Erro repair_prices_ai: {e}")
         print(traceback.format_exc())
-        return {"success": False, "precos": {}, "error": str(e)}
+        return {
+            "jobId": job_id,
+            "status": "error",
+            "success": False,
+            "precos": {},
+            "error": str(e),
+        }
+
+
+@app.get("/repair_prices_ai_status/{job_id}")
+async def get_repair_status(job_id: str):
+    """Polling endpoint para o resultado do repair AI assíncrono."""
+    data = _load_status(job_id)
+    return data
 
 
 if __name__ == "__main__":

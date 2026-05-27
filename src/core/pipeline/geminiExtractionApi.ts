@@ -26,7 +26,15 @@ export interface ResultadoRepair {
 }
 
 /**
- * Chama o backend para resgatar preços faltantes.
+ * Chama o backend para resgatar preços faltantes (ASSÍNCRONO via polling).
+ *
+ * Fluxo:
+ *   1. POST /repair_prices_ai → retorna jobId imediato (~1s)
+ *   2. Polling GET /repair_prices_ai_status/{jobId} a cada 3s
+ *   3. Retorna quando status="success" ou "error"
+ *
+ * Por que assíncrono: 51 páginas × ~3s/page = ~150s, mas Render gateway mata
+ * HTTP request em ~100-300s. Síncrono dava 502 + CORS.
  *
  * @param file - PDF do catálogo
  * @param skusByPage - { numero_pagina: [sku1, sku2, ...] }
@@ -41,8 +49,10 @@ export const repairPricesViaGemini = async (
     return { success: true, model: '', precos: {}, paginas_processadas: 0, elapsed: 0 };
   }
 
-  console.log(`[GeminiRepair] Resgatando ${totalSkus} preços em ${Object.keys(skusByPage).length} páginas...`);
+  console.log(`[GeminiRepair] Resgatando ${totalSkus} preços em ${Object.keys(skusByPage).length} páginas (modo async)...`);
 
+  // ─── FASE 1: POST cria o job ───
+  let jobId: string | null = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const fd = new FormData();
@@ -50,8 +60,7 @@ export const repairPricesViaGemini = async (
       fd.append('skus_by_page', JSON.stringify(skusByPage));
 
       const ctrl = new AbortController();
-      // 2min: catálogo NIX (91 produtos em ~40 pgs) leva ~30-60s no Gemini paralelo
-      const tid = setTimeout(() => ctrl.abort(), 120_000);
+      const tid = setTimeout(() => ctrl.abort(), 60_000); // 60s só para upload + criar job
 
       const response = await fetch(`${BACKEND_URL}/repair_prices_ai`, {
         method: 'POST',
@@ -60,7 +69,6 @@ export const repairPricesViaGemini = async (
       });
       clearTimeout(tid);
 
-      // Retry em transitórios
       if ([502, 503, 504].includes(response.status)) {
         if (attempt < maxAttempts) {
           console.warn(`[GeminiRepair] HTTP ${response.status} tentativa ${attempt}, retry em 3s...`);
@@ -71,23 +79,28 @@ export const repairPricesViaGemini = async (
       }
 
       if (!response.ok) {
-        console.error(`[GeminiRepair] HTTP ${response.status}`);
+        console.error(`[GeminiRepair] HTTP ${response.status} ao criar job`);
         return null;
       }
 
-      const result = (await response.json()) as ResultadoRepair;
-      if (result.success) {
-        console.log(
-          `[GeminiRepair] ✓ ${Object.keys(result.precos).length}/${totalSkus} preços resgatados ` +
-          `em ${result.elapsed?.toFixed(1) || '?'}s (modelo ${result.model || 'flash'})`
-        );
-      } else {
-        console.warn('[GeminiRepair] Falha:', result.error);
+      const created = await response.json();
+
+      // Job pode já ter retornado completo (early return quando totalSkus=0)
+      if (created.status === 'success' && created.precos !== undefined) {
+        console.log('[GeminiRepair] ✓ Resposta imediata (nada a processar)');
+        return created as ResultadoRepair;
       }
-      return result;
+
+      jobId = created.jobId;
+      if (!jobId) {
+        console.error('[GeminiRepair] Backend não retornou jobId:', created);
+        return null;
+      }
+      console.log(`[GeminiRepair] Job criado: ${jobId}. Iniciando polling...`);
+      break;
     } catch (err: any) {
       if (err.name === 'AbortError') {
-        console.warn('[GeminiRepair] Timeout (>2min)');
+        console.warn('[GeminiRepair] Timeout no upload (>60s)');
         return null;
       }
       const transient =
@@ -99,10 +112,57 @@ export const repairPricesViaGemini = async (
         await new Promise(r => setTimeout(r, 3000));
         continue;
       }
-      console.error('[GeminiRepair] Erro definitivo:', err);
+      console.error('[GeminiRepair] Erro definitivo no POST:', err);
       return null;
     }
   }
+
+  if (!jobId) return null;
+
+  // ─── FASE 2: Polling até status terminal ───
+  // 51 páginas × ~3s / 3 workers = ~60s. Damos margem de 5min total.
+  const POLL_INTERVAL_MS = 3000;
+  const MAX_WAIT_MS = 5 * 60 * 1000; // 5 min
+  const t0 = Date.now();
+  let lastLog = 0;
+
+  while (Date.now() - t0 < MAX_WAIT_MS) {
+    await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+    try {
+      const statusResp = await fetch(`${BACKEND_URL}/repair_prices_ai_status/${jobId}`);
+      if (!statusResp.ok) {
+        console.warn(`[GeminiRepair] Status HTTP ${statusResp.status}, continuando polling...`);
+        continue;
+      }
+      const data = await statusResp.json();
+
+      // Log de progresso a cada 15s
+      const now = Date.now();
+      if (now - lastLog > 15_000) {
+        const elapsed = ((now - t0) / 1000).toFixed(0);
+        console.log(`[GeminiRepair] [${elapsed}s] status=${data.status} stage=${data.stage || '?'}`);
+        lastLog = now;
+      }
+
+      if (data.status === 'success') {
+        const pricesCount = data.precos ? Object.keys(data.precos).length : 0;
+        console.log(
+          `[GeminiRepair] ✓ ${pricesCount}/${totalSkus} preços resgatados ` +
+          `em ${data.elapsed?.toFixed(1) || '?'}s (modelo ${data.model || 'flash'})`
+        );
+        return data as ResultadoRepair;
+      }
+      if (data.status === 'error') {
+        console.warn('[GeminiRepair] Job retornou erro:', data.error || data.message);
+        return data as ResultadoRepair;
+      }
+      // status === 'processing' → continua polling
+    } catch (err: any) {
+      console.warn('[GeminiRepair] Erro de rede em polling (continua):', err.message);
+    }
+  }
+
+  console.error('[GeminiRepair] Timeout total >5min em polling');
   return null;
 };
 
