@@ -44,21 +44,74 @@ export const extractImagesViaBackend = async (
     }
     formData.append('skus', JSON.stringify(allSkus));
     
-    // 3. Chamar backend Python
+    // 3. Chamar backend Python (com retry agressivo p/ ERR_HTTP2_PROTOCOL_ERROR)
     console.log(`[ImageExtractionApi] Chamando backend: ${BACKEND_URL}/process`);
-    
-    const response = await fetch(`${BACKEND_URL}/process`, {
-      method: 'POST',
-      body: formData
-    });
-    
+
+    const MAX_ATTEMPTS = 5;
+    let response: Response | null = null;
+    let lastErr: any = null;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const ctrl = new AbortController();
+        // 180s: PDFs ~13MB em conexão lenta podem levar 60-90s só pra upload
+        const tid = setTimeout(() => ctrl.abort(), 180_000);
+
+        response = await fetch(`${BACKEND_URL}/process`, {
+          method: 'POST',
+          body: formData,
+          signal: ctrl.signal,
+          headers: { 'Accept': 'application/json' },
+        });
+        clearTimeout(tid);
+
+        if ([502, 503, 504].includes(response.status)) {
+          if (attempt < MAX_ATTEMPTS) {
+            const backoff = Math.min(3000 * Math.pow(2, attempt - 1), 30_000);
+            console.warn(`[ImageExtractionApi] HTTP ${response.status} tentativa ${attempt}/${MAX_ATTEMPTS}, retry em ${backoff/1000}s...`);
+            await new Promise(r => setTimeout(r, backoff));
+            response = null;
+            continue;
+          }
+        }
+        break; // sucesso ou erro definitivo
+      } catch (err: any) {
+        lastErr = err;
+        const msg = err.message || String(err);
+        const isTransient =
+          err.name === 'AbortError' ||
+          err.name === 'TypeError' ||
+          msg.includes('Failed to fetch') ||
+          msg.includes('HTTP2_PROTOCOL_ERROR') ||
+          msg.includes('HTTP/2') ||
+          msg.includes('NetworkError') ||
+          msg.includes('ECONNRESET');
+
+        if (isTransient && attempt < MAX_ATTEMPTS) {
+          const backoff = Math.min(3000 * Math.pow(2, attempt - 1), 30_000);
+          const kind = msg.includes('HTTP2') ? 'HTTP/2 reset' : (err.name === 'AbortError' ? 'timeout' : 'rede');
+          console.warn(
+            `[ImageExtractionApi] Erro ${kind} tentativa ${attempt}/${MAX_ATTEMPTS}: ${msg.slice(0, 80)}. ` +
+            `Retry em ${backoff/1000}s...`
+          );
+          await new Promise(r => setTimeout(r, backoff));
+          continue;
+        }
+        throw err; // erro definitivo
+      }
+    }
+
+    if (!response) {
+      throw lastErr || new Error('Backend não respondeu após retentativas');
+    }
+
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(`Backend retornou ${response.status}: ${errorText}`);
     }
-    
+
     const initialResult = await response.json();
-    console.log('[ImageExtractionApi] Backend respondeu:', initialResult);
+    console.log(`[ImageExtractionApi] Backend respondeu (após tentativas):`, initialResult);
     
     if (initialResult.status === 'error') {
       throw new Error(`Erro no backend: ${initialResult.message}`);

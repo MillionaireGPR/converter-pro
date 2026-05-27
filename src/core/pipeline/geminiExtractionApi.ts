@@ -29,12 +29,16 @@ export interface ResultadoRepair {
  * Chama o backend para resgatar preços faltantes (ASSÍNCRONO via polling).
  *
  * Fluxo:
- *   1. POST /repair_prices_ai → retorna jobId imediato (~1s)
+ *   1. POST /repair_prices_ai → retorna jobId imediato (~5-10s upload + ~1s criar job)
  *   2. Polling GET /repair_prices_ai_status/{jobId} a cada 3s
  *   3. Retorna quando status="success" ou "error"
  *
- * Por que assíncrono: 51 páginas × ~3s/page = ~150s, mas Render gateway mata
- * HTTP request em ~100-300s. Síncrono dava 502 + CORS.
+ * Resiliência (resolve ERR_HTTP2_PROTOCOL_ERROR esporádico via Cloudflare/Render):
+ *   - maxAttempts default 5 (era 2). Cada retry resfresca conexão HTTP/2.
+ *   - Backoff exponencial: 3s, 6s, 12s, 24s
+ *   - Timeout do upload: 180s (PDF 13MB em conexão lenta pode levar >60s)
+ *   - Erros tratados como transitórios: AbortError, Failed to fetch,
+ *     HTTP2_PROTOCOL_ERROR, NetworkError, ECONNRESET
  *
  * @param file - PDF do catálogo
  * @param skusByPage - { numero_pagina: [sku1, sku2, ...] }
@@ -42,16 +46,17 @@ export interface ResultadoRepair {
 export const repairPricesViaGemini = async (
   file: File,
   skusByPage: Record<number, string[]>,
-  maxAttempts: number = 2
+  maxAttempts: number = 5
 ): Promise<ResultadoRepair | null> => {
   const totalSkus = Object.values(skusByPage).reduce((acc, arr) => acc + arr.length, 0);
   if (totalSkus === 0) {
     return { success: true, model: '', precos: {}, paginas_processadas: 0, elapsed: 0 };
   }
 
-  console.log(`[GeminiRepair] Resgatando ${totalSkus} preços em ${Object.keys(skusByPage).length} páginas (modo async)...`);
+  const fileSizeMB = (file.size / 1024 / 1024).toFixed(1);
+  console.log(`[GeminiRepair] Resgatando ${totalSkus} preços em ${Object.keys(skusByPage).length} páginas (PDF ${fileSizeMB}MB, async)...`);
 
-  // ─── FASE 1: POST cria o job ───
+  // ─── FASE 1: POST cria o job (com retry agressivo para HTTP/2 reset) ───
   let jobId: string | null = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -60,19 +65,23 @@ export const repairPricesViaGemini = async (
       fd.append('skus_by_page', JSON.stringify(skusByPage));
 
       const ctrl = new AbortController();
-      const tid = setTimeout(() => ctrl.abort(), 60_000); // 60s só para upload + criar job
+      // 180s: PDFs de ~13MB em conexão lenta podem levar 60-90s só pra upload
+      const tid = setTimeout(() => ctrl.abort(), 180_000);
 
       const response = await fetch(`${BACKEND_URL}/repair_prices_ai`, {
         method: 'POST',
         body: fd,
         signal: ctrl.signal,
+        // Headers explícitos podem ajudar alguns proxies HTTP/2
+        headers: { 'Accept': 'application/json' },
       });
       clearTimeout(tid);
 
       if ([502, 503, 504].includes(response.status)) {
         if (attempt < maxAttempts) {
-          console.warn(`[GeminiRepair] HTTP ${response.status} tentativa ${attempt}, retry em 3s...`);
-          await new Promise(r => setTimeout(r, 3000));
+          const backoff = Math.min(3000 * Math.pow(2, attempt - 1), 30_000);
+          console.warn(`[GeminiRepair] HTTP ${response.status} tentativa ${attempt}/${maxAttempts}, retry em ${backoff/1000}s...`);
+          await new Promise(r => setTimeout(r, backoff));
           continue;
         }
         return null;
@@ -96,23 +105,33 @@ export const repairPricesViaGemini = async (
         console.error('[GeminiRepair] Backend não retornou jobId:', created);
         return null;
       }
-      console.log(`[GeminiRepair] Job criado: ${jobId}. Iniciando polling...`);
+      console.log(`[GeminiRepair] ✓ Job criado: ${jobId} (tentativa ${attempt}). Iniciando polling...`);
       break;
     } catch (err: any) {
-      if (err.name === 'AbortError') {
-        console.warn('[GeminiRepair] Timeout no upload (>60s)');
-        return null;
-      }
-      const transient =
+      const msg = err.message || String(err);
+      const isAbort = err.name === 'AbortError';
+      const isTransient =
+        isAbort ||
         err.name === 'TypeError' ||
-        err.message?.includes('Failed to fetch') ||
-        err.message?.includes('HTTP2_PROTOCOL_ERROR');
-      if (transient && attempt < maxAttempts) {
-        console.warn(`[GeminiRepair] Erro transitório tentativa ${attempt}: ${err.message}. Retry em 3s...`);
-        await new Promise(r => setTimeout(r, 3000));
+        msg.includes('Failed to fetch') ||
+        msg.includes('HTTP2_PROTOCOL_ERROR') ||
+        msg.includes('HTTP/2') ||
+        msg.includes('NetworkError') ||
+        msg.includes('ECONNRESET') ||
+        msg.includes('socket hang up') ||
+        msg.includes('ERR_CONNECTION');
+
+      if (isTransient && attempt < maxAttempts) {
+        const backoff = Math.min(3000 * Math.pow(2, attempt - 1), 30_000);
+        const kind = isAbort ? 'timeout' : (msg.includes('HTTP2') ? 'HTTP/2 reset' : 'rede');
+        console.warn(
+          `[GeminiRepair] Erro ${kind} tentativa ${attempt}/${maxAttempts}: ${msg.slice(0, 80)}. ` +
+          `Retry em ${backoff/1000}s...`
+        );
+        await new Promise(r => setTimeout(r, backoff));
         continue;
       }
-      console.error('[GeminiRepair] Erro definitivo no POST:', err);
+      console.error(`[GeminiRepair] Erro definitivo após ${attempt} tentativa(s):`, err);
       return null;
     }
   }
