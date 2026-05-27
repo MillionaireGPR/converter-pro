@@ -325,11 +325,15 @@ def _repair_single_page(
     Retorna {sku: preco}. Preços não encontrados são omitidos.
     """
     if not _ensure_initialized():
+        print(f"[Gemini Repair] Pág {page_num}: _ensure_initialized FALHOU dentro do worker")
         return {}
 
+    print(f"[Gemini Repair] Pág {page_num}: renderizando JPEG para {len(skus_in_page)} SKUs: {skus_in_page[:3]}...")
     jpeg_bytes = _render_page_to_jpeg(pdf_path, page_num)
     if not jpeg_bytes:
+        print(f"[Gemini Repair] Pág {page_num}: _render_page_to_jpeg retornou None")
         return {}
+    print(f"[Gemini Repair] Pág {page_num}: JPEG renderizado ({len(jpeg_bytes)} bytes), chamando Gemini...")
 
     try:
         # Monta o prompt com a lista de SKUs específicos
@@ -413,8 +417,10 @@ def repair_prices_for_skus(
     start = time.time()
     all_precos: Dict[str, float] = {}
     paginas_processadas = 0
+    debug_pages: Dict[str, Any] = {}  # page -> {"skus": N, "result": "ok"/"erro", "detail": "..."}
 
-    print(f"[Gemini Repair] Iniciando reparo de {sum(len(s) for s in skus_by_page.values())} SKUs em {len(skus_by_page)} páginas (paralelo={max_workers})")
+    total_skus_in = sum(len(s) for s in skus_by_page.values())
+    print(f"[Gemini Repair] Iniciando reparo de {total_skus_in} SKUs em {len(skus_by_page)} páginas (paralelo={max_workers})")
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
@@ -429,8 +435,12 @@ def repair_prices_for_skus(
                 if page_precos:
                     all_precos.update(page_precos)
                     paginas_processadas += 1
+                    debug_pages[str(page_num)] = {"precos_found": len(page_precos), "status": "ok"}
                     print(f"[Gemini Repair] Pág {page_num}: {len(page_precos)} preços OK")
+                else:
+                    debug_pages[str(page_num)] = {"precos_found": 0, "status": "empty"}
             except Exception as e:
+                debug_pages[str(page_num)] = {"precos_found": 0, "status": "exception", "error": str(e)[:200]}
                 print(f"[Gemini Repair] Pág {page_num} erro: {e}")
 
     elapsed = time.time() - start
@@ -443,6 +453,9 @@ def repair_prices_for_skus(
         "paginas_processadas": paginas_processadas,
         "elapsed": elapsed,
         "error": None,
+        "debug_pages": debug_pages,
+        "debug_total_skus": total_skus_in,
+        "debug_total_pages_input": len(skus_by_page),
     }
 
 

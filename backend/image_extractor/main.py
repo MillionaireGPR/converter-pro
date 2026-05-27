@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.05.27-repair-v3-forced"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.05.27-repair-v4-deep-debug"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
@@ -564,8 +564,19 @@ async def repair_prices_ai(
             tmp.write(content)
             pdf_path = tmp.name
 
+        # Adiciona infos de env disponíveis (sem expor a key)
+        api_key_set = bool(os.environ.get("GEMINI_API_KEY", "").strip())
+        api_key_len = len(os.environ.get("GEMINI_API_KEY", "").strip())
+        print(f"[DEBUG] GEMINI_API_KEY: set={api_key_set}, len={api_key_len}")
+
         try:
             result = repair_prices_for_skus(pdf_path, skus_map, max_workers=6)
+            # Anexa diagnóstico ao response
+            result["debug_env"] = {
+                "gemini_key_set": api_key_set,
+                "gemini_key_len": api_key_len,
+                "service_version": SERVICE_VERSION,
+            }
             return result
         finally:
             try:
