@@ -52,7 +52,7 @@ describe('buildSkusByPageForRepair', () => {
 });
 
 describe('applyRepairedPrices', () => {
-  it('aplica preço resgatado e limpa erro + status', () => {
+  it('aplica preço resgatado e limpa erro + status (legado: invalido→valido)', () => {
     const produtos = [{
       codigo: 'NX020',
       preco: 0,
@@ -63,6 +63,7 @@ describe('applyRepairedPrices', () => {
     }];
     const result = applyRepairedPrices(produtos, { NX020: 5.5 });
     expect(result.applied).toBe(1);
+    expect(result.statusUpdated).toBe(1);
     expect(produtos[0].preco).toBe(5.5);
     expect(produtos[0].precoBase).toBe(5.5);
     expect(produtos[0].precoFinal).toBe(5.5);
@@ -70,10 +71,43 @@ describe('applyRepairedPrices', () => {
     expect(produtos[0].status).toBe('valido');
   });
 
+  it('aplica preço e atualiza status para validado (V2: erro→validado)', () => {
+    // Bug reportado: pipeline V2 usa status='erro' / 'validado' (NÃO 'invalido'/'valido').
+    // applyRepairedPrices DEVE reconhecer ambos os esquemas.
+    const produtos = [{
+      codigo: 'NX020',
+      preco: 0,
+      precoBase: 0,
+      precoFinal: 0,
+      status: 'erro',
+      erros: ['Preço não encontrado ou inválido'],
+    }];
+    const result = applyRepairedPrices(produtos, { NX020: 5.5 });
+    expect(result.applied).toBe(1);
+    expect(result.statusUpdated).toBe(1);
+    expect(produtos[0].status).toBe('validado');
+    expect(produtos[0].erros).toEqual([]);
+  });
+
+  it('mantém status pendente quando há warnings (V2)', () => {
+    const produtos = [{
+      codigo: 'NX020',
+      preco: 0,
+      status: 'erro',
+      erros: ['Preço não encontrado'],
+      warnings: ['Descrição muito curta'],
+    }];
+    const result = applyRepairedPrices(produtos, { NX020: 5.5 });
+    expect(result.applied).toBe(1);
+    // erros zerou, mas há warnings → status='pendente' (não validado)
+    expect(produtos[0].status).toBe('pendente');
+  });
+
   it('NÃO sobrescreve produtos que já têm preço válido', () => {
     const produtos = [{ codigo: 'A1', preco: 10, precoBase: 10, precoFinal: 10 }];
     const result = applyRepairedPrices(produtos, { A1: 99 });
     expect(result.applied).toBe(0);
+    expect(result.statusUpdated).toBe(0);
     expect(produtos[0].preco).toBe(10);
   });
 

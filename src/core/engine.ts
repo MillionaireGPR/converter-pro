@@ -85,10 +85,28 @@ export const processarArquivoV2 = async (
         const repairResult = await repairPricesViaGemini(file, skusByPage);
 
         if (repairResult && repairResult.success && Object.keys(repairResult.precos).length > 0) {
-          const { applied } = applyRepairedPrices(result.produtosNormalizados, repairResult.precos);
+          const { applied, statusUpdated } = applyRepairedPrices(result.produtosNormalizados, repairResult.precos);
           console.log(
             `[Engine] ✓ AI repair: ${applied} preços resgatados em ${repairResult.elapsed?.toFixed(1) || '?'}s ` +
-            `(modelo ${repairResult.model})`
+            `(modelo ${repairResult.model}) — ${statusUpdated} status atualizados para 'validado'`
+          );
+          // CRÍTICO: recalcular stats após repair. O result.stats foi calculado
+          // pelo pipeline base ANTES dos preços serem aplicados. Sem isso, a UI
+          // continua mostrando "91 erros" mesmo com preços resgatados.
+          const recalc = result.produtosNormalizados.reduce(
+            (acc, p) => {
+              if (p.status === 'validado') acc.validos++;
+              else if (p.status === 'erro') acc.comErro++;
+              else if (p.status === 'pendente') acc.comWarning++;
+              return acc;
+            },
+            { validos: 0, comErro: 0, comWarning: 0 }
+          );
+          result.stats.validos = recalc.validos;
+          result.stats.comErro = recalc.comErro;
+          result.stats.comWarning = recalc.comWarning;
+          console.log(
+            `[Engine] Stats recalculados: ${recalc.validos} válidos, ${recalc.comErro} erros, ${recalc.comWarning} pendentes`
           );
         } else if (repairResult && !repairResult.success) {
           console.warn(`[Engine] AI repair falhou (pipeline base segue): ${repairResult.error}`);
