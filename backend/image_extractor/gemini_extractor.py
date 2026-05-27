@@ -303,11 +303,10 @@ def extract_products_with_gemini(
     }
 
 
-def _render_page_to_jpeg(pdf_path: str, page_num: int, dpi: int = 100) -> Optional[bytes]:
+def _render_page_to_jpeg(pdf_path: str, page_num: int, dpi: int = 90) -> Optional[bytes]:
     """Renderiza uma única página do PDF como JPEG em memória.
 
-    DPI 100 é suficiente para Gemini ler texto. Menor que 100 economiza
-    bandwidth/tokens sem perder qualidade.
+    DPI 90: suficiente para Gemini ler texto, ~20% menos RAM/tokens que 100.
     """
     try:
         doc = fitz.open(pdf_path)
@@ -315,11 +314,12 @@ def _render_page_to_jpeg(pdf_path: str, page_num: int, dpi: int = 100) -> Option
             doc.close()
             return None
         page = doc.load_page(page_num - 1)  # 0-based
-        # Renderiza com zoom adequado (72 DPI base * zoom)
         zoom = dpi / 72.0
         mat = fitz.Matrix(zoom, zoom)
         pix = page.get_pixmap(matrix=mat)
         jpeg_bytes = pix.tobytes("jpeg")
+        # Libera pixmap explicitamente (segura ~5-10MB intermediários)
+        pix = None
         doc.close()
         return jpeg_bytes
     except Exception as e:
@@ -327,26 +327,68 @@ def _render_page_to_jpeg(pdf_path: str, page_num: int, dpi: int = 100) -> Option
         return None
 
 
-def _repair_single_page(
-    pdf_path: str,
+def _render_pages_batch(pdf_path: str, page_nums: List[int], dpi: int = 90) -> Dict[int, bytes]:
+    """
+    Renderiza um LOTE de páginas SERIALMENTE usando UMA ÚNICA instância de fitz.
+
+    Por que serial e não paralelo: cada `fitz.open(pdf_path)` carrega o PDF
+    inteiro na RAM (12MB+ para NIX). Com 3-6 workers paralelos isso estoura
+    o limite de 512MB do Render Starter (OOM confirmado em produção).
+
+    Aqui:
+      - UMA única abertura do PDF (~12MB)
+      - Loop sequencial render → JPEG bytes → libera pixmap
+      - gc.collect() periódico para evitar acumular
+      - Footprint: ~12MB (PDF) + ~200KB × N (JPEGs já em RAM final)
+
+    Retorna {page_num: jpeg_bytes}. Páginas que falharam são omitidas.
+    """
+    import gc
+    results: Dict[int, bytes] = {}
+    if not page_nums:
+        return results
+    try:
+        doc = fitz.open(pdf_path)
+        n_pages = len(doc)
+        for i, page_num in enumerate(page_nums):
+            if page_num < 1 or page_num > n_pages:
+                continue
+            try:
+                page = doc.load_page(page_num - 1)
+                zoom = dpi / 72.0
+                mat = fitz.Matrix(zoom, zoom)
+                pix = page.get_pixmap(matrix=mat)
+                results[page_num] = pix.tobytes("jpeg")
+                pix = None
+                page = None
+            except Exception as e:
+                print(f"[Gemini] Falha ao renderizar página {page_num}: {e}")
+            # gc a cada 10 páginas evita acúmulo
+            if (i + 1) % 10 == 0:
+                gc.collect()
+        doc.close()
+        gc.collect()
+    except Exception as e:
+        print(f"[Gemini] Falha ao abrir PDF para batch render: {e}")
+    return results
+
+
+def _call_gemini_with_jpeg(
+    jpeg_bytes: bytes,
     page_num: int,
     skus_in_page: List[str],
-    model_name: str = MODEL_FLASH
+    model_name: str = MODEL_FLASH,
 ) -> Dict[str, float]:
     """
-    Chama Gemini Vision em UMA página com lista pequena de SKUs.
+    Chama Gemini Vision em UMA página JÁ RENDERIZADA (bytes JPEG passados).
+    Não toca disco, não abre PDF. Só faz a chamada de API.
+
     Retorna {sku: preco}. Preços não encontrados são omitidos.
     """
     if not _ensure_initialized():
         print(f"[Gemini Repair] Pág {page_num}: _ensure_initialized FALHOU dentro do worker")
         return {}
-
-    print(f"[Gemini Repair] Pág {page_num}: renderizando JPEG para {len(skus_in_page)} SKUs: {skus_in_page[:3]}...")
-    jpeg_bytes = _render_page_to_jpeg(pdf_path, page_num)
-    if not jpeg_bytes:
-        print(f"[Gemini Repair] Pág {page_num}: _render_page_to_jpeg retornou None")
-        return {}
-    print(f"[Gemini Repair] Pág {page_num}: JPEG renderizado ({len(jpeg_bytes)} bytes), chamando Gemini...")
+    print(f"[Gemini Repair] Pág {page_num}: JPEG já em memória ({len(jpeg_bytes)} bytes), chamando Gemini...")
 
     try:
         # Monta o prompt com a lista de SKUs específicos
@@ -403,15 +445,33 @@ def _repair_single_page(
 def repair_prices_for_skus(
     pdf_path: str,
     skus_by_page: Dict[int, List[str]],
-    max_workers: int = 6
+    max_workers: int = 3
 ) -> Dict[str, Any]:
     """
-    Repara preços de SKUs específicos no PDF, processando páginas em PARALELO.
+    Repara preços de SKUs específicos no PDF.
+
+    ARQUITETURA (otimizada para Render Starter 512MB):
+      FASE 1 (serial, rápido, leve em RAM):
+        - Abre PDF UMA vez (~12MB para NIX)
+        - Renderiza todas páginas como JPEG sequencialmente
+        - gc.collect a cada 10 páginas
+        - Footprint: ~12MB PDF + ~200KB × N JPEGs (típico ~15MB total)
+        - Tempo: ~0.5s por página × 51 = ~25s
+
+      FASE 2 (paralelo, lento por causa de API mas leve em RAM):
+        - Manda JPEGs já em memória para Gemini em paralelo
+        - max_workers=3 conservador (Gemini Flash free tier 15 RPM)
+        - Footprint adicional: ~zero (só HTTP requests)
+        - Tempo: ~3-5s por página, mas 3 em paralelo = ~30-50s
+
+    POR QUE NÃO PARALELO total: cada `fitz.open()` carrega 12MB. Com 3 workers
+    paralelos = 36MB + pixmap intermediário ~5MB × 3 = +15MB = pico ~50MB+ só
+    pra renderizar. Causa OOM em Render Starter (512MB) com PDFs >= 10MB.
 
     Args:
       pdf_path: caminho do PDF
       skus_by_page: {numero_pagina: [sku1, sku2, ...]}
-      max_workers: paralelismo (6 é seguro p/ free tier 15 RPM Gemini Flash)
+      max_workers: paralelismo APENAS na chamada Gemini (default 3)
 
     Returns:
       {
@@ -424,6 +484,7 @@ def repair_prices_for_skus(
       }
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    import gc
 
     if not _ensure_initialized():
         return {
@@ -435,16 +496,43 @@ def repair_prices_for_skus(
     start = time.time()
     all_precos: Dict[str, float] = {}
     paginas_processadas = 0
-    debug_pages: Dict[str, Any] = {}  # page -> {"skus": N, "result": "ok"/"erro", "detail": "..."}
+    debug_pages: Dict[str, Any] = {}
 
     total_skus_in = sum(len(s) for s in skus_by_page.values())
-    print(f"[Gemini Repair] Iniciando reparo de {total_skus_in} SKUs em {len(skus_by_page)} páginas (paralelo={max_workers})")
+    pages_to_render = sorted([pn for pn, skus in skus_by_page.items() if skus])
+    print(f"[Gemini Repair] Iniciando reparo de {total_skus_in} SKUs em {len(pages_to_render)} páginas")
 
+    # ─── FASE 1: pre-render serial (1 fitz.open total, baixa RAM) ───
+    print(f"[Gemini Repair] FASE 1: renderizando {len(pages_to_render)} páginas (serial, baixa RAM)...")
+    t_render_start = time.time()
+    jpegs_by_page = _render_pages_batch(pdf_path, pages_to_render, dpi=90)
+    t_render = time.time() - t_render_start
+    total_jpeg_bytes = sum(len(b) for b in jpegs_by_page.values())
+    print(f"[Gemini Repair] FASE 1 OK: {len(jpegs_by_page)} páginas renderizadas em {t_render:.1f}s "
+          f"({total_jpeg_bytes/1024/1024:.1f}MB de JPEGs)")
+
+    # Páginas que falharam ao renderizar
+    for pn in pages_to_render:
+        if pn not in jpegs_by_page:
+            debug_pages[str(pn)] = {"precos_found": 0, "status": "render_failed"}
+
+    if not jpegs_by_page:
+        elapsed = time.time() - start
+        return {
+            "success": False, "model": MODEL_FLASH, "precos": {},
+            "paginas_processadas": 0, "elapsed": elapsed,
+            "error": "Falha ao renderizar todas as páginas",
+            "debug_pages": debug_pages,
+            "debug_total_skus": total_skus_in,
+            "debug_total_pages_input": len(skus_by_page),
+        }
+
+    # ─── FASE 2: Gemini em paralelo (só HTTP, baixa RAM) ───
+    print(f"[Gemini Repair] FASE 2: chamando Gemini em paralelo (max_workers={max_workers})...")
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
-            pool.submit(_repair_single_page, pdf_path, pn, skus, MODEL_FLASH): pn
-            for pn, skus in skus_by_page.items()
-            if skus
+            pool.submit(_call_gemini_with_jpeg, jpegs_by_page[pn], pn, skus_by_page[pn], MODEL_FLASH): pn
+            for pn in jpegs_by_page.keys()
         }
         for fut in as_completed(futures):
             page_num = futures[fut]
@@ -460,6 +548,10 @@ def repair_prices_for_skus(
             except Exception as e:
                 debug_pages[str(page_num)] = {"precos_found": 0, "status": "exception", "error": str(e)[:200]}
                 print(f"[Gemini Repair] Pág {page_num} erro: {e}")
+
+    # Libera memória das JPEGs após processamento
+    jpegs_by_page.clear()
+    gc.collect()
 
     elapsed = time.time() - start
     print(f"[Gemini Repair] ✓ {len(all_precos)} preços resgatados em {elapsed:.1f}s")

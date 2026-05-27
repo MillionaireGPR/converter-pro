@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.05.27-repair-v5-async"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.05.27-repair-v6-low-ram"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
