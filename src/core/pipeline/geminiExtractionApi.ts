@@ -171,14 +171,17 @@ export const repairPricesViaGemini = async (
  * Match por código (case-insensitive, trim). Só preenche preço se local
  * estiver zerado/inválido (não sobrescreve dados bons).
  *
- * Também LIMPA o erro "Preço não encontrado" e marca status='valido'.
+ * Também LIMPA o erro "Preço não encontrado" e re-valida o status:
+ *   - Pipeline V2 usa: 'validado' | 'pendente' | 'erro' (NÃO 'valido'/'invalido')
+ *   - Quando preço é aplicado E não sobra nenhum erro → status='validado'
+ *   - Quando preço é aplicado E sobra warning/erro não-preço → mantém status original
  */
 export const applyRepairedPrices = <T extends Record<string, any>>(
   produtos: T[],
   precos: Record<string, number>
-): { applied: number } => {
+): { applied: number; statusUpdated: number } => {
   if (!precos || Object.keys(precos).length === 0) {
-    return { applied: 0 };
+    return { applied: 0, statusUpdated: 0 };
   }
   const normalize = (s: string) => String(s || '').trim().toUpperCase();
   const precosNorm: Record<string, number> = {};
@@ -186,7 +189,14 @@ export const applyRepairedPrices = <T extends Record<string, any>>(
     precosNorm[normalize(k)] = v;
   }
 
+  // Detecta se uma string de erro é sobre preço (em qualquer variação)
+  const isPriceError = (e: string): boolean => {
+    const lower = String(e).toLowerCase();
+    return lower.includes('preço') || lower.includes('preco') || lower.includes('price');
+  };
+
   let applied = 0;
+  let statusUpdated = 0;
   for (const prod of produtos) {
     const candidates = [
       normalize(prod.codigo),
@@ -211,20 +221,34 @@ export const applyRepairedPrices = <T extends Record<string, any>>(
     (prod as any).precoFinal = matchedPrice;
     applied++;
 
-    // Limpa erro de "Preço não encontrado" e valida o produto
+    // Limpa erros relacionados a preço (qualquer variação)
     if (Array.isArray((prod as any).erros)) {
-      (prod as any).erros = (prod as any).erros.filter((e: string) => {
-        const lower = String(e).toLowerCase();
-        return !lower.includes('preço') && !lower.includes('preco');
-      });
-      if ((prod as any).erros.length === 0 && (prod as any).status === 'invalido') {
-        (prod as any).status = 'valido';
+      (prod as any).erros = (prod as any).erros.filter((e: string) => !isPriceError(e));
+    }
+
+    // Re-valida status. Pipeline V2 status: 'validado' | 'pendente' | 'erro'.
+    // Pipeline legado status: 'valido' | 'invalido'. Suportamos os dois.
+    const remainingErros = Array.isArray((prod as any).erros) ? (prod as any).erros : [];
+    const remainingWarnings = Array.isArray((prod as any).warnings) ? (prod as any).warnings : [];
+
+    const prevStatus = (prod as any).status;
+    if (remainingErros.length === 0) {
+      let newStatus: string;
+      if (remainingWarnings.length > 0) {
+        newStatus = 'pendente';
+      } else {
+        // Tipo V2: 'validado'. Tipo legado: 'valido'. Detecta pelo valor anterior.
+        newStatus = prevStatus === 'invalido' || prevStatus === 'valido' ? 'valido' : 'validado';
+      }
+      if (prevStatus !== newStatus) {
+        (prod as any).status = newStatus;
+        statusUpdated++;
       }
     }
   }
 
-  console.log(`[GeminiRepair Apply] ${applied} preços aplicados aos produtos locais`);
-  return { applied };
+  console.log(`[GeminiRepair Apply] ${applied} preços aplicados, ${statusUpdated} status atualizados`);
+  return { applied, statusUpdated };
 };
 
 /**
