@@ -16,6 +16,8 @@ import base64
 import time
 from typing import List, Dict, Any, Optional
 
+import fitz  # PyMuPDF: renderiza páginas PDF como JPEG para enviar ao Gemini Vision
+
 # LAZY IMPORT: google-generativeai é uma lib pesada (~200MB) que estoura o
 # health check de 5s do Render no startup. Importamos só na primeira chamada.
 genai = None
@@ -55,24 +57,35 @@ MODEL_FLASH_LATEST = "gemini-flash-latest"  # 3º fallback: alias do Google
 
 
 _initialized = False
+_init_error: str = ""  # captura motivo da falha para debug
+
+def _get_api_key() -> str:
+    """Lê a key SEMPRE do env (não cacheia em var global de módulo).
+    Evita o bug onde a key é avaliada em import-time antes do dotenv carregar."""
+    return os.environ.get("GEMINI_API_KEY", "").strip()
+
 
 def _ensure_initialized() -> bool:
     """Importa lib (lazy) + configura a API key (uma vez)."""
-    global _initialized
+    global _initialized, _init_error
     if _initialized:
         return True
     if not _lazy_import_gemini():
+        _init_error = "google-generativeai não importável"
         return False
-    if not GEMINI_API_KEY:
-        print("[Gemini] ERRO: GEMINI_API_KEY não configurada nas env vars.")
+    api_key = _get_api_key()
+    if not api_key:
+        _init_error = "GEMINI_API_KEY não setada/vazia no env"
+        print(f"[Gemini] ERRO: {_init_error}")
         return False
     try:
-        genai.configure(api_key=GEMINI_API_KEY)
+        genai.configure(api_key=api_key)
         _initialized = True
-        print("[Gemini] Inicializado com sucesso.")
+        print(f"[Gemini] Inicializado com sucesso (key len={len(api_key)}).")
         return True
     except Exception as e:
-        print(f"[Gemini] Falha na configuração: {e}")
+        _init_error = f"Falha em genai.configure: {e}"
+        print(f"[Gemini] {_init_error}")
         return False
 
 
@@ -358,12 +371,14 @@ def _repair_single_page(
         )
 
         raw = (response.text or "").strip()
+        print(f"[Gemini Repair] Pág {page_num}: resposta crua ({len(raw)} chars): {raw[:300]}")
         if raw.startswith("```"):
             raw = raw.strip("`")
             if raw.startswith("json"):
                 raw = raw[4:].strip()
         data = json.loads(raw)
         precos = data.get("precos", {})
+        print(f"[Gemini Repair] Pág {page_num}: precos parseados: {precos}")
         # Filtra null/0 e converte para float
         result = {}
         for sku, preco in precos.items():
@@ -378,8 +393,11 @@ def _repair_single_page(
         return result
 
     except Exception as e:
-        print(f"[Gemini Repair] Falha pág {page_num} ({len(skus_in_page)} SKUs): {str(e)[:150]}")
-        return {}
+        print(f"[Gemini Repair] Falha pág {page_num} ({len(skus_in_page)} SKUs): {str(e)[:200]}")
+        # Re-raise para que repair_prices_for_skus marque a página como
+        # "exception" (e não como "empty" — preços não encontrados).
+        # Isso permite distinguir erro de API vs ausência legítima.
+        raise
 
 
 def repair_prices_for_skus(
@@ -411,7 +429,7 @@ def repair_prices_for_skus(
         return {
             "success": False, "model": MODEL_FLASH, "precos": {},
             "paginas_processadas": 0, "elapsed": 0,
-            "error": "Gemini não configurado (GEMINI_API_KEY)",
+            "error": f"Gemini não configurado: {_init_error}",
         }
 
     start = time.time()
@@ -446,13 +464,32 @@ def repair_prices_for_skus(
     elapsed = time.time() - start
     print(f"[Gemini Repair] ✓ {len(all_precos)} preços resgatados em {elapsed:.1f}s")
 
+    # Honestidade: se todas as páginas falharam silenciosamente (exception) e
+    # nada foi processado, success=False com motivo agregado. Caso contrário
+    # success=True (até para resultados vazios — Gemini pode legitimamente
+    # não encontrar o SKU na página declarada).
+    all_failed = (
+        paginas_processadas == 0
+        and total_skus_in > 0
+        and len(debug_pages) > 0
+        and all(p.get("status") == "exception" for p in debug_pages.values())
+    )
+    success = not all_failed
+    error_msg = None
+    if all_failed:
+        first_err = next(
+            (p.get("error") for p in debug_pages.values() if p.get("error")),
+            "todas as páginas estouraram exceção (ver debug_pages)"
+        )
+        error_msg = f"Gemini falhou em todas as páginas: {first_err}"
+
     return {
-        "success": True,
+        "success": success,
         "model": MODEL_FLASH,
         "precos": all_precos,
         "paginas_processadas": paginas_processadas,
         "elapsed": elapsed,
-        "error": None,
+        "error": error_msg,
         "debug_pages": debug_pages,
         "debug_total_skus": total_skus_in,
         "debug_total_pages_input": len(skus_by_page),
