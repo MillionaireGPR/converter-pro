@@ -51,8 +51,9 @@ const getPositionalValues = (campos: Record<string, any>): any[] => {
 const looksLikeCode = (val: any): boolean => {
   if (val === null || val === undefined) return false;
   const s = String(val).trim();
-  // Códigos FREECOM: alfanuméricos 4-15 chars, sem espaços, podem ter hífen
-  return /^[A-Z0-9-]{4,15}$/i.test(s);
+  // Códigos FREECOM: alfanuméricos 4-20 chars, sem espaços, podem ter
+  // hífen ou `+` (catálogo real tem códigos como "K7625+JK7003").
+  return /^[A-Z0-9+\-]{4,20}$/i.test(s);
 };
 
 const toNum = (val: any): number => {
