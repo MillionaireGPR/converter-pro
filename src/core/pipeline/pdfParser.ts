@@ -98,7 +98,10 @@ export const scorePdfPages = (
 ): PdfPageScore[] => {
   const pricePattern = /R?\$\s*\d|(\d{1,3}[.,]\d{2})/;
   const codePattern = /\b[A-Z]{2,4}\d{3,}/;
-  const blockPattern = /\b(CÓD|COD|REF|CÓDIGO|MATERIAL|TAMANHO)\s*:/i;
+  // Marcadores estruturais expandidos: muitos catálogos visuais (DAGIA, GIRA,
+  // NeoFestas) não usam "CÓD:" explícito mas têm marcadores equivalentes
+  // ("CX C/", "C/8Pçs", "FINAL" próximo a preço).
+  const blockPattern = /\b(CÓD|COD|REF|CÓDIGO|MATERIAL|TAMANHO)\s*:|CX\s*C\/\d+|C\/\d+\s*(?:P[cç]s|Jgs|Pecas|Jogos)/i;
 
   return pages.map(p => {
     const text = p.text || '';
@@ -113,11 +116,12 @@ export const scorePdfPages = (
     if (hasCodePattern) confidence += 25;
     if (hasProductBlockPattern) confidence += 25;
 
-    // Compensação para catálogos válidos que não têm preço ou "CÓD:" explícito
-    if (hasText && hasCodePattern && confidence <= 50) {
-      // Se encontrarmos vários códigos, é definitivamente uma página de produtos
+    // Compensação para catálogos válidos que não têm preço ou "CÓD:" explícito.
+    // Threshold reduzido 3→2: DAGIA tem grid 2x2 (2 códigos/página) e era
+    // injustamente penalizado.
+    if (hasText && hasCodePattern && confidence <= 75) {
       const codeMatches = text.match(new RegExp(codePattern, 'g')) || [];
-      if (codeMatches.length >= 3) {
+      if (codeMatches.length >= 2) {
         confidence = Math.max(confidence, 80); // Garante pelo menos 80%
       }
     }
