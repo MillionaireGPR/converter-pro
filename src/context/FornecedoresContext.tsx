@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useCallback, ReactNode, use
 import { supabase } from "../integrations/supabase/client";
 import { toast } from "sonner";
 import { Fornecedor, RegraMapeamento } from "./types";
+import { getAllAdapters } from "../core/supplierRules/registry";
 
 interface FornecedoresContextType {
   fornecedores: Fornecedor[];
@@ -53,16 +54,10 @@ export function FornecedoresProvider({ children }: { children: ReactNode }) {
     async function init() {
       setIsLoading(true);
       await refreshFornecedores();
-      
-      setRegrasMapeamento([
-        { id: '1', fornecedor: 'Tramontina', colunaOrigem: 'Cod For', colunaDestino: 'Código do Produto', tipo: 'direto' },
-        { id: '2', fornecedor: 'Tramontina', colunaOrigem: 'Descr Compl', colunaDestino: 'Nome do Produto', tipo: 'direto' },
-        { id: '3', fornecedor: 'Tramontina', colunaOrigem: 'P.Venda', colunaDestino: 'Preço Base', tipo: 'direto' },
-        { id: '4', fornecedor: 'Vonder', colunaOrigem: 'CODIGO', colunaDestino: 'Código do Produto', tipo: 'direto' },
-        { id: '5', fornecedor: 'Vonder', colunaOrigem: 'DESCRICAO + MEDIDA', colunaDestino: 'Nome do Produto', tipo: 'formula' },
-        { id: '6', fornecedor: 'Bosch', colunaOrigem: 'EAN', colunaDestino: 'Código do Produto', tipo: 'direto' },
-        { id: '7', fornecedor: 'Bosch', colunaOrigem: 'IPI fixo 10%', colunaDestino: 'IPI', tipo: 'fixo', valor: '10' },
-      ]);
+
+      // Regras mocadas removidas. A página "Regras de Mapeamento" inicia vazia
+      // até o user popular OU até o engine ser conectado ao supplierRules real.
+      setRegrasMapeamento([]);
       setIsLoading(false);
     }
     init();
@@ -116,19 +111,27 @@ export function FornecedoresProvider({ children }: { children: ReactNode }) {
   }, [fornecedores]);
 
   const seedSuppliers = useCallback(async () => {
-    // Basic implementation copied from AppContext
+    // Insere no Supabase os 14 fornecedores REAIS suportados pelo pipeline.
+    // Fonte da verdade: src/core/supplierRules/registry.ts (getAllAdapters).
+    // Antes inseria Tramontina/Vonder (sem adapter), o que fazia o dropdown
+    // listar opções que o engine não conseguia processar.
     try {
       setIsLoading(true);
-      const defaultSuppliers = [
-        { name: 'Tramontina', file_type: 'Excel', frequency: 'Mensal', default_discount: 15, default_ipi: 5, status: 'ativo' },
-        { name: 'Vonder', file_type: 'Excel', frequency: 'Quinzenal', default_discount: 10, default_ipi: 10, status: 'ativo' },
-      ];
+      const adapters = getAllAdapters();
+      const defaultSuppliers = adapters.map(a => ({
+        name: a.nome,
+        file_type: 'PDF', // Maioria dos adapters suporta PDF; pode ser editado depois
+        frequency: 'Mensal',
+        default_discount: 0,
+        default_ipi: 0,
+        status: 'ativo',
+      }));
       const { data: existing } = await (supabase.from('suppliers') as any).select('name');
       const existingNames = existing?.map((s: any) => s.name) || [];
       const toInsert = defaultSuppliers.filter(s => !existingNames.includes(s.name));
       if (toInsert.length > 0) await (supabase.from('suppliers') as any).insert(toInsert);
       await refreshFornecedores();
-      toast.success("Fornecedores padrão adicionados.");
+      toast.success(`${toInsert.length} fornecedores adicionados (de ${adapters.length} suportados).`);
     } catch (error) {
       toast.warning("Modo offline para fornecedores.");
     } finally {

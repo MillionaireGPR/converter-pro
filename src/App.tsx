@@ -16,7 +16,6 @@ import Fornecedores from "./pages/Fornecedores";
 import RegrasMapeamento from "./pages/RegrasMapeamento";
 import Historico from "./pages/Historico";
 import Configuracoes from "./pages/Configuracoes";
-import FeatureFlags from "./pages/admin/FeatureFlags";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -42,7 +41,6 @@ const App = () => (
               <Route path="/regras" element={<RegrasMapeamento />} />
               <Route path="/historico" element={<Historico />} />
               <Route path="/configuracoes" element={<Configuracoes />} />
-              <Route path="/admin/feature-flags" element={<FeatureFlags />} />
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>
