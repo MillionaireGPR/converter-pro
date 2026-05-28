@@ -47,8 +47,12 @@ export const dagiaTemplate: PdfTemplate = {
     // do PDF vem com quebras de linha entre atributos.
     descricao: /(?:DXPD|DXP|DZ|DPB|DCM|DS|DM|DV|LHSP|LX|CF)\d+(?:[A-Z]?\/L\d+)?\s+(.+?)(?=\s*(?:CX\s*C\/|R\$|NCM|IPI|$))/is,
 
-    // Preço: R$ XX,XX ou R$ XXX.XX (formato BR)
-    preco: /R\$\s*(\d{1,4}(?:[.,]\d{2})?)/i,
+    // Preço: R$ XX,XX ou R$ XXX.XX (formato BR — DECIMAIS OBRIGATÓRIOS).
+    // Versão anterior aceitava "R$ 12" sem decimais e capturava lixo de
+    // outros pontos do texto (ex: contagem "R$ 12" virando preço quando o
+    // produto real vinha marcado como "EM BREVE..."). Decimais obrigatórios
+    // evitam falso positivo.
+    preco: /R\$\s*(\d{1,4}(?:\.\d{3})*[.,]\d{2})/i,
 
     // Quantidade caixa: "CX C/12Jgs", "C/8Pçs", "C/24Pcs" — captura o número
     // (suporta múltiplas variantes: Jgs/Pçs/Pcs/Pecas)

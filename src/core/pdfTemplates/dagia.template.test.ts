@@ -79,7 +79,7 @@ DXP24 Xicara avulsa`;
     }
   });
 
-  it('preco extractor captura R$ XX,XX e R$ XXX.XX', () => {
+  it('preco extractor captura R$ XX,XX e R$ XXX.XX (decimais obrigatórios)', () => {
     const samples = [
       { texto: 'CX C/12Jgs R$ 33,75', expected: '33,75' },
       { texto: 'preço final R$ 50.63', expected: '50.63' },
@@ -90,6 +90,18 @@ DXP24 Xicara avulsa`;
     for (const { texto, expected } of samples) {
       const match = texto.match(precoRegex);
       expect(match?.[1], `falhou em "${texto}"`).toBe(expected);
+    }
+  });
+
+  it('🔒 NÃO captura "R$ 12" SEM decimais (false positive de DXPD com EM BREVE)', () => {
+    // Bug reportado: DXPD51-55 marcados como "EM BREVE..." no catálogo real
+    // ficavam com R$ 12,00 vindo de match indevido em texto sem decimais.
+    // Decimais obrigatórios eliminam essa captura.
+    const semDecimais = ['R$ 12', 'R$ 99', 'R$ 1000', 'R$12 unidades'];
+    const precoRegex = dagiaTemplate.fieldExtractors!.preco as RegExp;
+    for (const texto of semDecimais) {
+      const match = texto.match(precoRegex);
+      expect(match, `"${texto}" NÃO deve ser tratado como preço`).toBeNull();
     }
   });
 

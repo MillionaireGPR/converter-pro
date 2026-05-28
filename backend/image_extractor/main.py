@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.05.28-repair-v8-dagia-cv-1.2"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.05.28-v9-dagia-headers"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")

@@ -67,15 +67,32 @@ export const interpretPdfSemantically = (
 
     // 1. Tenta extrair usando o separador de blocos do template
     if (template && template.blockExtractor) {
-      const blocks = typeof template.blockExtractor === 'function' 
+      const blocks = typeof template.blockExtractor === 'function'
         ? template.blockExtractor(text)
         : text.split(template.blockExtractor).filter(b => b.trim().length > 10);
-      
+
       const pageStartIdx = produtos.length;
-      
+
+      // Se o template define um extrator de código, blocos sem código são
+      // cabeçalhos/títulos de seção e devem ser DESCARTADOS (não viram
+      // produtos com erro). Validado em catálogo DAGIA onde "XICARAS C/
+      // PIRES OPALINA" e "JOGO JANTAR DE" eram processados como produtos
+      // sem código (status: erro). Templates sem fieldExtractor.codigo
+      // continuam aceitando blocos sem código (extração genérica).
+      const requiresCodigo = !!template.fieldExtractors?.codigo;
+
       for (let i = 0; i < blocks.length; i++) {
         const block = blocks[i];
         const campos = applyTemplateExtractors(block, template);
+
+        // Descarta cabeçalhos de seção: bloco sem código quando template exige
+        if (requiresCodigo) {
+          const codigo = campos['codigo'];
+          if (!codigo || String(codigo).trim().length === 0) {
+            continue;
+          }
+        }
+
           const prod: ProdutoBruto = {
             campos,
             linhaOrigem: i,
