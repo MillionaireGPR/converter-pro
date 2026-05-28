@@ -437,9 +437,22 @@ export default function BasePadronizada() {
                           {renderEditableCell(p.id, 'ipi', String(p.ipi))}
                         </TableCell>
                         <TableCell className="text-sm max-w-[150px]">
-                          <span className="text-xs text-muted-foreground block truncate" title={p.descricao}>
-                            {p.qtdCaixa ? `Cx c/ ${p.qtdCaixa} unidades` : '-'}
-                          </span>
+                          {/* Combina Cx c/ + informacoesAdicionais (ex: "Cx c/ 12 unidades - EM BREVE")
+                              Cliente Nunes usa essa coluna no cadastro Mercos. */}
+                          {(() => {
+                            const parts: string[] = [];
+                            if (p.qtdCaixa) parts.push(`Cx c/ ${p.qtdCaixa} unidades`);
+                            const extra = (p as any).informacoesAdicionais;
+                            if (extra && typeof extra === 'string' && extra.trim().length > 0) {
+                              parts.push(extra.trim());
+                            }
+                            const fullText = parts.length > 0 ? parts.join(' - ') : '-';
+                            return (
+                              <span className="text-xs text-muted-foreground block truncate" title={fullText}>
+                                {fullText}
+                              </span>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell>
                           {renderEditableCell(p.id, 'categoria', p.categoria, "text-xs px-2 py-0.5 rounded-md bg-muted text-muted-foreground")}

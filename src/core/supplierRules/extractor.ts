@@ -113,8 +113,11 @@ export const extractProducts = (
     }
 
     // Heurística de fallback para PDFs Tabulares (onde as chaves são col_0, col_1...) ou itens sem preço
-    // IMPORTANTE: Não rodar se campos['__postProcessed'] estiver true (já tratado pelo postProcess do fornecedor)
-    if (preco === 0 && !campos['__postProcessed']) {
+    // IMPORTANTE: Não rodar se:
+    //   - campos['__postProcessed'] estiver true (já tratado pelo postProcess do fornecedor)
+    //   - campos['__emBreve'] estiver true (produto marcado EM BREVE no catálogo;
+    //     a heurística pegaria o valor de "Cx c/12 unidades" como preço incorreto)
+    if (preco === 0 && !campos['__postProcessed'] && !campos['__emBreve']) {
       // 1. Procura primeiro nas strings puras algum padrão de moeda explícito
       const values = Object.values(campos).map(String);
       const precoMatch = values.find(v => /R?\$\s*[\d.,]+/.test(v) || /^[\d.,]+\s*$/.test(v));
@@ -218,17 +221,35 @@ export const extractProducts = (
     // Limpa descrição
     finalDescricao = cleanDescription(finalDescricao);
 
+    // Marcador opcional: produto sem preço por estar "EM BREVE" no catálogo
+    // (cliente cadastra no Mercos, completa o preço quando catálogo anunciar).
+    // Tratamos como warning (pendente) em vez de erro.
+    const isEmBreve = !!campos['__emBreve'];
+
+    // informacoesAdicionais setado por post-processamento específico do supplier
+    const informacoesAdicionais = campos['informacoesAdicionais']
+      ? toStr(campos['informacoesAdicionais'])
+      : undefined;
+
     // Validações básicas
     if (!finalCodigo) erros.push('Código não encontrado');
     if (!finalDescricao) erros.push('Descrição não encontrada');
-    if (preco <= 0) erros.push('Preço não encontrado ou inválido');
+    if (preco <= 0) {
+      if (isEmBreve) {
+        // Produto marcado EM BREVE no catálogo — não é erro, é pendência
+        // intencional. Cliente revisará preço quando anunciado.
+        warnings.push('Produto marcado EM BREVE no catálogo — preço a confirmar');
+      } else {
+        erros.push('Preço não encontrado ou inválido');
+      }
+    }
     if (finalDescricao && finalDescricao.length < 3) warnings.push('Descrição muito curta');
 
     // Calcula confiança
     let confianca = 100;
     if (!finalCodigo) confianca -= 30;
     if (!finalDescricao) confianca -= 30;
-    if (preco <= 0) confianca -= 20;
+    if (preco <= 0 && !isEmBreve) confianca -= 20;
     if (warnings.length > 0) confianca -= warnings.length * 5;
     confianca = Math.max(0, confianca);
 
@@ -260,7 +281,9 @@ export const extractProducts = (
       erros,
       warnings,
       spatialContext: bruto.spatialContext, // NOVO: Propagando coordenadas
-    });
+      // Campos opcionais propagados via spread (não fazem parte do tipo)
+      ...(informacoesAdicionais ? { informacoesAdicionais } : {}),
+    } as any);
   }
 
   return produtos;

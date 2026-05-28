@@ -378,6 +378,22 @@ const postProcessBySupplier = (
   const supplierName = template.supplierName.toUpperCase();
 
   // ═══════════════════════════════════════════════════
+  // DAGIA — Produtos marcados "EM BREVE..." entram como válidos
+  // ═══════════════════════════════════════════════════
+  // Cliente Nunes Representações cadastra produtos no Mercos a partir
+  // desta base. Produtos "EM BREVE" devem aparecer na conversão com a
+  // indicação clara em Informações Adicionais (Cx c/ N + EM BREVE).
+  // O preço fica ausente e é completado manualmente quando o catálogo
+  // de fato anunciar o valor.
+  if (supplierName.includes('DAGIA')) {
+    if (/em\s+breve/i.test(block)) {
+      campos['__emBreve'] = true;
+      // informacoesAdicionais será combinado com qtdCaixa pelo extractor
+      campos['informacoesAdicionais'] = 'EM BREVE';
+    }
+  }
+
+  // ═══════════════════════════════════════════════════
   // GIRA IMPORTS — Regras específicas
   // ═══════════════════════════════════════════════════
   if (supplierName.includes('GIRA')) {
