@@ -246,11 +246,15 @@ export const extractProducts = (
     if (finalDescricao && finalDescricao.length < 3) warnings.push('Descrição muito curta');
 
     // Calcula confiança
+    // Penalidades suavizadas após validação E2E (DAGIA fechava em 51%
+    // por excesso de warnings menores que não comprometem o cadastro
+    // no Mercos). Erros estruturais (sem código/descrição/preço) continuam
+    // pesados; warnings de heurística pesam menos.
     let confianca = 100;
     if (!finalCodigo) confianca -= 30;
     if (!finalDescricao) confianca -= 30;
     if (preco <= 0 && !isEmBreve) confianca -= 20;
-    if (warnings.length > 0) confianca -= warnings.length * 5;
+    if (warnings.length > 0) confianca -= warnings.length * 2; // era 5
     confianca = Math.max(0, confianca);
 
     produtos.push({
