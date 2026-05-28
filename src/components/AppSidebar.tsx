@@ -1,7 +1,6 @@
 import {
   LayoutDashboard, FileUp, Database, Tag, Download, ArrowRightLeft,
-  Building2, Settings as SettingsIcon, History, Workflow, LogOut,
-  FlaskConical
+  Building2, Settings as SettingsIcon, History, LogOut,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -19,10 +18,11 @@ const menuItems = [
   { title: "Exportações Mercos", url: "/exportacoes", icon: Download },
   { title: "Conversão de Pedidos", url: "/pedidos", icon: ArrowRightLeft },
   { title: "Fornecedores", url: "/fornecedores", icon: Building2 },
-  { title: "Regras de Mapeamento", url: "/regras", icon: Workflow },
+  // "Regras de Mapeamento" ESCONDIDO do menu até ser conectado ao supplierRules
+  // real (hoje cria regras em paralelo no banco que o engine ignora). A página
+  // continua disponível na rota /regras se precisar acessar diretamente.
   { title: "Histórico", url: "/historico", icon: History },
   { title: "Configurações", url: "/configuracoes", icon: SettingsIcon },
-  { title: "Feature Flags", url: "/admin/feature-flags", icon: FlaskConical, admin: true },
 ];
 
 export function AppSidebar() {
