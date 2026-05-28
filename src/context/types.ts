@@ -42,6 +42,8 @@ export interface Produto {
   isFixedPrice?: boolean;
   bloqueiaDesconto?: boolean;
   additionalInfo?: string;
+  /** Texto auxiliar exibido em "Informações Adicionais" (ex: "EM BREVE") */
+  informacoesAdicionais?: string;
   qtdCaixa: number;
   categoria: string;
   embalagem: string;
