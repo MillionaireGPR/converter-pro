@@ -27,7 +27,11 @@ def extract_cells_via_cv(
     pdf_path: str,
     skus_list: list,
     output_folder: str,
-    scale: float = 1.5
+    scale: float = 1.2  # Reduzido de 1.5 → 1.2 (28/05/2026):
+                        # OOM recorrente no Render Starter 512MB. scale=1.5 gera
+                        # raster 890×1260×3 = ~3.3MB/página. scale=1.2 gera
+                        # 712×1010×3 = ~2.2MB/página (-33% RAM). Qualidade ainda
+                        # suficiente para detecção de grid e extração via xref.
 ) -> Tuple[List[Dict], List[Dict]]:
     """
     Extrai a imagem do produto para cada SKU.
@@ -39,9 +43,10 @@ def extract_cells_via_cv(
     Em ambos os casos, usa doc.extract_image() para qualidade perfeita.
 
     Memória (otimizado para Render Starter 512MB):
-      - 1 página A4 raster @ scale=1.5 = ~890×1260×3 bytes = ~3.3MB
-      - Sem gc periódico, 51 páginas acumulavam ~170MB de rasters não-coletados
-      - Agora: del raster + gc.collect() a cada 10 páginas + libera pixmap
+      - 1 página A4 raster @ scale=1.2 = ~2.2MB (era 3.3MB @ 1.5)
+      - gc.collect() a cada 5 páginas (era a cada 10) — mais agressivo
+      - del raster/pix explícito após cada página
+      - Limite hard: se >300 páginas, aborta com erro claro em vez de OOM
     """
     import gc
 
@@ -71,6 +76,17 @@ def extract_cells_via_cv(
 
     total_pages = len(skus_by_page)
     print(f"[CV] {total_pages} páginas | {len(skus_list)} SKUs | logos filtrados: {len(logo_xrefs)}")
+
+    # Hard limit: catálogos com >300 páginas com SKUs estouram 512MB do Render
+    # mesmo com gc agressivo. Falha rápido com erro claro em vez de OOM
+    # (que mata o container e perde o job).
+    if total_pages > 300:
+        doc.close()
+        raise RuntimeError(
+            f"Catálogo muito grande: {total_pages} páginas com SKUs excede o limite "
+            f"de 300 do plano Render Starter (512MB RAM). Considere processar em "
+            f"lotes ou upgrade para plano com mais RAM."
+        )
 
     sorted_pages = sorted(skus_by_page.keys())
     for page_idx, page_num in enumerate(sorted_pages):
@@ -111,7 +127,9 @@ def extract_cells_via_cv(
         # Libera memória explicitamente (Render Starter 512MB é apertado)
         del raster, pix, page_imgs, h_lines, v_lines
         page = None
-        if (page_idx + 1) % 10 == 0:
+        # gc.collect() a cada 5 páginas (era 10) — mais agressivo após OOM
+        # confirmado em catálogo DAGIA (apenas 24 páginas com imagens pesadas).
+        if (page_idx + 1) % 5 == 0:
             gc.collect()
             print(f"[CV] gc.collect() em pág {page_idx+1}/{total_pages}")
 
