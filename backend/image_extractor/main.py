@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.05.28-v10-em-breve"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.05.28-v11-confidence-filename"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")

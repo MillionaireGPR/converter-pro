@@ -628,8 +628,16 @@ def _detect_logo_xrefs(doc: fitz.Document) -> set:
 
 
 def _save_image(img_rgb: np.ndarray, sku_code: str, output_folder: str) -> str:
-    """Salva {sku}.jpg. img_rgb é numpy array RGB."""
-    clean = "".join(c for c in sku_code if c.isalnum() or c in ("-", "_"))
+    """Salva {sku}.jpg. img_rgb é numpy array RGB.
+
+    Sanitização do nome:
+      - barra "/" vira "_" (ex: CF001/L12 -> CF001_L12.jpg) para preservar
+        legibilidade do código quando aberto fora do app
+      - outros caracteres não-alfanuméricos viram nada
+    """
+    # Substitui barra primeiro (preserva visual), depois filtra o resto
+    pre = sku_code.replace("/", "_").replace("\\", "_")
+    clean = "".join(c for c in pre if c.isalnum() or c in ("-", "_"))
     filepath = os.path.join(output_folder, f"{clean}.jpg")
     bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
     
