@@ -32,7 +32,9 @@ export const lilaHomeAdapter: SupplierAdapter = {
   defaultUnidade: 'UN',
 
   exclusionRules: [
-    { pattern: /^SUB$/i, descricao: 'Label SUB ignorada' },
+    // Catálogo real mostra "SUB 18", "SUB 4", "SUB 10" — versão antiga
+    // `/^SUB$/i` era estrita demais e deixava esses ruídos passarem.
+    { pattern: /^SUB(\s*\d+)?$/i, descricao: 'Label SUB (com/sem número)' },
     { pattern: /sugest[aã]o\s+de\s+conjunto/i, descricao: 'Texto de sugestão' },
     { pattern: /atualizado\s+em/i, descricao: 'Data de atualização' },
   ],

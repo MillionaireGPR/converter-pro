@@ -24,7 +24,9 @@ export const bm36Adapter: SupplierAdapter = {
     observacoes: ['obs', 'observacao'],
   },
 
-  codigoPattern: /^B\d{3,5}/i,
+  // Aceita ambos BM (BM36) e WC (World Classic) — validado em catálogo real
+  // contendo as duas linhas de produto. Versão anterior rejeitava WC.
+  codigoPattern: /^(?:BM|WC)\d{3,8}/i,
   precoFormat: 'BR',
   defaultQuantidadeCaixa: 1,
   defaultUnidade: 'UN',
@@ -32,6 +34,8 @@ export const bm36Adapter: SupplierAdapter = {
   exclusionRules: [
     { pattern: /^total/i, descricao: 'Linha de total' },
     { pattern: /tabela\s+de\s+pre[cç]os/i, descricao: 'Cabeçalho de tabela' },
+    // Rodapé "Pag: 002" aparece entre blocos no catálogo BM36 real
+    { pattern: /^Pag:\s*\d+/i, descricao: 'Rodapé de página' },
   ],
 
   detectionPatterns: [
