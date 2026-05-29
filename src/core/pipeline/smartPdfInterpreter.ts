@@ -609,21 +609,57 @@ const postProcessBySupplier = (
     // ── PASSO 5: Descrição = texto antes do primeiro "CD:" ──
     // Remove o SKU truncado/completo do final da descrição
     const beforeCd = text.split(/\bCD:/i)[0].trim();
+
+    // Tabela de substituição: o PDF do BM36 usa fontes sem ToUnicode adequado.
+    // Caracteres acentuados (Ç, Ã, Ó, etc.) viram U+FFFD (�) no texto extraído.
+    // Reconstruímos os mais comuns por contexto (palavras frequentes).
+    // Validado em catálogo real 25-03-2026.
+    const repairEncoding = (s: string): string => {
+      return s
+        .replace(/CASTI[�?]AL/gi, 'CASTIÇAL')
+        .replace(/CORA[�?]{1,2}O/gi, 'CORAÇÃO')
+        .replace(/J[�?]IAS/gi, 'JÓIAS')
+        .replace(/J[�?]IA/gi, 'JÓIA')
+        .replace(/A[�?]UCAREIRO/gi, 'AÇUCAREIRO')
+        .replace(/COLE[�?]AO/gi, 'COLEÇÃO')
+        .replace(/DECORA[�?]AO/gi, 'DECORAÇÃO')
+        .replace(/COMUNH[�?]O/gi, 'COMUNHÃO')
+        // Remove qualquer U+FFFD restante (preferir nada a símbolo de erro)
+        .replace(/�/g, '');
+    };
+
     let descricao = beforeCd
       // Remove cabeçalho de seção colado (COZINHA & UD, etc.)
       .replace(/^(COZINHA\s*&?\s*UD|MESA\s*&?\s*BAR|BANHO|DECOR(?:ACAO|AÇÃO)?|UTILIDADES?)\s+/i, '')
+      // Remove prefixo promocional "(PRO50%)", "(PRO30%)" — registrado em observações
+      .replace(/^\(PRO\d{1,3}%\)\s*/i, '')
       // Remove SKU truncado/completo no final
       .replace(/\s*(?:BM|WC)\d{0,8}\s*$/i, '')
       // Remove "Pag: 001" ou similar que vaza
       .replace(/Pag:\s*\d+/gi, '')
       .replace(/\s+/g, ' ')
       .trim();
+
+    // Aplica reparo de encoding
+    descricao = repairEncoding(descricao);
+
+    // Detecta promoção para registrar em observações depois
+    if (/^\(PRO\d{1,3}%\)/i.test(beforeCd)) {
+      const promoMatch = beforeCd.match(/\(PRO(\d{1,3})%\)/i);
+      if (promoMatch) {
+        campos['__promoBM36'] = `PROMO ${promoMatch[1]}%`;
+      }
+    }
+
     if (descricao.length >= 3) campos['descricao'] = descricao;
 
     // ── PASSO 6: Observações ──
     const extras: string[] = [];
     if (campos['cx']) extras.push(`Cx c/ ${campos['cx']} unidades`);
+    if (campos['__promoBM36']) extras.push(campos['__promoBM36']);
     if (extras.length > 0) campos['observacoes'] = extras.join(' | ');
+    // Propaga PROMO também como informacoesAdicionais (visível na UI)
+    if (campos['__promoBM36']) campos['informacoesAdicionais'] = campos['__promoBM36'];
 
     campos['__postProcessed'] = true;
     return;
