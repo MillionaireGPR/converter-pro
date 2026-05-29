@@ -21,8 +21,9 @@ export const lilaHomeTemplate: PdfTemplate = {
   blockExtractor: /(?=CÓD[:\s])/i,
 
   fieldExtractors: {
-    // Código: CÓD: ABC123 ou CÓD ABC123
-    codigo: /CÓD[:\s]*(\w{2,10})/i,
+    // Código: CÓD: ABC123 ou CÓD ABC123 — aceita barra (LH276/270 era truncado)
+    // [\w/]{2,15}: alfanum + underscore + barra, 2-15 chars
+    codigo: /CÓD[:\s]*([\w/]{2,15})/i,
 
     // Nome do produto: texto principal que vem após código
     // Deve capturar o nome real, não MATERIAL, TAMANHO, COR
