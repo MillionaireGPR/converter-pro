@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.05.28-v12-bm36-lila-tuning"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.05.28-v13-folia-gira-petrin-goalkids"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
