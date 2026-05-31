@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.05.28-v13-folia-gira-petrin-goalkids"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.05.31-v14-flash-levivan"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
