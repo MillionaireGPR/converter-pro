@@ -20,22 +20,31 @@ export const foliaAdapter: SupplierAdapter = {
     preco: ['tabela', 'preco', 'precotabela', 'valor'],
     precoPromocional: ['promo', 'promocional', 'precopromocional', 'especial'],
     quantidadeCaixa: ['itenscx', 'itenscaixa', 'qtcx', 'qtdcx', 'caixa', 'cx', 'pcscx'],
-    observacoes: ['estcx', 'estoquecx', 'estoque'],
+    // EST. CX = estoque em caixas (numérico, às vezes fracionário). Não
+    // mapeamos como `observacoes` (campo de texto) porque ficaria feio na
+    // saída Mercos/JAWEB. Ignoramos a coluna (cliente não usa esse dado).
   },
 
+  // Catálogo Folia validado em 592 linhas: codigoPattern garante que apenas
+  // produtos JRF-XX.NNNN passem na validação tardia.
+  codigoPattern: /^JRF[-_]\d{2}\.\d{3,5}/i,
   precoFormat: 'BR',
   defaultQuantidadeCaixa: 1,
   defaultUnidade: 'UN',
 
   exclusionRules: [
     { pattern: /^total/i, descricao: 'Linha de total' },
+    // Linha "TOTAIS" da L592 (mais robusta que /^total/i)
+    { pattern: /^totais?$/i, descricao: 'Linha de totais agregados' },
     { pattern: /^\s*$/, descricao: 'Linha vazia' },
+    // Header "REFERÊNCIA" se aparecer duplicado em outra sheet
+    { pattern: /^refer[eê]ncia$/i, descricao: 'Header repetido' },
   ],
 
   detectionPatterns: [
     /folia/i,
-    /^JRF[-_]/i,        // JRF-10.0063
-    /^FB\d{3,5}$/i,     // Folia Brinquedos
+    /^JRF[-_]/i,        // JRF-10.0063 (100% dos códigos reais)
     /brinquedos/i,
+    // Removido /^FB\d{3,5}$/i (zero ocorrências em catálogo real)
   ],
 };

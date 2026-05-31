@@ -7,6 +7,7 @@ import { nixTemplate } from './nix.template';
 import { clinkTemplate } from './clink.template';
 import { momentTemplate } from './moment.template';
 import { lilaHomeTemplate } from './lila-home.template';
+import { goalKidsTemplate } from './goal-kids.template';
 
 const templates: PdfTemplate[] = [
   giraImportsTemplate,
@@ -16,7 +17,8 @@ const templates: PdfTemplate[] = [
   nixTemplate,
   clinkTemplate,
   momentTemplate,
-  lilaHomeTemplate
+  lilaHomeTemplate,
+  goalKidsTemplate,
 ];
 
 export const detectTemplate = (texto: string): PdfTemplate | undefined => {
