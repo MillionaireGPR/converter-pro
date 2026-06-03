@@ -116,7 +116,74 @@ export const interpretPdfSemantically = (
 
           produtos.push(prod);
         }
-      
+
+      // ═══════════════════════════════════════════════════════════════════
+      // PASS DAGIA: distribuir preços agrupados no FIM da página
+      // ═══════════════════════════════════════════════════════════════════
+      // Em DAGIA pgs como 12, todos os preços vêm juntos no final:
+      //   "...DXP57...CF026/L12...CF029A/L12...R$33,00 R$26,60 R$26,60"
+      // O blockExtractor cortava por código e o último bloco (CF029A/L12)
+      // pegava R$33,00 (preço do DXP57!). Os outros ficavam sem preço.
+      //
+      // Fix: extrai TODOS os preços do texto da página em ORDEM e atribui
+      // preço[i] → produto[i] (sobrescrevendo preço errado se houver).
+      // Só aplica se #preços == #produtos da página (caso típico DAGIA).
+      if (template.supplierName?.toUpperCase().includes('DAGIA')) {
+        const pageProdsForDagia = produtos.slice(pageStartIdx);
+        // Extrai preços em ordem textual: R$ XX,XX (decimais obrigatórios)
+        const priceMatches = [...text.matchAll(/R\$\s*(\d{1,4}(?:[.,]\d{2}))/gi)];
+        const pricesInOrder = priceMatches.map(m => m[1].replace(',', '.'));
+        if (
+          pricesInOrder.length === pageProdsForDagia.length &&
+          pricesInOrder.length > 0
+        ) {
+          pageProdsForDagia.forEach((p, idx) => {
+            // Não sobrescreve se já marcado EM BREVE (preço deve ficar vazio)
+            if (p.campos['__emBreve']) return;
+            p.campos['preco'] = pricesInOrder[idx];
+          });
+        }
+
+        // Fallback descrição: DZ03 (Jogos) tem título no FIM do bloco,
+        // depois das peças. Se descrição vier vazia/só hífens, escolhe
+        // o padrão certo pelo PREFIXO do código.
+        for (const prod of pageProdsForDagia) {
+          const desc = prod.campos['descricao'];
+          const isEmpty = !desc || /^[\s\-]*$/.test(String(desc));
+          if (!isEmpty) continue;
+          const blockText = prod.textoBruto || '';
+          const codigo = String(prod.campos['codigo'] || '').toUpperCase();
+
+          // Mapeamento prefixo → regex de descrição esperada (priorizando
+          // a primeira ocorrência no texto do tipo correto)
+          let patterns: RegExp[] = [];
+          if (codigo.startsWith('DZ')) {
+            patterns = [/\b(Jogo\s+De[\s\w�?ãáéíóúçÇÃÁÉÍÓÚ]{5,80})/i];
+          } else if (codigo.startsWith('DCM')) {
+            patterns = [/\b(Centro\s+De\s+Mesa[\s\w]{0,40})/i];
+          } else if (codigo.startsWith('DS')) {
+            patterns = [/\b(A\S+ucareiro[\s\w]{0,40})/i];
+          } else if (codigo.startsWith('DM')) {
+            patterns = [/\b(Meleira[\s\w]{0,40})/i];
+          } else if (codigo.startsWith('DV')) {
+            patterns = [/\b(Mini\s+Vaso[\s\w]{0,40}|Vaso[\s\w]{0,40})/i];
+          } else if (codigo.startsWith('DPB')) {
+            patterns = [/\b(Prato\s+P\/[\s\w�?ãáéíóúçÇÃÁÉÍÓÚ]{0,60})/i];
+          } else {
+            // DXP, CF, etc → xícaras
+            patterns = [/\b(Xicara\s+C\/[\s\w�?ãáéíóúçÇÃÁÉÍÓÚ]{5,80})/i];
+          }
+
+          for (const pat of patterns) {
+            const m = blockText.match(pat);
+            if (m) {
+              prod.campos['descricao'] = m[1].trim().replace(/\s+/g, ' ');
+              break;
+            }
+          }
+        }
+      }
+
       // ── Pass de enriquecimento POSICIONAL de PREÇO ──
       // Em catálogos grid (NIX, similar), PDF.js extrai texto fora de ordem.
       // O bloco do produto pode não conter o seu próprio "R$ X,XX".
