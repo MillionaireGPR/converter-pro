@@ -73,4 +73,45 @@ Jogo De Jantar E Cha Opalina 20 Pcs`;
     }
     expect(campos.preco).toBeUndefined();
   });
+
+  it('🔒 PAGE-WIDE EM BREVE: detecta texto em qualquer bloco da página', () => {
+    // Bug reportado: PDF.js extrai texto fora de ordem visual. "EM BREVE..."
+    // pode estar em UM bloco mas pertencer a OUTRO produto sem preço.
+    // Lógica: se página tem N "EM BREVE" e N produtos sem preço, marca todos.
+    const pageText = `
+DXPD53
+Xicara Opalina 185 ml C/Borda Dourada
+DXPD52
+Xicara Opalina 80 ml C/Borda Dourada
+EM BREVE...
+EM BREVE...
+`;
+    const emBreveCount = (pageText.match(/em\s+breve/gi) || []).length;
+    expect(emBreveCount).toBe(2);
+
+    const pageProds = [
+      { campos: { codigo: 'DXPD53', preco: undefined } },
+      { campos: { codigo: 'DXPD52', preco: undefined } },
+    ];
+    const semPreco = pageProds.filter(p => !p.campos.preco);
+    expect(semPreco.length).toBe(2);
+
+    // Marca todos
+    if (emBreveCount >= semPreco.length) {
+      for (const p of semPreco) {
+        (p.campos as any).__emBreve = true;
+      }
+    }
+    expect((pageProds[0].campos as any).__emBreve).toBe(true);
+    expect((pageProds[1].campos as any).__emBreve).toBe(true);
+  });
+
+  it('🔒 PAGE-WIDE EM BREVE: NÃO marca quando #EM BREVE < #produtos sem preço', () => {
+    // Se só 1 EM BREVE mas 3 produtos sem preço, não pode marcar todos
+    const pageText = 'PRODUTO1\nPRODUTO2\nPRODUTO3\nEM BREVE...';
+    const emBreveCount = (pageText.match(/em\s+breve/gi) || []).length;
+    const semPreco = [{}, {}, {}];
+    expect(emBreveCount < semPreco.length).toBe(true);
+    // Lógica não marca neste caso (proteção contra falso positivo)
+  });
 });

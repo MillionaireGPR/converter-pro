@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.03-v15-dagia-positional"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.03-v16-em-breve-pagewide"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
