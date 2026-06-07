@@ -121,6 +121,44 @@ def extract_cells_via_cv(
             pm, pu = _match_via_embedded(doc, raster, page_skus, page_imgs,
                                          scale, output_folder, page_num)
 
+        # ─── KIT COLLAGE: SKUs DAGIA DZ\\d+ (Jogos de Jantar) ───
+        # Cliente reportou: kits têm várias peças (xícara, prato, bowl) mas
+        # o matcher pega só 1. Para SKUs DZ, sobrescreve a imagem do match
+        # com uma COLAGEM de TODAS as imagens da página (mais fiel ao kit).
+        import re as _re
+        kit_skus = [s for s in page_skus
+                    if s.get("sku") and _re.match(r"^DZ\d+", str(s["sku"]).upper())]
+        if kit_skus and page_imgs:
+            print(f"[CV] KIT detectado em pág {page_num}: {len(kit_skus)} SKU(s) DZ, criando colagem de {len(page_imgs)} imagens")
+            # Extrai TODAS as imagens embedded da página em RGB
+            kit_images_rgb: List[np.ndarray] = []
+            for img_info in page_imgs:
+                try:
+                    arr = _extract_perfect_image(doc, img_info, raster, width, height, scale)
+                    if arr is not None and arr.size > 0:
+                        kit_images_rgb.append(arr)
+                except Exception as e:
+                    print(f"[CV] kit: falha ao extrair imagem (xref={img_info.get('xref')}): {e}")
+            if kit_images_rgb:
+                collage = _create_kit_collage(kit_images_rgb)
+                if collage is not None:
+                    # Substitui imagem de cada SKU DZ na lista de matches da página
+                    for kit_sku in kit_skus:
+                        sku_code = kit_sku["sku"]
+                        # Procura match existente pra atualizar OU cria novo
+                        existing = next((m for m in pm if m["sku"] == sku_code), None)
+                        if existing:
+                            # Sobrescreve o arquivo com a colagem
+                            _save_image(collage, sku_code, output_folder)
+                            existing["match_type"] = "kit_collage"
+                            print(f"[CV] kit collage salvo: {sku_code} ({len(kit_images_rgb)} peças)")
+                        else:
+                            # SKU estava como unmatched — agora cria match com colagem
+                            filepath = _save_image(collage, sku_code, output_folder)
+                            pm.append(_make_match(kit_sku, page_num, filepath, "kit_collage"))
+                            pu = [u for u in pu if u.get("sku") != sku_code]
+                            print(f"[CV] kit collage (novo match): {sku_code}")
+
         matches.extend(pm)
         unmatched.extend(pu)
 
@@ -625,6 +663,76 @@ def _detect_logo_xrefs(doc: fitz.Document) -> set:
         for img in doc.load_page(i).get_images(full=True):
             xref_pages.setdefault(img[0], set()).add(i)
     return {x for x, pgs in xref_pages.items() if len(pgs) >= 3}
+
+
+def _create_kit_collage(images_rgb: List[np.ndarray], max_dim: int = 800) -> Optional[np.ndarray]:
+    """
+    Cria colagem em grid das imagens de um kit (ex: Jogo de Jantar DAGIA DZ\\d+).
+
+    Cliente Nunes precisa enxergar o kit completo no cadastro Mercos, não
+    apenas 1 das peças (xícara avulsa). Esta colagem agrupa todas as imagens
+    da página em um grid balanceado (~sqrt N), com padding branco.
+
+    Args:
+      images_rgb: lista de numpy RGB arrays (1 ou mais)
+      max_dim: dimensão máxima do arquivo final
+
+    Returns:
+      np.ndarray RGB com a colagem, ou None se lista vazia.
+    """
+    import math
+    n = len(images_rgb)
+    if n == 0:
+        return None
+    if n == 1:
+        return images_rgb[0]
+
+    cols = math.ceil(math.sqrt(n))
+    rows = math.ceil(n / cols)
+    cell_h = max_dim // max(rows, 2)
+
+    # Redimensiona cada imagem mantendo proporção (altura igual)
+    resized: List[np.ndarray] = []
+    for img in images_rgb:
+        h, w = img.shape[:2]
+        if h <= 0:
+            continue
+        scale_f = cell_h / h
+        new_w = max(1, int(w * scale_f))
+        resized.append(cv2.resize(img, (new_w, cell_h), interpolation=cv2.INTER_AREA))
+
+    if not resized:
+        return None
+
+    # Monta linhas: agrupa cols imagens, padding branco pra alinhar
+    row_images: List[np.ndarray] = []
+    for r in range(rows):
+        row_items = resized[r * cols:(r + 1) * cols]
+        if not row_items:
+            continue
+        # Pad em largura: completa células faltantes com branco
+        while len(row_items) < cols:
+            row_items.append(np.full((cell_h, max(1, cell_h), 3), 255, dtype=np.uint8))
+        max_w = max(img.shape[1] for img in row_items)
+        padded = []
+        for img in row_items:
+            h, w = img.shape[:2]
+            if w < max_w:
+                pad = np.full((h, max_w - w, 3), 255, dtype=np.uint8)
+                img = np.hstack([img, pad])
+            padded.append(img)
+        row_images.append(np.hstack(padded))
+
+    # Combina linhas verticalmente — todas têm mesma largura (cols * max_w)
+    max_row_w = max(img.shape[1] for img in row_images)
+    final_rows: List[np.ndarray] = []
+    for img in row_images:
+        h, w = img.shape[:2]
+        if w < max_row_w:
+            pad = np.full((h, max_row_w - w, 3), 255, dtype=np.uint8)
+            img = np.hstack([img, pad])
+        final_rows.append(img)
+    return np.vstack(final_rows)
 
 
 def _save_image(img_rgb: np.ndarray, sku_code: str, output_folder: str) -> str:
