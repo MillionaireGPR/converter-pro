@@ -130,15 +130,53 @@ export const interpretPdfSemantically = (
       // Só aplica se #preços == #produtos da página (caso típico DAGIA).
       if (template.supplierName?.toUpperCase().includes('DAGIA')) {
         const pageProdsForDagia = produtos.slice(pageStartIdx);
+
+        // ─── PASS PAGE-WIDE de EM BREVE ───
+        // Texto "EM BREVE..." pode estar em UM bloco da página mas o produto
+        // sem preço pode ser OUTRO (PDF.js extrai fora de ordem visual).
+        // Se a página tem N "EM BREVE" e há N produtos sem preço, marca todos
+        // como EM BREVE (evita falso preço por heurística cx=12).
+        const emBreveMatches = text.match(/em\s+breve/gi) || [];
+        const emBreveCount = emBreveMatches.length;
+
+        if (emBreveCount > 0) {
+          const semPreco = pageProdsForDagia.filter(p => {
+            const v = p.campos['preco'];
+            if (!v || String(v).trim() === '') return true;
+            const num = parseFloat(String(v).replace(',', '.'));
+            return !num || num <= 0;
+          });
+          // Se #EM BREVE ≥ #produtos sem preço → marca todos os sem preço
+          if (emBreveCount >= semPreco.length && semPreco.length > 0) {
+            for (const p of semPreco) {
+              if (!p.campos['__emBreve']) {
+                p.campos['__emBreve'] = true;
+                p.campos['informacoesAdicionais'] = 'EM BREVE';
+              }
+              // Limpa qualquer preço fantasma (heurística cx=12 etc)
+              delete p.campos['preco'];
+            }
+          }
+        }
+
         // Extrai preços em ordem textual: R$ XX,XX (decimais obrigatórios)
         const priceMatches = [...text.matchAll(/R\$\s*(\d{1,4}(?:[.,]\d{2}))/gi)];
         const pricesInOrder = priceMatches.map(m => m[1].replace(',', '.'));
+        // Conta produtos NÃO marcados EM BREVE (esses deveriam ter preço)
+        const prodsWithPriceExpected = pageProdsForDagia.filter(p => !p.campos['__emBreve']);
         if (
+          pricesInOrder.length === prodsWithPriceExpected.length &&
+          pricesInOrder.length > 0
+        ) {
+          prodsWithPriceExpected.forEach((p, idx) => {
+            p.campos['preco'] = pricesInOrder[idx];
+          });
+        } else if (
+          // Caso especial: todos da página têm preço expected
           pricesInOrder.length === pageProdsForDagia.length &&
           pricesInOrder.length > 0
         ) {
           pageProdsForDagia.forEach((p, idx) => {
-            // Não sobrescreve se já marcado EM BREVE (preço deve ficar vazio)
             if (p.campos['__emBreve']) return;
             p.campos['preco'] = pricesInOrder[idx];
           });
