@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.07-v18-em-breve-cat-box-image"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.08-v19-em-breve-real-imgquality"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")

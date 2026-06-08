@@ -746,12 +746,17 @@ const normalizeExtracted = (
     const warnings = [...e.warnings];
 
     const codigo = sanitizeForExport(e.codigo || '');
-    
+
+    // visualCategory='em-breve' segue o mesmo padrão da família CLINK
+    // (promocional/preco-fixo): produto entra como VALIDADO mesmo sem preço,
+    // com marcação visível no nome (***EM BREVE***) e Informações Adicionais.
+    const visualCategory = (e as any).visualCategory;
+    const isEmBreve = visualCategory === 'em-breve';
+
     // NOVO: Preservar nome comercial da família CLINK se existir
-    // Verificar se é um produto da família CLINK com nomeComercial
     const clinkProduct = e as any;
     let nome: string;
-    
+
     if (clinkProduct.nomeComercial && clinkProduct.nomeComercial.trim()) {
       // Usar nome comercial já formatado (com sufixo ***PROMOCAO*** ou ***PRECO FIXO***)
       nome = sanitizeForExport(clinkProduct.nomeComercial);
@@ -760,13 +765,24 @@ const normalizeExtracted = (
       // Fallback: limpar descrição normalmente
       nome = sanitizeForExport(cleanDescription(e.descricao || ''));
     }
-    
+
+    // EM BREVE: adiciona marcação ***EM BREVE*** no fim do nome (mesmo
+    // padrão visual de ***PROMOCAO*** / ***PRECO FIXO***). Cliente
+    // identifica no Mercos e completa preço quando catálogo anunciar.
+    if (isEmBreve && nome && !/em\s+breve/i.test(nome)) {
+      nome = `${nome} ***EM BREVE***`;
+    }
+
     const precoBase = e.preco || 0;
 
     // Validação
     if (!codigo) erros.push('Código não encontrado');
     if (!nome) erros.push('Descrição não encontrada');
-    if (precoBase <= 0) erros.push('Preço base deve ser maior que zero');
+    // EM BREVE: produto pode ficar sem preço (igual promocional/preco-fixo
+    // da família CLINK). Cliente completa no Mercos depois.
+    if (precoBase <= 0 && !isEmBreve) {
+      erros.push('Preço base deve ser maior que zero');
+    }
 
     let status: 'validado' | 'pendente' | 'erro' = 'validado';
     if (erros.length > 0) status = 'erro';
@@ -837,7 +853,8 @@ const detectInconsistencies = (produtos: ProdutoNormalizadoV2[]): Inconsistencia
     if (!p.nome) {
       issues.push({ tipo: 'sem-descricao', mensagem: 'Produto sem descrição', linha: p.linhaOrigem, pagina: p.paginaOrigem, produto: p.codigo });
     }
-    if (p.precoBase <= 0) {
+    // EM BREVE legitimamente sem preço — não conta como inconsistência
+    if (p.precoBase <= 0 && (p as any).visualCategory !== 'em-breve') {
       issues.push({ tipo: 'sem-preco', mensagem: 'Produto sem preço válido', linha: p.linhaOrigem, pagina: p.paginaOrigem, produto: p.codigo });
     }
     if (p.codigo && (codigoCount.get(p.codigo.toUpperCase()) || 0) > 1) {
