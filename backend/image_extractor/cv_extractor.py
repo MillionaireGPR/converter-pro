@@ -143,9 +143,37 @@ def extract_cells_via_cv(
                     print(f"[CV] kit: falha ao extrair imagem (xref={img_info.get('xref')}): {e}")
 
             if kit_candidates:
-                # Ordena por área decrescente — a CAIXA é tipicamente a maior
-                kit_candidates.sort(key=lambda t: t[1], reverse=True)
+                # Heurística melhorada para identificar a CAIXA do kit:
+                #   1. Aspect ratio: caixa é mais quadrada (h/w entre 0.65-1.5)
+                #      vs xícara/copo (proporções estranhas)
+                #   2. Cor: caixa tem fundo colorido/escuro (saturação alta no
+                #      contorno), fotos de produto são mais claras
+                #   3. Tamanho: tie-breaker entre candidatos válidos
+                def _box_score(img: np.ndarray) -> float:
+                    h, w = img.shape[:2]
+                    if h == 0 or w == 0:
+                        return -1.0
+                    ratio = h / w
+                    # Score por aspect ratio: 1.0 quadrado é ideal, 1.5+ ou 0.5- penaliza
+                    if 0.65 <= ratio <= 1.5:
+                        ratio_score = 1.0 - abs(1.0 - ratio) * 0.5
+                    else:
+                        ratio_score = 0.2
+                    # Cor: caixa tem média de cor mais "viva" (saturação)
+                    # Calcula desvio padrão de cor (proxy: imagem variada = caixa colorida)
+                    try:
+                        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+                        std_dev = float(np.std(gray)) / 255.0  # 0..1
+                    except Exception:
+                        std_dev = 0.5
+                    # Tamanho: log da área (suaviza)
+                    import math as _math
+                    size_score = _math.log10(max(h * w, 1)) / 7.0
+                    return ratio_score * 0.5 + std_dev * 0.3 + size_score * 0.2
+
+                kit_candidates.sort(key=lambda t: _box_score(t[0]), reverse=True)
                 box_image = kit_candidates[0][0]
+                print(f"[CV] kit: escolhida imagem com aspect={box_image.shape[0]/max(box_image.shape[1],1):.2f}, área={box_image.shape[0]*box_image.shape[1]}")
                 # Override do max_dim do _save_image para preservar qualidade
                 # (max_dim default é 600, vamos forçar 1200 pra kit)
                 box_image_hires = _resize_keep_aspect(box_image, max_dim=1200)
@@ -774,21 +802,22 @@ def _save_image(img_rgb: np.ndarray, sku_code: str, output_folder: str) -> str:
       - barra "/" vira "_" (ex: CF001/L12 -> CF001_L12.jpg) para preservar
         legibilidade do código quando aberto fora do app
       - outros caracteres não-alfanuméricos viram nada
+
+    Qualidade (v19): max_dim 600→1000, JPEG 85→90 (cliente Nunes cadastra no
+    Mercos e precisa de imagem clara). Tamanho ainda OK pra Supabase Storage.
     """
-    # Substitui barra primeiro (preserva visual), depois filtra o resto
     pre = sku_code.replace("/", "_").replace("\\", "_")
     clean = "".join(c for c in pre if c.isalnum() or c in ("-", "_"))
     filepath = os.path.join(output_folder, f"{clean}.jpg")
     bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
-    
-    # Redimensiona mantendo proporção se for muito grande (evitar limites do Supabase)
-    max_dim = 600
+
+    max_dim = 1000  # era 600
     h, w = bgr.shape[:2]
     if h > max_dim or w > max_dim:
         scale = max_dim / max(h, w)
         bgr = cv2.resize(bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-        
-    cv2.imwrite(filepath, bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+
+    cv2.imwrite(filepath, bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])  # era 85
     return filepath
 
 
