@@ -33,8 +33,9 @@ describe('🔒 EM BREVE — produtos sem preço marcados no catálogo', () => {
     expect(p.preco).toBe(0);
     // Crítico: NÃO pode ter "Preço não encontrado" como erro.
     expect(p.erros).not.toContain('Preço não encontrado ou inválido');
-    // Deve ter warning informativo:
-    expect(p.warnings.some((w: string) => /EM BREVE/i.test(w))).toBe(true);
+    // v18: EM BREVE virou visualCategory (igual promocional/preco-fixo),
+    // sem warning. Status ficará 'validado' no pipeline final.
+    expect(p.visualCategory).toBe('em-breve');
     // informacoesAdicionais propagado:
     expect(p.informacoesAdicionais).toBe('EM BREVE');
   });

@@ -222,8 +222,9 @@ export const extractProducts = (
     finalDescricao = cleanDescription(finalDescricao);
 
     // Marcador opcional: produto sem preço por estar "EM BREVE" no catálogo
-    // (cliente cadastra no Mercos, completa o preço quando catálogo anunciar).
-    // Tratamos como warning (pendente) em vez de erro.
+    // Tratamento similar a PROMOCIONAL/PREÇO FIXO (família CLINK): produto
+    // entra como VALIDADO com visualCategory='em-breve'. Cliente completa
+    // preço no Mercos quando catálogo anunciar.
     const isEmBreve = !!campos['__emBreve'];
 
     // informacoesAdicionais setado por post-processamento específico do supplier
@@ -234,15 +235,11 @@ export const extractProducts = (
     // Validações básicas
     if (!finalCodigo) erros.push('Código não encontrado');
     if (!finalDescricao) erros.push('Descrição não encontrada');
-    if (preco <= 0) {
-      if (isEmBreve) {
-        // Produto marcado EM BREVE no catálogo — não é erro, é pendência
-        // intencional. Cliente revisará preço quando anunciado.
-        warnings.push('Produto marcado EM BREVE no catálogo — preço a confirmar');
-      } else {
-        erros.push('Preço não encontrado ou inválido');
-      }
+    if (preco <= 0 && !isEmBreve) {
+      // Produto sem preço sem flag EM BREVE → erro real
+      erros.push('Preço não encontrado ou inválido');
     }
+    // EM BREVE: SEM erro, SEM warning — vai como validado via visualCategory.
     if (finalDescricao && finalDescricao.length < 3) warnings.push('Descrição muito curta');
 
     // Calcula confiança
@@ -287,6 +284,9 @@ export const extractProducts = (
       spatialContext: bruto.spatialContext, // NOVO: Propagando coordenadas
       // Campos opcionais propagados via spread (não fazem parte do tipo)
       ...(informacoesAdicionais ? { informacoesAdicionais } : {}),
+      // EM BREVE: categoria visual (mesmo padrão de promocional/preco-fixo
+      // da família CLINK). Frontend mostra badge e Info Adicional.
+      ...(isEmBreve ? { visualCategory: 'em-breve' as const } : {}),
     } as any);
   }
 
