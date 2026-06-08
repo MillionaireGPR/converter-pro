@@ -36,7 +36,7 @@ export interface Produto {
   precoFinal: number;
   ipi: number;
   unidade: string;
-  visualCategory?: 'promocional' | 'preco-fixo' | 'novidade' | 'reposicao' | 'padrao';
+  visualCategory?: 'promocional' | 'preco-fixo' | 'novidade' | 'reposicao' | 'padrao' | 'em-breve';
   visualTags?: ('promocional' | 'preco-fixo' | 'novidade' | 'reposicao' | 'padrao')[];
   isPromotional?: boolean;
   isFixedPrice?: boolean;

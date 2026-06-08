@@ -121,43 +121,47 @@ def extract_cells_via_cv(
             pm, pu = _match_via_embedded(doc, raster, page_skus, page_imgs,
                                          scale, output_folder, page_num)
 
-        # ─── KIT COLLAGE: SKUs DAGIA DZ\\d+ (Jogos de Jantar) ───
-        # Cliente reportou: kits têm várias peças (xícara, prato, bowl) mas
-        # o matcher pega só 1. Para SKUs DZ, sobrescreve a imagem do match
-        # com uma COLAGEM de TODAS as imagens da página (mais fiel ao kit).
+        # ─── KIT BOX IMAGE: SKUs DAGIA DZ + DXPD (kits de xícaras/jogos) ───
+        # Cliente reportou (v17): colagem ficou com baixa resolução + faltavam
+        # peças. Sugestão dele: usar a imagem da CAIXA (que já mostra o kit
+        # montado com todas as peças). Estratégia v18: pegar a MAIOR imagem
+        # da página (em pixels) que tipicamente é a foto da caixa do kit.
         import re as _re
         kit_skus = [s for s in page_skus
-                    if s.get("sku") and _re.match(r"^DZ\d+", str(s["sku"]).upper())]
+                    if s.get("sku") and _re.match(r"^(DZ|DXPD)\d+", str(s["sku"]).upper())]
         if kit_skus and page_imgs:
-            print(f"[CV] KIT detectado em pág {page_num}: {len(kit_skus)} SKU(s) DZ, criando colagem de {len(page_imgs)} imagens")
-            # Extrai TODAS as imagens embedded da página em RGB
-            kit_images_rgb: List[np.ndarray] = []
+            print(f"[CV] KIT detectado em pág {page_num}: {len(kit_skus)} SKU(s), buscando imagem maior (caixa)")
+            # Extrai TODAS as imagens embedded da página e mede tamanho real
+            kit_candidates: List[Tuple[np.ndarray, int]] = []
             for img_info in page_imgs:
                 try:
                     arr = _extract_perfect_image(doc, img_info, raster, width, height, scale)
                     if arr is not None and arr.size > 0:
-                        kit_images_rgb.append(arr)
+                        h, w = arr.shape[:2]
+                        kit_candidates.append((arr, h * w))
                 except Exception as e:
                     print(f"[CV] kit: falha ao extrair imagem (xref={img_info.get('xref')}): {e}")
-            if kit_images_rgb:
-                collage = _create_kit_collage(kit_images_rgb)
-                if collage is not None:
-                    # Substitui imagem de cada SKU DZ na lista de matches da página
-                    for kit_sku in kit_skus:
-                        sku_code = kit_sku["sku"]
-                        # Procura match existente pra atualizar OU cria novo
-                        existing = next((m for m in pm if m["sku"] == sku_code), None)
-                        if existing:
-                            # Sobrescreve o arquivo com a colagem
-                            _save_image(collage, sku_code, output_folder)
-                            existing["match_type"] = "kit_collage"
-                            print(f"[CV] kit collage salvo: {sku_code} ({len(kit_images_rgb)} peças)")
-                        else:
-                            # SKU estava como unmatched — agora cria match com colagem
-                            filepath = _save_image(collage, sku_code, output_folder)
-                            pm.append(_make_match(kit_sku, page_num, filepath, "kit_collage"))
-                            pu = [u for u in pu if u.get("sku") != sku_code]
-                            print(f"[CV] kit collage (novo match): {sku_code}")
+
+            if kit_candidates:
+                # Ordena por área decrescente — a CAIXA é tipicamente a maior
+                kit_candidates.sort(key=lambda t: t[1], reverse=True)
+                box_image = kit_candidates[0][0]
+                # Override do max_dim do _save_image para preservar qualidade
+                # (max_dim default é 600, vamos forçar 1200 pra kit)
+                box_image_hires = _resize_keep_aspect(box_image, max_dim=1200)
+                for kit_sku in kit_skus:
+                    sku_code = kit_sku["sku"]
+                    existing = next((m for m in pm if m["sku"] == sku_code), None)
+                    if existing:
+                        # Sobrescreve arquivo do match com a caixa em alta resolução
+                        _save_image_hires(box_image_hires, sku_code, output_folder)
+                        existing["match_type"] = "kit_box"
+                        print(f"[CV] kit box salvo (1200px): {sku_code}")
+                    else:
+                        filepath = _save_image_hires(box_image_hires, sku_code, output_folder)
+                        pm.append(_make_match(kit_sku, page_num, filepath, "kit_box"))
+                        pu = [u for u in pu if u.get("sku") != sku_code]
+                        print(f"[CV] kit box (novo match): {sku_code}")
 
         matches.extend(pm)
         unmatched.extend(pu)
@@ -733,6 +737,34 @@ def _create_kit_collage(images_rgb: List[np.ndarray], max_dim: int = 800) -> Opt
             img = np.hstack([img, pad])
         final_rows.append(img)
     return np.vstack(final_rows)
+
+
+def _resize_keep_aspect(img_rgb: np.ndarray, max_dim: int) -> np.ndarray:
+    """Redimensiona mantendo aspect ratio se algum lado > max_dim."""
+    h, w = img_rgb.shape[:2]
+    if h <= max_dim and w <= max_dim:
+        return img_rgb
+    s = max_dim / max(h, w)
+    return cv2.resize(img_rgb, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
+
+
+def _save_image_hires(img_rgb: np.ndarray, sku_code: str, output_folder: str) -> str:
+    """Variante de _save_image para kits — preserva resolução alta (1200px).
+
+    Sanitização do nome igual a _save_image. Quality JPEG 92 (melhor que 85
+    do default) porque a imagem é da caixa do produto e o cliente cadastra
+    no Mercos.
+    """
+    pre = sku_code.replace("/", "_").replace("\\", "_")
+    clean = "".join(c for c in pre if c.isalnum() or c in ("-", "_"))
+    filepath = os.path.join(output_folder, f"{clean}.jpg")
+    bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
+    h, w = bgr.shape[:2]
+    if h > 1200 or w > 1200:
+        scale_f = 1200 / max(h, w)
+        bgr = cv2.resize(bgr, (int(w * scale_f), int(h * scale_f)), interpolation=cv2.INTER_AREA)
+    cv2.imwrite(filepath, bgr, [cv2.IMWRITE_JPEG_QUALITY, 92])
+    return filepath
 
 
 def _save_image(img_rgb: np.ndarray, sku_code: str, output_folder: str) -> str:
