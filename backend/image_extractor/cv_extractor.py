@@ -143,37 +143,50 @@ def extract_cells_via_cv(
                     print(f"[CV] kit: falha ao extrair imagem (xref={img_info.get('xref')}): {e}")
 
             if kit_candidates:
-                # Heurística melhorada para identificar a CAIXA do kit:
-                #   1. Aspect ratio: caixa é mais quadrada (h/w entre 0.65-1.5)
-                #      vs xícara/copo (proporções estranhas)
-                #   2. Cor: caixa tem fundo colorido/escuro (saturação alta no
-                #      contorno), fotos de produto são mais claras
-                #   3. Tamanho: tie-breaker entre candidatos válidos
+                # Filtra fragmentos pequenos (< 20000 pixels = 200x100). Tipicamente
+                # ícones, etiquetas, badges, logos. Caixas reais são > 50k.
+                kit_candidates_filtered = [(img, area) for (img, area) in kit_candidates if area >= 20000]
+                if not kit_candidates_filtered:
+                    kit_candidates_filtered = kit_candidates  # se filtrou tudo, volta ao original
+
+                # Heurística refinada (v20) para identificar a CAIXA do kit DAGIA:
+                # Análise empírica de páginas reais 4-10 do catálogo:
+                #   - Pratos: aspect h/w ≈ 0.97-1.01 (quadrados perfeitos)
+                #   - Caixas (3D em perspectiva): aspect h/w ≈ 0.65-0.90 (mais larga)
+                #   - Peças avulsas: aspect ≈ 0.95-1.05
+                # Logo: BÔNUS FORTE para aspect 0.65-0.90, PENALIDADE para ~1.0.
                 def _box_score(img: np.ndarray) -> float:
                     h, w = img.shape[:2]
                     if h == 0 or w == 0:
                         return -1.0
                     ratio = h / w
-                    # Score por aspect ratio: 1.0 quadrado é ideal, 1.5+ ou 0.5- penaliza
-                    if 0.65 <= ratio <= 1.5:
-                        ratio_score = 1.0 - abs(1.0 - ratio) * 0.5
+                    # Score aspect: caixa típica DAGIA tem aspect 0.65-0.90
+                    if 0.65 <= ratio <= 0.90:
+                        aspect_score = 1.0  # zona ouro da caixa
+                    elif 0.55 <= ratio < 0.65 or 0.90 < ratio <= 1.05:
+                        aspect_score = 0.6  # zona ambígua
+                    elif 0.40 <= ratio < 0.55 or 1.05 < ratio <= 1.30:
+                        aspect_score = 0.3  # menos provável
                     else:
-                        ratio_score = 0.2
-                    # Cor: caixa tem média de cor mais "viva" (saturação)
-                    # Calcula desvio padrão de cor (proxy: imagem variada = caixa colorida)
+                        aspect_score = 0.1  # quase certo não é caixa
+                    # Cor: caixa colorida tem desvio padrão alto
                     try:
                         gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-                        std_dev = float(np.std(gray)) / 255.0  # 0..1
+                        std_dev = float(np.std(gray)) / 255.0
                     except Exception:
-                        std_dev = 0.5
-                    # Tamanho: log da área (suaviza)
+                        std_dev = 0.3
+                    # Tamanho: log normalizado
                     import math as _math
-                    size_score = _math.log10(max(h * w, 1)) / 7.0
-                    return ratio_score * 0.5 + std_dev * 0.3 + size_score * 0.2
+                    size_score = min(_math.log10(max(h * w, 1)) / 6.0, 1.0)
+                    # Peso: aspect 0.55, cor 0.30, size 0.15 (aspect é o sinal mais forte)
+                    return aspect_score * 0.55 + std_dev * 0.30 + size_score * 0.15
 
-                kit_candidates.sort(key=lambda t: _box_score(t[0]), reverse=True)
-                box_image = kit_candidates[0][0]
-                print(f"[CV] kit: escolhida imagem com aspect={box_image.shape[0]/max(box_image.shape[1],1):.2f}, área={box_image.shape[0]*box_image.shape[1]}")
+                # Ordena por score combinado decrescente
+                kit_candidates_filtered.sort(key=lambda t: _box_score(t[0]), reverse=True)
+                box_image = kit_candidates_filtered[0][0]
+                h0, w0 = box_image.shape[:2]
+                print(f"[CV] kit: escolhida imagem aspect={h0/max(w0,1):.2f}, área={h0*w0}, "
+                      f"score_top={_box_score(box_image):.2f} (entre {len(kit_candidates_filtered)} candidatas filtradas)")
                 # Override do max_dim do _save_image para preservar qualidade
                 # (max_dim default é 600, vamos forçar 1200 pra kit)
                 box_image_hires = _resize_keep_aspect(box_image, max_dim=1200)

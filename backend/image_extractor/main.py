@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.08-v19-em-breve-real-imgquality"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.08-v20-box-aspect-refined"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
