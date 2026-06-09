@@ -118,6 +118,73 @@ export const interpretPdfSemantically = (
         }
 
       // ═══════════════════════════════════════════════════════════════════
+      // PASS LILA HOME: nomes vêm DEPOIS dos blocos CÓD em ordem visual
+      // ═══════════════════════════════════════════════════════════════════
+      // Layout real do catálogo LILA HOME 26.03 (validado em 30/38 páginas):
+      //   CÓD: LH79                       <- bloco 1
+      //   MATERIAL: CERÂMICA
+      //   ...
+      //   CÓD: LH750                      <- bloco 2
+      //   ...
+      //   CÓD: LH78                       <- bloco 3
+      //   ...
+      //   CÓD: LH835                      <- bloco 4
+      //   ...
+      //   KIT BOWLS C/ COLHER             <- nome do produto 1 (LH79)
+      //   R$49,99
+      //   KIT BOWL DE CERÂMICA            <- nome do produto 2 (LH750)
+      //   R$ 38,00
+      //   KIT 2 PÇ BOWL DE CERÂMICA       <- nome do produto 3 (LH78)
+      //   R$ 25,00
+      //   BOWL DE CERÂMICA                <- nome do produto 4 (LH835)
+      //   R$12,00
+      //
+      // O blockExtractor cortava por CÓD, então o bloco LH78 herdava
+      // TODOS os R$ acima e o regex de descricao capturava MATERIAL como nome.
+      //
+      // Fix: depois da extração dos blocos, varre o texto da página inteira
+      // coletando NOMES (linhas em CAPS, sem keywords técnicas, sem cores)
+      // e PREÇOS em ordem textual. Atribui em paralelo aos produtos da página.
+      if (
+        template.supplierId === 'lila-home' ||
+        template.supplierName?.toUpperCase().includes('LILA')
+      ) {
+        const pageProdsForLila = produtos.slice(pageStartIdx);
+        if (pageProdsForLila.length > 0) {
+          const { names, prices } = _extractLilaNamesAndPrices(text);
+          const n = pageProdsForLila.length;
+
+          // CASO IDEAL: contagem bate em todos os 3 → atribuir em ordem
+          if (names.length === n && prices.length === n) {
+            pageProdsForLila.forEach((p, idx) => {
+              p.campos['descricao'] = names[idx];
+              p.campos['preco'] = prices[idx];
+            });
+          } else {
+            // Best-effort: aplica o que dá em ordem (parcialmente bom > tudo ruim)
+            if (names.length === n) {
+              pageProdsForLila.forEach((p, idx) => {
+                p.campos['descricao'] = names[idx];
+              });
+            } else if (names.length > 0 && names.length <= n) {
+              names.forEach((nm, idx) => {
+                pageProdsForLila[idx].campos['descricao'] = nm;
+              });
+            }
+            if (prices.length === n) {
+              pageProdsForLila.forEach((p, idx) => {
+                p.campos['preco'] = prices[idx];
+              });
+            } else if (prices.length > 0 && prices.length <= n) {
+              prices.forEach((pr, idx) => {
+                pageProdsForLila[idx].campos['preco'] = pr;
+              });
+            }
+          }
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════════
       // PASS DAGIA: distribuir preços agrupados no FIM da página
       // ═══════════════════════════════════════════════════════════════════
       // Em DAGIA pgs como 12, todos os preços vêm juntos no final:
@@ -833,3 +900,74 @@ const extractFieldsByHeuristics = (block: string, anchorCode?: string): Record<s
 
   return campos;
 };
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// LILA HOME — helpers para pass posicional de nome+preço
+// ═══════════════════════════════════════════════════════════════════════
+
+// Palavras-chave que indicam "esta linha NÃO é nome de produto, é COR"
+// Lista construída a partir da análise empírica do catálogo LILA HOME 26.03.
+const LILA_COR_TERMS = new Set([
+  'BRANCO', 'PRETO', 'CINZA', 'AZUL', 'VERDE', 'AMARELO', 'VERMELHO',
+  'ROSA', 'LILAS', 'BEGE', 'MARROM', 'DOURADO', 'PRATEADO', 'ROXO',
+  'LARANJA', 'CLARO', 'ESCURO', 'NATURAL', 'TRANSPARENTE', 'TRANPARENTE',
+  'ESTAMPAS', 'ESTAMPA', 'SORTIDAS', 'SORTIDO', 'SORTIDA',
+  'COBRE', 'PRATA', 'CORAL', 'TURQUESA', 'OCRE',
+]);
+const LILA_STOPWORDS = new Set(['E', 'DE', 'DO', 'DA', 'OU', 'C', 'COM']);
+
+const LILA_JUNK_PREFIX = /^(NCM|IPI|CX|MATERIAL|TAMANHO|COR|EAN|UN|UNIDADE|PEÇA|PEÇAS|SUB|CÓD|R\$|SUGEST|\d)/i;
+
+function _lilaIsColorOnly(s: string): boolean {
+  // Normaliza acentos (mantém só letras)
+  const norm = s
+    .toUpperCase()
+    .replace(/[ÃÁÂ]/g, 'A')
+    .replace(/[ÉÊ]/g, 'E')
+    .replace(/[ÍÎ]/g, 'I')
+    .replace(/[ÓÔÕ]/g, 'O')
+    .replace(/[Ú]/g, 'U')
+    .replace(/[Ç]/g, 'C');
+  const words = norm.match(/[A-Z]+/g);
+  if (!words || words.length === 0) return false;
+  // Se TODAS palavras estão na lista de cores ou stopwords → é só cor
+  const nonColor = words.filter(w => !LILA_COR_TERMS.has(w) && !LILA_STOPWORDS.has(w));
+  return nonColor.length === 0;
+}
+
+/**
+ * Extrai nomes e preços do TEXTO INTEIRO da página em ORDEM TEXTUAL.
+ *
+ * Nomes: linhas em CAIXA ALTA (5-60 chars), sem ":", sem palavras técnicas
+ *        (NCM/IPI/CX/MATERIAL/TAMANHO/COR/EAN/UN/PEÇAS/SUB/CÓD), sem ser
+ *        composto APENAS de palavras de cor.
+ * Preços: R$ XX,XX em ordem textual.
+ *
+ * Retornar listas separadas (não pareadas) — porque no layout LILA o nome
+ * pode estar em ORDEM DIFERENTE do preço na mesma página, mas ambos
+ * seguem a ordem dos produtos. Quem chama decide como cruzar.
+ */
+export function _extractLilaNamesAndPrices(text: string): { names: string[]; prices: string[] } {
+  // Nomes: linha começa com letra maiúscula, charset sem \n (que [\s] incluiria)
+  // Multi-line flag (^/$ por linha)
+  const nameRe = /^[ \t]*([A-ZÇÃÕÁÉÍÓÚÊÂ][A-ZÇÃÕÁÉÍÓÚÊÂa-z0-9 \t\-\/\.\(\),º°]{4,59})\s*$/gm;
+  const names: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = nameRe.exec(text)) !== null) {
+    const s = m[1].trim().replace(/\s+/g, ' ');
+    if (s.includes(':')) continue;
+    if (LILA_JUNK_PREFIX.test(s)) continue;
+    if (_lilaIsColorOnly(s)) continue;
+    // Tamanho mínimo de 5 e máximo de 60 (já garantido pelo regex)
+    names.push(s);
+  }
+
+  const priceRe = /R\$\s*(\d{1,4}(?:[.,]\d{2}))/g;
+  const prices: string[] = [];
+  while ((m = priceRe.exec(text)) !== null) {
+    prices.push(m[1].replace(',', '.'));
+  }
+
+  return { names, prices };
+}
