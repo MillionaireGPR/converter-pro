@@ -43,7 +43,17 @@ export const extractImagesViaBackend = async (
       console.log(`[ImageExtractionApi] Exemplo SKU[0]:`, allSkus[0]);
     }
     formData.append('skus', JSON.stringify(allSkus));
-    
+
+    // v21: Gemini Vision Picker para fornecedores com imagens densas/ambíguas.
+    // Backend também auto-ativa pra DAGIA, mas mandamos explícito pra documentar
+    // a decisão e permitir expandir pra outros fornecedores no futuro.
+    const aiPickerSuppliers = ['DAGIA'];
+    const useAiPicker = aiPickerSuppliers.includes((fornecedor || '').toUpperCase());
+    formData.append('useAiPicker', useAiPicker ? 'true' : 'false');
+    if (useAiPicker) {
+      console.log(`[ImageExtractionApi] AI Picker ATIVADO para fornecedor=${fornecedor}`);
+    }
+
     // 3. Chamar backend Python (com retry agressivo p/ ERR_HTTP2_PROTOCOL_ERROR)
     console.log(`[ImageExtractionApi] Chamando backend: ${BACKEND_URL}/process`);
 

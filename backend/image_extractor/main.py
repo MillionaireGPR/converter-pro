@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.08-v20-box-aspect-refined"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.09-v21-gemini-image-picker"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
@@ -237,7 +237,7 @@ def _load_status(job_id: str) -> dict:
 
     return data
 
-def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, output_folder: str, page_heights: dict, total_pages: int):
+def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, output_folder: str, page_heights: dict, total_pages: int, supplier: str = "", use_ai_picker: bool = False):
     try:
         # 4. Converter Y dos SKUs com spatialContext (PDF.js Y-up -> PyMuPDF Y-down)
         skus_list = _convert_sku_y_coords(skus_list, page_heights)
@@ -248,8 +248,13 @@ def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, outpu
         skus_list = _infer_spatial_context(pdf_local_path, skus_list)
 
         # 5. Extração via OpenCV: nova estratégia Column-First
-        print("[Main] Extração de imagens (Estratégia Column-First)")
-        matches, unmatched = extract_cells_via_cv(pdf_local_path, skus_list, output_folder)
+        # v21: se use_ai_picker=True, Gemini Vision decide qual imagem é a do produto
+        # (resolve casos heurística não cobre — DAGIA tag de preço, kit xícara, etc).
+        print(f"[Main] Extração de imagens (supplier={supplier}, ai_picker={use_ai_picker})")
+        matches, unmatched = extract_cells_via_cv(
+            pdf_local_path, skus_list, output_folder,
+            supplier_id=supplier, use_ai_picker=use_ai_picker,
+        )
         total_images = len(matches)
 
         if not matches:
@@ -305,6 +310,7 @@ async def process_pdf(
     supplier: str = Form(...),
     totalProducts: str = Form("0"),
     skus: str = Form("[]"),
+    useAiPicker: str = Form("false"),  # v21: Gemini Vision decide imagem (DAGIA)
 ):
     print(f"\n--- Iniciando Job: {jobId} ---")
     print(f"Arquivo: {file.filename}, Fornecedor: {supplier}")
@@ -329,6 +335,13 @@ async def process_pdf(
         page_heights = _get_page_heights(pdf_local_path)
         total_pages = len(page_heights)
 
+        # v21: parse flag use_ai_picker (default: ativado para DAGIA, off pros outros)
+        ai_picker_flag = str(useAiPicker).strip().lower() in ("true", "1", "yes", "on")
+        # Auto-on para DAGIA mesmo se frontend não mandar (defensivo)
+        if not ai_picker_flag and supplier and supplier.lower() in ("dagia", "dagía"):
+            ai_picker_flag = True
+            print(f"[Main] Auto-ativando AI picker para supplier={supplier}")
+
         # Disparar tarefa em background
         background_tasks.add_task(
             _run_extraction_task,
@@ -337,7 +350,9 @@ async def process_pdf(
             skus_list,
             output_folder,
             page_heights,
-            total_pages
+            total_pages,
+            supplier,
+            ai_picker_flag,
         )
 
         return {"status": "processing", "jobId": jobId}

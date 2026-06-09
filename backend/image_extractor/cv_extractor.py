@@ -27,11 +27,16 @@ def extract_cells_via_cv(
     pdf_path: str,
     skus_list: list,
     output_folder: str,
-    scale: float = 1.2  # Reduzido de 1.5 → 1.2 (28/05/2026):
+    scale: float = 1.2,  # Reduzido de 1.5 → 1.2 (28/05/2026):
                         # OOM recorrente no Render Starter 512MB. scale=1.5 gera
                         # raster 890×1260×3 = ~3.3MB/página. scale=1.2 gera
                         # 712×1010×3 = ~2.2MB/página (-33% RAM). Qualidade ainda
                         # suficiente para detecção de grid e extração via xref.
+    supplier_id: Optional[str] = None,  # v21: usado para ativar Gemini Vision
+                                        # como decisor de imagem (DAGIA).
+    use_ai_picker: bool = False,        # v21: se True, Gemini decide qual
+                                        # imagem entre candidatos representa
+                                        # cada SKU (substitui heurística).
 ) -> Tuple[List[Dict], List[Dict]]:
     """
     Extrai a imagem do produto para cada SKU.
@@ -121,14 +126,76 @@ def extract_cells_via_cv(
             pm, pu = _match_via_embedded(doc, raster, page_skus, page_imgs,
                                          scale, output_folder, page_num)
 
-        # ─── KIT BOX IMAGE: SKUs DAGIA DZ + DXPD (kits de xícaras/jogos) ───
+        # ─── v21: GEMINI VISION PICKER para DAGIA (substitui heurística) ───
+        # Quando use_ai_picker=True e supplier=DAGIA, Gemini decide qual
+        # imagem entre os candidatos extraídos representa cada SKU. Resolve
+        # casos que heurística não conseguia: DXP57 puxando tag de preço,
+        # DXP1-N puxando xícara avulsa em vez da caixa do kit.
+        ai_assigned_xrefs: set = set()
+        if use_ai_picker and supplier_id and supplier_id.lower() in ("dagia", "dagía") and page_skus and page_imgs:
+            try:
+                from gemini_image_picker import pick_images_for_page
+
+                # Extrai todos candidatos como RGB arrays
+                candidates_for_ai: List[Dict] = []
+                for img_info in page_imgs:
+                    try:
+                        arr = _extract_perfect_image(doc, img_info, raster, width, height, scale)
+                        if arr is not None and arr.size > 0:
+                            h, w = arr.shape[:2]
+                            if h * w >= 5000:  # filtro mínimo (ignora microfragmentos)
+                                candidates_for_ai.append({"xref": img_info["xref"], "image_rgb": arr})
+                    except Exception:
+                        pass
+
+                if candidates_for_ai:
+                    skus_for_ai = [
+                        {"sku": s.get("sku"), "name": s.get("name", "")}
+                        for s in page_skus if s.get("sku")
+                    ]
+                    print(f"[CV] AI PICKER (DAGIA) pág {page_num}: {len(skus_for_ai)} SKUs, {len(candidates_for_ai)} candidatos")
+                    picks = pick_images_for_page(pdf_path, page_num, skus_for_ai, candidates_for_ai)
+
+                    # Override: sobrescreve matches/unmatched com a decisão da IA
+                    cand_by_xref = {c["xref"]: c["image_rgb"] for c in candidates_for_ai}
+                    for sku_info in page_skus:
+                        sku_code = sku_info.get("sku")
+                        if not sku_code:
+                            continue
+                        chosen_xref = picks.get(sku_code)
+                        if chosen_xref is None:
+                            continue
+                        img_rgb = cand_by_xref.get(chosen_xref)
+                        if img_rgb is None:
+                            continue
+                        ai_assigned_xrefs.add(chosen_xref)
+                        # Salva em alta resolução (qualidade pra catálogo Mercos)
+                        box_image_hires = _resize_keep_aspect(img_rgb, max_dim=1200)
+                        existing = next((m for m in pm if m["sku"] == sku_code), None)
+                        if existing:
+                            _save_image_hires(box_image_hires, sku_code, output_folder)
+                            existing["match_type"] = "ai_picker"
+                            print(f"[CV] AI: override match {sku_code} → xref={chosen_xref}")
+                        else:
+                            filepath = _save_image_hires(box_image_hires, sku_code, output_folder)
+                            pm.append(_make_match(sku_info, page_num, filepath, "ai_picker"))
+                            pu = [u for u in pu if u.get("sku") != sku_code]
+                            print(f"[CV] AI: novo match {sku_code} → xref={chosen_xref}")
+            except Exception as e:
+                print(f"[CV] AI Picker falhou pág {page_num}: {str(e)[:200]} — usando heurística fallback")
+
+        # ─── KIT BOX IMAGE (heurística): SKUs DAGIA DZ + DXPD ───
+        # FALLBACK: roda só se AI Picker não rodou ou não decidiu pra esse SKU.
         # Cliente reportou (v17): colagem ficou com baixa resolução + faltavam
         # peças. Sugestão dele: usar a imagem da CAIXA (que já mostra o kit
         # montado com todas as peças). Estratégia v18: pegar a MAIOR imagem
         # da página (em pixels) que tipicamente é a foto da caixa do kit.
         import re as _re
-        kit_skus = [s for s in page_skus
-                    if s.get("sku") and _re.match(r"^(DZ|DXPD)\d+", str(s["sku"]).upper())]
+        kit_skus_raw = [s for s in page_skus
+                        if s.get("sku") and _re.match(r"^(DZ|DXPD)\d+", str(s["sku"]).upper())]
+        # Se AI Picker já decidiu para este SKU, NÃO sobrescreve com heurística
+        ai_decided_skus = {m["sku"] for m in pm if m.get("match_type") == "ai_picker"}
+        kit_skus = [s for s in kit_skus_raw if s.get("sku") not in ai_decided_skus]
         if kit_skus and page_imgs:
             print(f"[CV] KIT detectado em pág {page_num}: {len(kit_skus)} SKU(s), buscando imagem maior (caixa)")
             # Extrai TODAS as imagens embedded da página e mede tamanho real

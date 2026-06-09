@@ -146,6 +146,24 @@ allow_credentials=False,
 **Por que existe**: Sem isso, impossível saber qual versão o Render está servindo. Já tivemos caso de Render servir código stale por horas — sem o `version` no `/health`, descobriríamos só pelo bug em produção.
 **Travado por**: `regression-locks.test.ts` → "SERVICE_VERSION no /health"
 
+### IV-14 — Heurística `_box_score` em DAGIA com zonas de aspect ratio fixas
+**Arquivo**: `backend/image_extractor/cv_extractor.py` função `_box_score`
+**Por que existe**: DAGIA usa imagens fotográficas de kits com PRATOS quase quadrados (aspect ≈ 1.0) e CAIXAS retangulares 3D (aspect ≈ 0.65-0.90). Pesos genéricos faziam pratos vencerem por área. Análise empírica dos xrefs reais (DZ01-04 pg 4-10) provou que apenas zonas explícitas de aspect ratio separam as duas classes.
+**Fórmula travada**:
+```
+aspect_score:
+  0.65-0.90       → 1.0   (zona ouro da CAIXA)
+  0.55-0.65 ou 0.90-1.05 → 0.6 (ambíguo)
+  0.40-0.55 ou 1.05-1.30 → 0.3 (improvável)
+  outros          → 0.1
+
+score = aspect_score * 0.55 + std_dev_color * 0.30 + size_log * 0.15
+filtro: area >= 20000 pixels
+```
+**Custou ao cliente**: DZ01 puxou prato em vez de caixa na v18/v19 — user reportou + pediu lock explícito ("definir isso daí como regra inalterável pra deixar fixado dentro da estrutura").
+**Travado por**: `src/core/pipeline/dagia-box-heuristic.test.ts` (6 testes em TS replicando o algoritmo Python)
+**Validação empírica (DZ01 pg 7)**: caixa(0.74) = 0.864 vence pratos(0.99) = 0.514.
+
 ---
 
 ## 🎯 Métricas do sistema em produção (baseline)
