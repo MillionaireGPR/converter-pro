@@ -105,12 +105,12 @@ DXP24 Xicara avulsa`;
     }
   });
 
-  it('quantidadeCaixa captura "CX C/12Jgs", "C/8Pçs", "C/24Pcs"', () => {
+  it('quantidadeCaixa captura "CX C/N Jgs" (exige prefixo CX)', () => {
     const samples = [
       { texto: 'CX C/12Jgs', expected: '12' },
       { texto: 'CX C/8Pçs', expected: '8' },
-      { texto: 'C/24Pcs', expected: '24' },
       { texto: 'CX C/72Pçs', expected: '72' },
+      { texto: 'CX C/83Jgs', expected: '83' },
     ];
 
     const qtdRegex = dagiaTemplate.fieldExtractors!.quantidadeCaixa as RegExp;
@@ -118,5 +118,40 @@ DXP24 Xicara avulsa`;
       const match = texto.match(qtdRegex);
       expect(match?.[1], `falhou em "${texto}"`).toBe(expected);
     }
+  });
+
+  it('🔒 quantidadeCaixa IGNORA "C/N Pçs" do nome (sem prefixo CX)', () => {
+    // Bug real (09/06/2026): LX15016 tinha nome "Copo 458 ml C/6 Pçs" e CX
+    // real "CX C/8Jgs". Regex antigo aceitava ambos e o do nome ganhava → 6.
+    // Fix: exigir CX como prefixo. "C/6 Pçs" sozinho NÃO casa.
+    const namesOnly = [
+      'Copo 458 ml C/6 Pçs',
+      'Xicara C/ Pires Opalina 80 ml C/12 Pçs',
+      'Bowl C/8 Pçs colorido',
+    ];
+    const qtdRegex = dagiaTemplate.fieldExtractors!.quantidadeCaixa as RegExp;
+    for (const texto of namesOnly) {
+      const match = texto.match(qtdRegex);
+      expect(match, `"${texto}" NÃO deveria casar (sem prefixo CX)`).toBeNull();
+    }
+  });
+
+  it('🔒 LX15016 real: extrai 8 (CX C/8Jgs), ignora 6 (C/6 Pçs do nome)', () => {
+    // Texto real extraído via PyMuPDF do CATÁLOGO DAGIA 25-03-2026 pg 13
+    const blocoLX15016 = `LX15016
+Copo 458 ml C/6 Pçs
+-
+8,6cm Larg
+15cm Alt
+-
+CX C/8Jgs
+CX Presente
+-
+COPO
+R$25,20
+FINAL`;
+    const qtdRegex = dagiaTemplate.fieldExtractors!.quantidadeCaixa as RegExp;
+    const match = blocoLX15016.match(qtdRegex);
+    expect(match?.[1]).toBe('8');
   });
 });

@@ -54,9 +54,16 @@ export const dagiaTemplate: PdfTemplate = {
     // evitam falso positivo.
     preco: /R\$\s*(\d{1,4}(?:\.\d{3})*[.,]\d{2})/i,
 
-    // Quantidade caixa: "CX C/12Jgs", "C/8Pçs", "C/24Pcs" — captura o número
-    // (suporta múltiplas variantes: Jgs/Pçs/Pcs/Pecas)
-    quantidadeCaixa: /(?:CX\s*)?C\/(\d{1,3})\s*(?:Jgs|P[cç]s|Pecas|Jogos)/i,
+    // Quantidade caixa REAL = "CX C/N Jgs" (jogos por caixa de transporte).
+    //
+    // BUG anterior (até 09/06/2026): regex aceitava também "C/N Pçs" do NOME
+    // do produto (ex: "Copo 458 ml C/6 Pçs"). O primeiro match (do nome)
+    // ganhava, capturando 6 em vez do "CX C/8Jgs" real da etiqueta.
+    //
+    // Fix: EXIGE prefixo "CX". Sem CX, defaultQuantidadeCaixa=1 entra.
+    // Validado contra LX15016 (real CX=8, nome diz "C/6 Pçs") e DXP25
+    // (real CX=8, nome diz "C/12 Pçs").
+    quantidadeCaixa: /CX\s*C\/(\d{1,3})\s*(?:Jgs|Jogos|P[cç]s|Pecas|Un)?/i,
 
     // NCM: NCM XXXX.XX.XX ou só XXXX.XX.XX
     ncm: /(?:NCM[:\s]*)?(\d{4}\.?\d{2}\.?\d{2})/i,
