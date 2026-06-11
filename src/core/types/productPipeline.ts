@@ -24,6 +24,7 @@ export type ParserStrategy =
   | 'pdf-textual'      // Extração de texto nativo do PDF
   | 'pdf-tabular'      // Parser de tabelas do PDF
   | 'pdf-blocos'       // Parser por blocos de produto
+  | 'pdf-ai-first'     // v23: Gemini Vision lê o catálogo inteiro (primário)
   | 'ocr-fallback';    // OCR como último recurso
 
 /** Metadados coletados durante a leitura do arquivo */

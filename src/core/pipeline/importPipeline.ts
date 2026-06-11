@@ -889,6 +889,12 @@ export interface PipelineOptions {
   includeErrors?: boolean;
   /** Deduplicar por código */
   deduplicate?: boolean;
+  /**
+   * v23 AI-first: brutos pré-extraídos pelo Gemini (engine injeta).
+   * Quando presente e não-vazio, o pipeline PULA a leitura regex do PDF e
+   * usa estes registros — normalização/validação/dedup continuam idênticos.
+   */
+  aiBrutos?: ProdutoBruto[];
 }
 
 /**
@@ -930,7 +936,18 @@ export const runImportPipeline = async (
   let partialMetadata: Partial<ImportMetadata> = {};
   let pipelineWarnings: string[] = []; // NOVO: Warnings gerais do pipeline
 
-  if (tipoArquivo === 'pdf') {
+  if (tipoArquivo === 'pdf' && options.aiBrutos && options.aiBrutos.length > 0) {
+    // ─── v23 AI-FIRST: brutos vêm do Gemini (injetados pelo engine) ───
+    // Pula a leitura regex inteira. Normalização/validação/dedup seguem
+    // o caminho normal abaixo — o motor de extração mudou, o resto não.
+    brutos = options.aiBrutos;
+    parserUsado = 'pdf-ai-first';
+    partialMetadata = {
+      tipoPDF: 'pdf-blocos',
+      confiancaExtracao: 95,
+    };
+    console.log(`[Pipeline] AI-FIRST: ${brutos.length} produtos pré-extraídos pelo Gemini`);
+  } else if (tipoArquivo === 'pdf') {
     const pdfResult = await readPDF(fileData, adapter);
     brutos = pdfResult.brutos;
     parserUsado = pdfResult.strategy;
