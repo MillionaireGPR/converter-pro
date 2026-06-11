@@ -59,16 +59,34 @@ describe('🔒 v23 AI-first — golden DAGIA (fixture real do Gemini)', () => {
   });
 
   it('🔒 DXPD51-55 (EM BREVE) mapeiam com __emBreve e SEM preço', () => {
+    // Fixture v23 (com hints): Gemini retorna emBreve=true explícito.
     const brutos = mapAiProductsToBrutos(produtos);
     const emBreveCodes = ['DXPD51', 'DXPD52', 'DXPD53', 'DXPD54', 'DXPD55'];
     for (const code of emBreveCodes) {
       const bruto = brutos.find(b => b.campos['codigo'] === code);
       expect(bruto, `${code} não encontrado`).toBeDefined();
-      // preco null no Gemini → campo preco AUSENTE no bruto
       expect(bruto!.campos['preco'], `${code} não deveria ter preço`).toBeUndefined();
-      // __emBreve setado quando emBreve=true OU produto DXPD sem preço da fixture
-      // (fixture do spike é anterior ao campo emBreve no prompt — produtos
-      // têm preco=null; o teste do flag explícito está abaixo)
+      expect(bruto!.campos['__emBreve'], `${code} deveria ter __emBreve`).toBe(true);
+      expect(bruto!.campos['informacoesAdicionais']).toBe('EM BREVE');
+    }
+  });
+
+  it('🔒 qty CAIXA 100% correta (28/28 — validado contra etiquetas CX C/N Jgs)', () => {
+    // Re-spike v23 com hints: 28/28 (era 12/28 sem hints).
+    // Ground truth = etiquetas "CX C/N Jgs" lidas manualmente do catálogo.
+    const GT_CX: Record<string, number> = {
+      'DXP1': 12, 'DXP2': 12, 'DXP3': 12, 'DXP24': 12, 'DXP25': 8,
+      'DXPD51': 12, 'DXPD52': 12, 'DXPD53': 12, 'DXPD54': 12, 'DXPD55': 12,
+      'DZ01': 2, 'DZ02': 2, 'DZ03': 2, 'DZ04': 2, 'LHSP75': 72,
+      'DXP57': 6, 'CF026/L12': 8, 'CF029A/L12': 8, 'CF001/L12': 8, 'DXP15': 8,
+      'LX15016': 8, 'DPB01': 8, 'DPB02': 12, 'DCM25': 4, 'DCM26': 4,
+      'DS10': 24, 'DM11': 24, 'DV31': 36,
+    };
+    const brutos = mapAiProductsToBrutos(produtos);
+    for (const [code, cx] of Object.entries(GT_CX)) {
+      const bruto = brutos.find(b => b.campos['codigo'] === code);
+      expect(bruto, `${code} não encontrado`).toBeDefined();
+      expect(bruto!.campos['cx'], `${code}: qty caixa errada`).toBe(String(cx));
     }
   });
 
