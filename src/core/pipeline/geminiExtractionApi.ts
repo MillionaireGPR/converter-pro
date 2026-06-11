@@ -310,6 +310,9 @@ export const buildSkusByPageForRepair = <T extends Record<string, any>>(
   for (const p of produtos) {
     const preco = Number(p.preco || p.precoBase || p.precoFinal || 0);
     if (preco > 0) continue;
+    // EM BREVE: produto sem preço POR DESIGN — não gastar chamada Gemini
+    // tentando resgatar um preço que não existe no catálogo.
+    if ((p as any).visualCategory === 'em-breve') continue;
     const codigo = String(p.codigo || p.codigoOriginal || '').trim();
     if (!codigo) continue;
     const pagina = Number(p.paginaOrigem || 0);

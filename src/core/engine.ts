@@ -59,8 +59,45 @@ export const processarArquivoV2 = async (
     if (adapter) options.forceAdapter = adapter;
   }
 
-  // ─── Pipeline base (rápido, ~1-3s) ───
-  // Roda primeiro e libera a UI com resultado preliminar.
+  // ─── v23 AI-FIRST: Gemini lê o catálogo PDF inteiro como extrator PRIMÁRIO ───
+  // Decisão aprovada em 09/06/2026 após spike com DAGIA real: 100% códigos,
+  // 100% preços, 5/5 EM BREVE em 45s (~R$0,25). Substitui o ciclo infinito
+  // de manutenção de regex por fornecedor.
+  //
+  // FALLBACK AUTOMÁTICO: qualquer falha da IA (timeout/erro/0 produtos) cai
+  // no pipeline regex existente — nada quebra, só fica menos preciso.
+  // EXCEÇÕES ao AI-first (não quebrar o que JÁ funciona perfeito):
+  //   - NIX HOUSE: caso-bandeira do regex (285 produtos, 0 erros) — IVs baseiam-se nele
+  //   - GOAL KIDS: 1042 páginas, excede contexto/custo — mantém workaround próprio
+  const AI_FIRST_BLOCKLIST = ['NIX', 'GOAL KIDS', 'GOALKIDS', 'GOAL-KIDS'];
+  const supplierUpper = (supplierName || supplierId || '').toUpperCase();
+  const isBlocked = AI_FIRST_BLOCKLIST.some(b => supplierUpper.includes(b));
+
+  const isPdfFile = file.name.toLowerCase().endsWith('.pdf');
+  if (isPdfFile && isBlocked) {
+    console.log(`[Engine] AI-first PULADO para ${supplierUpper} (blocklist — regex já validado)`);
+  }
+  if (isPdfFile && !isBlocked) {
+    try {
+      const { extractProductsViaAI, mapAiProductsToBrutos } = await import('./pipeline/aiFirstExtractionApi');
+      const aiResult = await extractProductsViaAI(file, supplierName || supplierId || '');
+      if (aiResult && aiResult.success && aiResult.produtos.length > 0) {
+        const aiBrutos = mapAiProductsToBrutos(aiResult.produtos);
+        if (aiBrutos.length > 0) {
+          options.aiBrutos = aiBrutos;
+          console.log(`[Engine] AI-FIRST ativo: ${aiBrutos.length} produtos extraídos pela IA (${aiResult.model})`);
+        }
+      } else {
+        console.warn('[Engine] AI-first indisponível — fallback para pipeline regex');
+      }
+    } catch (e) {
+      console.warn('[Engine] AI-first falhou (não-crítico, fallback regex):', e);
+    }
+  }
+
+  // ─── Pipeline base (normalização/validação/dedup) ───
+  // Com aiBrutos: pula leitura regex e usa produtos da IA.
+  // Sem aiBrutos: caminho regex completo (fallback ou Excel/CSV).
   const result: PipelineResult = await runImportPipeline(file, options);
 
   // ─── AI CIRÚRGICA: resgata APENAS os preços faltantes ───

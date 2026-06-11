@@ -134,6 +134,7 @@ Analise TODAS as páginas do PDF anexado e extraia CADA produto encontrado. Para
 - **categoria**: categoria/linha do produto se aparecer (ex: "COZINHA & UD"), senão null
 - **paginaOrigem**: número da página onde o produto aparece (1-based)
 - **observacoes**: informações adicionais relevantes (dimensões, material, cor), max 200 chars
+- **emBreve**: true se o produto está marcado como "EM BREVE" / "EM BREVE..." / lançamento futuro (sem preço por design). false caso contrário.
 
 REGRAS CRÍTICAS:
 1. Extraia TODOS os produtos visíveis, mesmo que tenham informações parciais.
@@ -143,6 +144,8 @@ REGRAS CRÍTICAS:
 5. Preços em catálogos brasileiros usam vírgula como decimal — converta para ponto (6,99 → 6.99).
 6. Códigos podem ter sufixos de variação (NX445-A, NX445-P, NX445-V) — extraia TODOS como produtos separados.
 7. Se um produto tem múltiplas variações no mesmo card (ex: 3 cores), liste cada variação separadamente se houver código distinto.
+8. quantidadeCaixa é a quantidade da CAIXA DE EMBARQUE (master/transporte), normalmente numa etiqueta técnica separada (ex: "CX C/12Jgs", "CX: 36 PEÇAS"). NÃO confunda com a contagem de peças que faz parte do NOME do produto (ex: "Xicara C/ Pires C/12 Pçs" descreve o conteúdo do produto, não a caixa de embarque).
+9. Produto marcado "EM BREVE" sem preço NÃO é erro: retorne preco=null e emBreve=true.
 
 RETORNE APENAS JSON VÁLIDO no seguinte formato:
 {
@@ -169,13 +172,58 @@ NÃO inclua texto fora do JSON. NÃO use markdown (```). Apenas o objeto JSON pu
 
 
 # ─────────────────────────────────────────────────────────────
+# Hints por fornecedor (v23 — AI-first)
+# ─────────────────────────────────────────────────────────────
+# FILOSOFIA: em vez de manter um parser regex artesanal por fornecedor
+# (manutenção infinita), cada fornecedor vira ~3 linhas de instrução
+# anexadas ao prompt do Gemini. Catálogo mudou de layout? Ajusta a frase.
+#
+# Chave = nome normalizado (upper, sem acento). Lookup tolerante em
+# get_supplier_hints().
+
+SUPPLIER_HINTS: Dict[str, str] = {
+    "DAGIA": (
+        "DICAS ESPECÍFICAS DO FORNECEDOR DAGIA:\n"
+        "- quantidadeCaixa = número da etiqueta técnica 'CX C/N Jgs' (jogos por caixa). "
+        "NUNCA use o 'C/N Pçs' que faz parte do NOME do produto (esse é o conteúdo do jogo).\n"
+        "  Exemplo: 'Copo 458 ml C/6 Pçs' com etiqueta 'CX C/8Jgs' → quantidadeCaixa=8 (não 6).\n"
+        "- Produtos da linha DXPD marcados 'EM BREVE...' não têm preço: emBreve=true, preco=null.\n"
+        "- Jogos DZ01-DZ04 vêm 2 jogos por caixa (etiqueta 'CX C/2Jgs')."
+    ),
+    "LILA HOME": (
+        "DICAS ESPECÍFICAS DO FORNECEDOR LILA HOME:\n"
+        "- O NOME do produto é a linha em CAIXA ALTA próxima ao bloco (ex: 'KIT BOWL DE CERÂMICA'), "
+        "NUNCA o campo MATERIAL (ex: 'CERÂMICA' ou 'FIBRA DE BAMBU ECO' são materiais, não nomes).\n"
+        "- quantidadeCaixa = número do campo 'CX: N PEÇAS'.\n"
+        "- Cada bloco 'CÓD:' é um produto; nome e preço podem estar visualmente distantes do bloco."
+    ),
+}
+
+
+def get_supplier_hints(supplier: str) -> str:
+    """Retorna hints do fornecedor (lookup tolerante a caixa/acentos/espaços)."""
+    if not supplier:
+        return ""
+    norm = supplier.strip().upper()
+    # normaliza acentos básicos
+    for a, b in [("Á", "A"), ("Ã", "A"), ("Â", "A"), ("É", "E"), ("Ê", "E"),
+                 ("Í", "I"), ("Ó", "O"), ("Õ", "O"), ("Ô", "O"), ("Ú", "U"), ("Ç", "C")]:
+        norm = norm.replace(a, b)
+    for key, hints in SUPPLIER_HINTS.items():
+        if key in norm or norm in key:
+            return hints
+    return ""
+
+
+# ─────────────────────────────────────────────────────────────
 # Função principal
 # ─────────────────────────────────────────────────────────────
 
 def extract_products_with_gemini(
     pdf_path: str,
     model_name: str = MODEL_FLASH,
-    max_retries: int = 2
+    max_retries: int = 2,
+    supplier_hints: str = ""
 ) -> Dict[str, Any]:
     """
     Extrai produtos de um PDF de catálogo usando Gemini com visão.
@@ -231,8 +279,13 @@ def extract_products_with_gemini(
                 max_output_tokens=65535,    # catálogos grandes podem ter muitos produtos
             )
 
+            # v23: anexa hints do fornecedor ao prompt (substitui parsers regex)
+            full_prompt = EXTRACTION_PROMPT
+            if supplier_hints:
+                full_prompt = f"{EXTRACTION_PROMPT}\n\n{supplier_hints}"
+
             response = model.generate_content(
-                [file_handle, EXTRACTION_PROMPT],
+                [file_handle, full_prompt],
                 generation_config=generation_config,
                 request_options={"timeout": 300},  # 5min timeout
             )
@@ -588,7 +641,7 @@ def repair_prices_for_skus(
     }
 
 
-def extract_with_fallback(pdf_path: str) -> Dict[str, Any]:
+def extract_with_fallback(pdf_path: str, supplier: str = "") -> Dict[str, Any]:
     """
     Extrai com cadeia de fallbacks (todos modelos atualmente ativos):
       1. gemini-2.5-flash    (padrão: rápido e barato)
@@ -597,15 +650,21 @@ def extract_with_fallback(pdf_path: str) -> Dict[str, Any]:
       4. gemini-2.5-pro      (último recurso: caro mas robusto)
 
     Se confiança < 80%, escala para Pro para validar/melhorar.
+
+    v23: supplier define hints anexados ao prompt (ver SUPPLIER_HINTS).
     """
     # Cadeia de fallback de modelos (todos ATIVOS em 2026)
     fallback_chain = [MODEL_FLASH, MODEL_FLASH_STABLE, MODEL_FLASH_LATEST, MODEL_PRO]
+
+    supplier_hints = get_supplier_hints(supplier)
+    if supplier_hints:
+        print(f"[Gemini] Hints ativos para fornecedor: {supplier}")
 
     result = None
     last_error = None
     for model in fallback_chain:
         print(f"[Gemini] Tentando modelo: {model}")
-        result = extract_products_with_gemini(pdf_path, model_name=model)
+        result = extract_products_with_gemini(pdf_path, model_name=model, supplier_hints=supplier_hints)
         if result.get("success"):
             print(f"[Gemini] ✓ Sucesso com {model}")
             break
@@ -641,7 +700,7 @@ def extract_with_fallback(pdf_path: str) -> Dict[str, Any]:
     # Se confiança < 80%, escala para Pro
     if confianca < 0.80:
         print(f"[Gemini] Confiança baixa, escalando para 2.5 Pro...")
-        pro_result = extract_products_with_gemini(pdf_path, model_name=MODEL_PRO)
+        pro_result = extract_products_with_gemini(pdf_path, model_name=MODEL_PRO, supplier_hints=supplier_hints)
         if pro_result.get("success") and pro_result["produtos"]:
             pro_produtos = pro_result["produtos"]
             pro_completos = sum(

@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.09-v22-rollback-ai-picker"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.09-v23-ai-first"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
@@ -427,7 +427,8 @@ def _run_ai_extraction_task(ai_job_id: str, pdf_path: str, supplier: str):
         from gemini_extractor import extract_with_fallback as gemini_extract
 
         print(f"[AI BG] Iniciando job {ai_job_id} (supplier={supplier})...")
-        result = gemini_extract(pdf_path)
+        # v23: passa supplier para ativar hints específicos no prompt
+        result = gemini_extract(pdf_path, supplier=supplier)
 
         if result.get("success"):
             print(f"[AI BG] {ai_job_id} OK: {len(result['produtos'])} produtos | confiança={result.get('confianca', 0):.0%}")
