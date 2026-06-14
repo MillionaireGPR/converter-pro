@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.09-v25-fullpage-candidates"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.09-v26-center-badge"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
