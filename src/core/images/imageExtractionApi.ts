@@ -44,13 +44,15 @@ export const extractImagesViaBackend = async (
     }
     formData.append('skus', JSON.stringify(allSkus));
 
-    // v22 (09/06/2026): AI Picker DESATIVADO temporariamente — causou OOM
-    // em produção (Render Starter 512MB com DAGIA: render + candidatos RGB
-    // + thumbnails + Gemini ×N páginas). Backend caía com 502 + perda de job.
-    // Lista vazia mantém o código pronto pra reativar quando otimizado.
-    const aiPickerSuppliers: string[] = [];
+    // v24 (09/06/2026): AI Picker REATIVADO com redesenho memory-safe.
+    // (v21 causou OOM; v24 manda só a página anotada + extrai a escolhida.)
+    // Backend também auto-ativa pra DAGIA; mandamos explícito pra documentar.
+    const aiPickerSuppliers = ['DAGIA'];
     const useAiPicker = aiPickerSuppliers.includes((fornecedor || '').toUpperCase());
     formData.append('useAiPicker', useAiPicker ? 'true' : 'false');
+    if (useAiPicker) {
+      console.log(`[ImageExtractionApi] AI Picker v24 ATIVADO para fornecedor=${fornecedor}`);
+    }
 
     // 3. Chamar backend Python (com retry agressivo p/ ERR_HTTP2_PROTOCOL_ERROR)
     console.log(`[ImageExtractionApi] Chamando backend: ${BACKEND_URL}/process`);
