@@ -126,38 +126,40 @@ def extract_cells_via_cv(
             pm, pu = _match_via_embedded(doc, raster, page_skus, page_imgs,
                                          scale, output_folder, page_num)
 
-        # ─── v21: GEMINI VISION PICKER para DAGIA (substitui heurística) ───
-        # Quando use_ai_picker=True e supplier=DAGIA, Gemini decide qual
-        # imagem entre os candidatos extraídos representa cada SKU. Resolve
-        # casos que heurística não conseguia: DXP57 puxando tag de preço,
-        # DXP1-N puxando xícara avulsa em vez da caixa do kit.
-        ai_assigned_xrefs: set = set()
+        # ─── v24: GEMINI VISION PICKER memory-safe (substitui heurística) ───
+        # Quando use_ai_picker=True e supplier=DAGIA, manda a página JÁ
+        # renderizada (1 imagem, com números desenhados nas candidatas) pro
+        # Gemini decidir qual número é a foto de cada SKU. Extrai SÓ a escolhida.
+        #
+        # MEMÓRIA (vs v21 que causou OOM): NÃO extrai todas as candidatas como
+        # arrays. Passa só os rects + o raster que já existe. 1 cópia anotada
+        # downscalada + 1 chamada Gemini por página. Footprint ~igual ao atual.
         if use_ai_picker and supplier_id and supplier_id.lower() in ("dagia", "dagía") and page_skus and page_imgs:
             try:
                 from gemini_image_picker import pick_images_for_page
 
-                # Extrai todos candidatos como RGB arrays
+                # Candidatas = rects (NÃO arrays). Filtra fragmentos minúsculos
+                # por área do rect (sem extrair pixels ainda).
                 candidates_for_ai: List[Dict] = []
                 for img_info in page_imgs:
-                    try:
-                        arr = _extract_perfect_image(doc, img_info, raster, width, height, scale)
-                        if arr is not None and arr.size > 0:
-                            h, w = arr.shape[:2]
-                            if h * w >= 5000:  # filtro mínimo (ignora microfragmentos)
-                                candidates_for_ai.append({"xref": img_info["xref"], "image_rgb": arr})
-                    except Exception:
-                        pass
+                    r = img_info["rect"]
+                    area_px = (r.width * scale) * (r.height * scale)
+                    if area_px >= 5000:
+                        candidates_for_ai.append({"xref": img_info["xref"], "rect": r})
 
                 if candidates_for_ai:
                     skus_for_ai = [
                         {"sku": s.get("sku"), "name": s.get("name", "")}
                         for s in page_skus if s.get("sku")
                     ]
-                    print(f"[CV] AI PICKER (DAGIA) pág {page_num}: {len(skus_for_ai)} SKUs, {len(candidates_for_ai)} candidatos")
-                    picks = pick_images_for_page(pdf_path, page_num, skus_for_ai, candidates_for_ai)
+                    print(f"[CV] AI PICKER v24 (DAGIA) pág {page_num}: {len(skus_for_ai)} SKUs, {len(candidates_for_ai)} candidatas")
+                    # Passa o raster já renderizado + rects. Sem extração prévia.
+                    picks = pick_images_for_page(
+                        raster, candidates_for_ai, page_num, skus_for_ai, scale
+                    )
 
-                    # Override: sobrescreve matches/unmatched com a decisão da IA
-                    cand_by_xref = {c["xref"]: c["image_rgb"] for c in candidates_for_ai}
+                    # info por xref pra extração sob demanda (só da escolhida)
+                    img_info_by_xref = {p["xref"]: p for p in page_imgs}
                     for sku_info in page_skus:
                         sku_code = sku_info.get("sku")
                         if not sku_code:
@@ -165,11 +167,13 @@ def extract_cells_via_cv(
                         chosen_xref = picks.get(sku_code)
                         if chosen_xref is None:
                             continue
-                        img_rgb = cand_by_xref.get(chosen_xref)
-                        if img_rgb is None:
+                        chosen_info = img_info_by_xref.get(chosen_xref)
+                        if not chosen_info:
                             continue
-                        ai_assigned_xrefs.add(chosen_xref)
-                        # Salva em alta resolução (qualidade pra catálogo Mercos)
+                        # Extrai APENAS a imagem escolhida (qualidade perfeita)
+                        img_rgb = _extract_perfect_image(doc, chosen_info, raster, width, height, scale)
+                        if img_rgb is None or img_rgb.size == 0:
+                            continue
                         box_image_hires = _resize_keep_aspect(img_rgb, max_dim=1200)
                         existing = next((m for m in pm if m["sku"] == sku_code), None)
                         if existing:
@@ -181,6 +185,7 @@ def extract_cells_via_cv(
                             pm.append(_make_match(sku_info, page_num, filepath, "ai_picker"))
                             pu = [u for u in pu if u.get("sku") != sku_code]
                             print(f"[CV] AI: novo match {sku_code} → xref={chosen_xref}")
+                        del img_rgb, box_image_hires  # libera imediatamente
             except Exception as e:
                 print(f"[CV] AI Picker falhou pág {page_num}: {str(e)[:200]} — usando heurística fallback")
 

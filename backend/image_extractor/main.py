@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.09-v23-ai-first"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.09-v24-image-picker-safe"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
@@ -335,19 +335,19 @@ async def process_pdf(
         page_heights = _get_page_heights(pdf_local_path)
         total_pages = len(page_heights)
 
-        # v21: parse flag use_ai_picker.
-        # HOTFIX v22 (09/06/2026): rollback do auto-ativação pra DAGIA.
-        # O AI Picker causou OOM em produção (Render Starter 512MB):
-        # render página + N candidatos RGB + thumbnails + Gemini multiplica
-        # memória por página. Backend caía → 502 + perda de job.
-        # Mantém código + flag funcional, mas NÃO ativa por default.
-        # Reativar requer otimização de memória (ver issue v22).
+        # AI picker flag. v24 (09/06/2026): redesenho MEMORY-SAFE reabilitou
+        # o auto-on pra DAGIA. v21 causou OOM porque extraía N candidatas como
+        # arrays + N miniaturas. v24 manda só a página anotada (1 imagem) e
+        # extrai apenas a escolhida — footprint ~igual ao pipeline atual.
+        # KILL-SWITCH: AI_PICKER_DISABLED=1 desliga sem rollback de código.
         ai_picker_flag = str(useAiPicker).strip().lower() in ("true", "1", "yes", "on")
-        # Opt-in EXPLÍCITO ENV (admin pode reativar pra testes sem código):
-        if not ai_picker_flag and os.environ.get("AI_PICKER_DAGIA", "").lower() in ("1", "true", "on"):
-            if supplier and supplier.lower() in ("dagia", "dagía"):
-                ai_picker_flag = True
-                print(f"[Main] AI picker ativado via ENV para supplier={supplier}")
+        picker_killed = os.environ.get("AI_PICKER_DISABLED", "").lower() in ("1", "true", "on")
+        if not picker_killed and not ai_picker_flag and supplier and supplier.lower() in ("dagia", "dagía"):
+            ai_picker_flag = True
+            print(f"[Main] AI picker v24 auto-ativado para supplier={supplier}")
+        if picker_killed:
+            ai_picker_flag = False
+            print("[Main] AI picker DESLIGADO via kill-switch AI_PICKER_DISABLED")
 
         # Disparar tarefa em background
         background_tasks.add_task(
