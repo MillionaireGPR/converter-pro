@@ -52,13 +52,23 @@ Para CADA produto, responda qual NÚMERO marca a melhor FOTO COMERCIAL do produt
 PREFERÊNCIAS (nesta ordem):
 1. Se é um KIT/JOGO/CONJUNTO (várias peças), escolha a CAIXA ou EMBALAGEM que
    mostra o conjunto completo (geralmente uma caixa colorida com a marca).
-2. Se não houver caixa, escolha a imagem que mostra o produto mais completo.
+2. Se não houver caixa, escolha a imagem que mostra o produto mais completo
+   (ex: a foto com VÁRIAS unidades do produto, não uma peça isolada).
 3. Se é item individual, a foto principal do produto.
 
+IMPORTANTE — NÃO confunda foto de produto com fundo:
+- Uma FOTO DO PRODUTO pode ocupar boa parte ou até toda a página (ex: 6 copos
+  grandes, um jogo de pratos em destaque). Isso é NORMAL e é a MELHOR escolha.
+  Ocupar muito espaço NÃO torna a imagem um "fundo".
+- "Fundo" só vale rejeitar quando é cor sólida/textura SEM produto visível.
+- Na dúvida entre uma foto grande de produto e uma peça pequena isolada,
+  escolha a foto que mostra o produto com mais clareza/completude.
+
 REJEITE SEMPRE (nunca escolha estes números):
-- Etiquetas/tags de preço (retângulos amarelos ou vermelhos com "R$" ou "FINAL")
+- Etiquetas/tags de preço (retângulos amarelos ou vermelhos, COM ou SEM texto)
 - Logos da marca, ícones de "CX C/N", "CX Presente"
-- Fundos/banners decorativos, faixas de cor sólida, títulos
+- Cards/faixas de TÍTULO (retângulos escuros ou de cor sólida só com texto)
+- Fundos de cor sólida SEM nenhum produto
 - Números soltos sem produto
 
 Retorne APENAS JSON puro (sem markdown):
@@ -98,19 +108,20 @@ def _annotate_page(
     for cand in candidates:
         idx = cand["index"]
         rect = cand["rect"]
-        # canto superior-esquerdo da candidata em pixels
-        x = int(rect.x0 * scale)
-        y = int(rect.y0 * scale)
-        # leve deslocamento pra dentro pra não cortar o badge
-        cx = max(18, min(w_img - 18, x + 22))
-        cy = max(18, min(h_img - 18, y + 22))
-        radius = 17
-        # círculo vermelho preenchido + borda branca
+        # CENTRO da candidata em pixels — o badge fica SOBRE o conteúdo da
+        # imagem, não no canto. Crucial p/ desambiguar imagens sobrepostas:
+        # foto full-page → badge sobre o produto; card/tag → badge sobre eles.
+        cx = int(((rect.x0 + rect.x1) / 2) * scale)
+        cy = int(((rect.y0 + rect.y1) / 2) * scale)
+        cx = max(20, min(w_img - 20, cx))
+        cy = max(20, min(h_img - 20, cy))
+        radius = 20
+        # círculo vermelho preenchido + borda branca grossa (alto contraste)
         cv2.circle(annotated, (cx, cy), radius, (220, 30, 30), -1)
-        cv2.circle(annotated, (cx, cy), radius, (255, 255, 255), 2)
+        cv2.circle(annotated, (cx, cy), radius, (255, 255, 255), 3)
         label = str(idx)
         font = cv2.FONT_HERSHEY_SIMPLEX
-        fscale = 0.7 if len(label) == 1 else 0.55
+        fscale = 0.8 if len(label) == 1 else 0.6
         (tw, th), _ = cv2.getTextSize(label, font, fscale, 2)
         cv2.putText(
             annotated, label,
