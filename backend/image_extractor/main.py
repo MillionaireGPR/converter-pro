@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.09-v24-image-picker-safe"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.09-v25-fullpage-candidates"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")

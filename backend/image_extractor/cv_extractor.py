@@ -134,14 +134,19 @@ def extract_cells_via_cv(
         # MEMÓRIA (vs v21 que causou OOM): NÃO extrai todas as candidatas como
         # arrays. Passa só os rects + o raster que já existe. 1 cópia anotada
         # downscalada + 1 chamada Gemini por página. Footprint ~igual ao atual.
-        if use_ai_picker and supplier_id and supplier_id.lower() in ("dagia", "dagía") and page_skus and page_imgs:
+        if use_ai_picker and supplier_id and supplier_id.lower() in ("dagia", "dagía") and page_skus:
             try:
                 from gemini_image_picker import pick_images_for_page
+
+                # Candidatas para o AI Picker: lista PERMISSIVA (allow_fullpage)
+                # — inclui a foto principal quando ela cobre quase a página
+                # inteira (caso DAGIA pg 14, copos). Logos seguem filtrados.
+                ai_page_imgs = _get_page_embedded_images(page, logo_xrefs, allow_fullpage=True)
 
                 # Candidatas = rects (NÃO arrays). Filtra fragmentos minúsculos
                 # por área do rect (sem extrair pixels ainda).
                 candidates_for_ai: List[Dict] = []
-                for img_info in page_imgs:
+                for img_info in ai_page_imgs:
                     r = img_info["rect"]
                     area_px = (r.width * scale) * (r.height * scale)
                     if area_px >= 5000:
@@ -159,7 +164,7 @@ def extract_cells_via_cv(
                     )
 
                     # info por xref pra extração sob demanda (só da escolhida)
-                    img_info_by_xref = {p["xref"]: p for p in page_imgs}
+                    img_info_by_xref = {p["xref"]: p for p in ai_page_imgs}
                     for sku_info in page_skus:
                         sku_code = sku_info.get("sku")
                         if not sku_code:
@@ -714,8 +719,20 @@ def _extract_perfect_image(
 # Utilitários
 # ─────────────────────────────────────────────────────────────
 
-def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set) -> List[Dict]:
-    """Retorna imagens válidas da página com posição (PDF-points) e xref."""
+def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set,
+                              allow_fullpage: bool = False) -> List[Dict]:
+    """Retorna imagens válidas da página com posição (PDF-points) e xref.
+
+    allow_fullpage (v24): por padrão descarta imagens que cobrem >85% da
+    página (são fundos/decorações no matching por coluna). MAS para o AI
+    Picker, a foto PRINCIPAL do produto às vezes É uma imagem quase
+    full-page (ex: DAGIA pg 14 — foto dos 6 copos cobre a página inteira,
+    com título e tag SOBREPOSTOS como imagens separadas). Nesses casos
+    o filtro >85% descartava a melhor candidata e o Gemini só via tag/título.
+    Com allow_fullpage=True mantemos a imagem grande; logos (que repetem em
+    várias páginas) seguem filtrados por logo_xrefs, então fundos decorativos
+    recorrentes continuam fora.
+    """
     page_w, page_h = page.rect.width, page.rect.height
     result = []
     seen = set()
@@ -731,7 +748,7 @@ def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set) -> List[Dict]:
         iw, ih = rect.width, rect.height
         if iw < 20 or ih < 20:
             continue
-        if iw > page_w * 0.85 and ih > page_h * 0.85:
+        if not allow_fullpage and iw > page_w * 0.85 and ih > page_h * 0.85:
             continue
         result.append({
             "xref": xref,
