@@ -59,6 +59,8 @@ describe('normalizeToMercos', () => {
       'Preço de Tabela (obrigatório)',
       'IPI (opcional - não informar o símbolo %)',
       'Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)',
+      // P3 (11/06/2026): Múltiplo = qtd por caixa (sempre preenchido, >=1)
+      'Múltiplo (opcional)',
     ].sort());
   });
 
@@ -82,6 +84,22 @@ describe('normalizeToMercos', () => {
     expect(mercos['Preço de Tabela (obrigatório)']).toBe(29.90);
     expect(mercos['IPI (opcional - não informar o símbolo %)']).toBe(5);
     expect(String(mercos['Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)'])).toContain('Cx c/ 24 unidades');
+    // P3: Múltiplo = qtd por caixa
+    expect(mercos['Múltiplo (opcional)']).toBe(24);
+  });
+
+  it('🔒 P3 — produto em UNIDADE: Múltiplo=1 e "Cx c/ 1 unidade" no info adicional', () => {
+    // CLINK/MOMENT/FLASH (reunião): unidade vinha zerada; cliente usa como ref.
+    const p = makeProduto({ codigo: 'F0001', nome: 'Caneca Avulsa', precoFinal: 9.9, quantidadeCaixa: 1 });
+    const m = normalizeToMercos(p);
+    expect(m['Múltiplo (opcional)']).toBe(1);
+    expect(String(m['Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)'])).toContain('Cx c/ 1 unidade');
+  });
+
+  it('🔒 P3 — qtd ausente/0 vira Múltiplo=1 (nunca vazio)', () => {
+    const p = makeProduto({ codigo: 'X9', nome: 'Item', precoFinal: 5, quantidadeCaixa: 0 });
+    const m = normalizeToMercos(p);
+    expect(m['Múltiplo (opcional)']).toBe(1);
   });
 
   it('4) campo IPI sem %', () => {
