@@ -4,9 +4,10 @@
 > Antes de modificar qualquer arquivo listado aqui, leia a seção correspondente.
 > Cada invariante foi descoberto na dura — quebrou produção, custou tempo do cliente.
 
-**Data da consolidação**: 27/05/2026
-**Versão estável**: Vercel `c0c3c9c` + Render `v7-cv-low-ram`
-**Validação**: NIX HOUSE 285 produtos, 91 preços resgatados em 58.8s, R$ 0,65 de custo Gemini, 0 erros na UI.
+**Data da consolidação**: 27/05/2026 (base) · 09/06/2026 (pivô AI-first, IV-15 a IV-20)
+**Versão estável**: Render `v26-center-badge`
+**Validação base**: NIX HOUSE 285 produtos, 91 preços em 58.8s, R$ 0,65, 0 erros.
+**Validação AI-first**: DAGIA 28/28 produtos (códigos/preços/qty caixa/EM BREVE = 100%) + imagens corretas (caixas dos kits, foto dos copos, mugs/xícaras nos produtos certos), aprovado pelo cliente em 09/06/2026.
 
 ---
 
@@ -146,23 +147,65 @@ allow_credentials=False,
 **Por que existe**: Sem isso, impossível saber qual versão o Render está servindo. Já tivemos caso de Render servir código stale por horas — sem o `version` no `/health`, descobriríamos só pelo bug em produção.
 **Travado por**: `regression-locks.test.ts` → "SERVICE_VERSION no /health"
 
-### IV-14 — Heurística `_box_score` em DAGIA com zonas de aspect ratio fixas
+### IV-14 — Heurística `_box_score` em DAGIA (FALLBACK do AI Picker)
 **Arquivo**: `backend/image_extractor/cv_extractor.py` função `_box_score`
-**Por que existe**: DAGIA usa imagens fotográficas de kits com PRATOS quase quadrados (aspect ≈ 1.0) e CAIXAS retangulares 3D (aspect ≈ 0.65-0.90). Pesos genéricos faziam pratos vencerem por área. Análise empírica dos xrefs reais (DZ01-04 pg 4-10) provou que apenas zonas explícitas de aspect ratio separam as duas classes.
-**Fórmula travada**:
+**Status (v26)**: SUPERSEDIDO pelo AI Picker (IV-16/17) como caminho primário do DAGIA. Mantido como FALLBACK quando o AI Picker está desligado (kill-switch) ou não decide um SKU. NÃO remover — é a rede de segurança sem custo de IA.
+**Fórmula travada** (não mexer sem novo critério empírico):
 ```
 aspect_score:
   0.65-0.90       → 1.0   (zona ouro da CAIXA)
   0.55-0.65 ou 0.90-1.05 → 0.6 (ambíguo)
   0.40-0.55 ou 1.05-1.30 → 0.3 (improvável)
   outros          → 0.1
-
 score = aspect_score * 0.55 + std_dev_color * 0.30 + size_log * 0.15
 filtro: area >= 20000 pixels
 ```
-**Custou ao cliente**: DZ01 puxou prato em vez de caixa na v18/v19 — user reportou + pediu lock explícito ("definir isso daí como regra inalterável pra deixar fixado dentro da estrutura").
-**Travado por**: `src/core/pipeline/dagia-box-heuristic.test.ts` (6 testes em TS replicando o algoritmo Python)
-**Validação empírica (DZ01 pg 7)**: caixa(0.74) = 0.864 vence pratos(0.99) = 0.514.
+**Travado por**: `src/core/pipeline/dagia-box-heuristic.test.ts` (6 testes)
+
+### IV-15 — Pipeline AI-FIRST: Gemini é o extrator PRIMÁRIO de PDFs
+**Arquivos**: `src/core/engine.ts`, `src/core/pipeline/aiFirstExtractionApi.ts`, `src/core/pipeline/importPipeline.ts` (`PipelineOptions.aiBrutos`), `backend/image_extractor/gemini_extractor.py`, endpoint `/extract_products_ai`
+**Por que existe**: 14 parsers regex artesanais = manutenção infinita; cada layout novo quebrava a extração. Spike empírico (DAGIA, 09/06/2026) provou Gemini lendo o catálogo inteiro: 28/28 códigos, 28/28 preços, 5/5 EM BREVE.
+**Como deve funcionar**:
+- Para PDF, `engine.ts` chama `extractProductsViaAI` ANTES do pipeline regex.
+- Sucesso → injeta `options.aiBrutos` → `importPipeline` PULA leitura regex e usa os brutos da IA. Normalização/validação/dedup seguem IGUAIS.
+- Falha (timeout/erro/0 produtos) → FALLBACK AUTOMÁTICO para o pipeline regex. Nada quebra.
+- **BLOCKLIST** (continuam no regex, NÃO usar IA): `NIX` (caso-bandeira, 285 produtos 0 erros, IVs baseiam-se nele) e `GOAL KIDS` (1042 páginas, excede contexto/custo).
+**Travado por**: `src/core/pipeline/ai-first-golden.test.ts` (11 testes, fixture = resposta REAL do Gemini). NÃO enfraquecer a fixture.
+
+### IV-16 — AI Image Picker é MEMORY-SAFE (lição do OOM v21)
+**Arquivos**: `backend/image_extractor/gemini_image_picker.py`, bloco AI picker em `cv_extractor.py`
+**Por que existe**: v21 derrubou produção (OOM 512MB → 502 → job perdido) porque extraía TODAS as candidatas como arrays RGB + N miniaturas + mandava tudo inline ao Gemini, por página.
+**Regras INVioláveis**:
+- `pick_images_for_page` recebe RECTS (não arrays RGB) + o raster JÁ renderizado. Manda UMA imagem (a página anotada). NÃO extrai candidatas.
+- O caller (`cv_extractor`) extrai APENAS a imagem escolhida, com `del` imediato.
+- NUNCA reintroduzir extração de todas as candidatas antes da decisão.
+**Validação**: teste local de RSS (mock Gemini + PDF real) → pico ~117-143MB (limite 512MB).
+**Custo**: 1 chamada Flash por página com SKUs (~$0.005). DAGIA ≈ $0.09/catálogo.
+
+### IV-17 — Anotação do AI Picker: badge no CENTRO + `allow_fullpage` + prompt anti-"fundo"
+**Arquivo**: `backend/image_extractor/gemini_image_picker.py` (`_annotate_page`, `PROMPT_TEMPLATE`), `_get_page_embedded_images(allow_fullpage=True)`
+**Por que existe** (validado contra Gemini real, 09/06/2026):
+- **Badge no CENTRO** do rect (não no canto). Canto colava badges de imagens sobrepostas → Gemini não associava número à foto. (LX15016 pegava card preto.)
+- **`allow_fullpage=True`** só no AI Picker: a foto principal às vezes cobre a página inteira (copos LX15016). O filtro >85% a descartava. Logos recorrentes seguem filtrados por `logo_xrefs`.
+- **Prompt anti-"fundo"**: instrução explícita de que foto de produto PODE ocupar a página toda e isso NÃO a torna fundo; rejeitar só cor sólida SEM produto, tags e cards de título.
+**Resultado**: LX15016→copos, DXP57→mug limpo, DZ/DXP1→caixas, tags/cards/fundo azul rejeitados.
+**Travado por**: `src/core/images/image-picker-contract.test.ts` (contrato do annotation/candidatas).
+
+### IV-18 — `SUPPLIER_HINTS`: fornecedor = hint no prompt, NÃO parser regex
+**Arquivo**: `backend/image_extractor/gemini_extractor.py` (`SUPPLIER_HINTS`, `get_supplier_hints`)
+**Por que existe**: substituir o ciclo de manutenção de parsers. Ajuste de fornecedor = ~4 linhas de instrução em PT-BR anexadas ao prompt. Layout mudou? Ajusta a frase, não o código.
+**Travado por**: lookup tolerante (caixa/acento/parcial) — ver teste em `image-picker-contract.test.ts` / validação manual documentada.
+
+### IV-19 — DAGIA `quantidadeCaixa` exige prefixo `CX`
+**Arquivo**: `src/core/pdfTemplates/dagia.template.ts` + hint DAGIA no backend
+**Por que existe**: "C/6 Pçs" no NOME do produto NÃO é a caixa de embarque. A caixa real é "CX C/8Jgs". Regex sem `CX` capturava o número errado (LX15016 dava 6 em vez de 8).
+**Regra**: `/CX\s*C\/(\d{1,3})\s*(?:Jgs|Jogos|P[cç]s|Pecas|Un)?/i` — `CX` obrigatório.
+**Travado por**: `src/core/pdfTemplates/dagia.template.test.ts` (caso real LX15016).
+
+### IV-20 — AI Picker: whitelist DAGIA + kill-switch `AI_PICKER_DISABLED`
+**Arquivos**: `src/core/images/imageExtractionApi.ts` (`AI_PICKER_SUPPLIERS`), `main.py`
+**Por que existe**: controlar custo e blast-radius. AI Picker roda só para fornecedores na whitelist (`['DAGIA']` hoje) ou via `useAiPicker=true`. `AI_PICKER_DISABLED=1` no Render desliga sem rollback de código (segurança operacional).
+**Travado por**: `src/core/images/image-extraction-contract.test.ts`
 
 ---
 
