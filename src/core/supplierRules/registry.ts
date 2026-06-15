@@ -18,6 +18,7 @@ import { freecomAdapter } from './freecom';
 import { giraAdapter } from './gira';
 import { foliaAdapter } from './folia';
 import { dagiaAdapter } from './dagia';
+import { fortalAdapter } from './fortal';
 import { genericAdapter } from './generic';
 
 /** Lista completa de adapters registrados (ordem importa para detecção) */
@@ -36,6 +37,7 @@ const ADAPTERS: SupplierAdapter[] = [
   giraAdapter,
   foliaAdapter,
   dagiaAdapter,
+  fortalAdapter,
 ];
 
 /** Busca um adapter pelo ID ou nome (case-insensitive) */
