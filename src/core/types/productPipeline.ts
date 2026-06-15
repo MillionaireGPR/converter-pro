@@ -219,6 +219,10 @@ export const MERCOS_ALLOWED_FILLED_COLUMNS = [
   'Preço de Tabela (obrigatório)',
   'IPI (opcional - não informar o símbolo %)',
   'Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)',
+  // Múltiplo = quantidade por caixa (múltiplo de venda B2B). Cliente
+  // (reunião 11/06/2026) usa essa quantidade como referência; produtos em
+  // unidade devem vir com 1 (nunca vazio/0).
+  'Múltiplo (opcional)',
 ] as const;
 
 /** Schema de validação da exportação Mercos */

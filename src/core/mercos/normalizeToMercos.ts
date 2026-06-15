@@ -41,9 +41,10 @@ export const buildInformacoesAdicionais = (p: ProdutoNormalizadoV2): string => {
     parts.push(value);
   };
 
-  if (p.quantidadeCaixa && p.quantidadeCaixa > 1) {
-    pushUnique(`Cx c/ ${p.quantidadeCaixa} unidades`);
-  }
+  // Quantidade por caixa SEMPRE no info adicionais (cliente usa como
+  // referência). Para 1 → "Cx c/ 1 unidade" (singular); >1 → "N unidades".
+  const qcx = p.quantidadeCaixa && p.quantidadeCaixa > 0 ? p.quantidadeCaixa : 1;
+  pushUnique(qcx === 1 ? 'Cx c/ 1 unidade' : `Cx c/ ${qcx} unidades`);
 
   pushUnique(p.embalagem);
   pushUnique(p.dimensoes);
@@ -122,10 +123,14 @@ export const normalizeToMercos = (p: ProdutoNormalizadoV2): ProdutoMercos => {
     ? `${p.informacoesAdicionais} | ${builtAdicionais}`.replace(/\|\s*$/, '').trim() 
     : builtAdicionais;
 
+  // Múltiplo = quantidade por caixa (sempre >= 1; unidade = 1).
+  const finalMultiplo = p.quantidadeCaixa && p.quantidadeCaixa > 0 ? p.quantidadeCaixa : 1;
+
   row['Código do produto (recomendado)'] = finalCode;
   row['Nome do produto (obrigatório)'] = finalName;
   row['Preço de Tabela (obrigatório)'] = finalPrice;
   row['IPI (opcional - não informar o símbolo %)'] = finalIpi;
+  row['Múltiplo (opcional)'] = finalMultiplo;
   row['Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)'] = finalAddInfo;
 
   console.log(`[Mercos Export] sku=${finalCode} nomeFinal="${finalName}" preco=${finalPrice} ipi=${finalIpi || 0} bloqueado=${isBloqueado}`);
