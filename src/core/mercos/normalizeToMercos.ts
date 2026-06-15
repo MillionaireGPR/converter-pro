@@ -98,7 +98,12 @@ export const normalizeToMercos = (p: ProdutoNormalizadoV2): ProdutoMercos => {
   const row = createEmptyMercosRow();
 
   const finalCode = sanitizeForExport(p.codigo || p.codigoOriginal || '');
-  const finalName = sanitizeForExport(normalizeSpaces(p.nome || ''));
+  // Nome SEMPRE em MAIÚSCULAS no export Mercos.
+  // Cliente (reunião 11/06/2026) padroniza tudo em maiúsculo no sistema deles;
+  // catálogos como DAGIA vinham com nome em minúsculas. Aplicado a TODOS os
+  // fornecedores no salvamento final (marcadores como ***EM BREVE*** já são
+  // maiúsculos, então não há perda).
+  const finalName = sanitizeForExport(normalizeSpaces(p.nome || '')).toUpperCase();
   
   // REGRA: Se bloqueiaDesconto, usar preço base (sem desconto aplicado)
   const isBloqueado = p.bloqueiaDesconto || p.visualCategory === 'promocional' || p.visualCategory === 'preco-fixo';

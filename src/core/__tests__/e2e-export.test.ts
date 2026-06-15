@@ -115,7 +115,8 @@ describe('E2E Mercos Export', () => {
     // Linhas 1+ = 3 produtos
     expect(rows.length).toBeGreaterThanOrEqual(4);
     expect(rows[1][0]).toBe('F0211');
-    expect(rows[1][1]).toContain('Garrafa de azeite');
+    // Export Mercos em MAIÚSCULAS (padrão do sistema do cliente)
+    expect(rows[1][1]).toContain('GARRAFA DE AZEITE');
     expect(Number(rows[1][2])).toBe(22.5);
   });
 

@@ -74,7 +74,11 @@ describe('normalizeToMercos', () => {
 
     const mercos = normalizeToMercos(p);
     expect(mercos['Código do produto (recomendado)']).toBe('ABC-123');
-    expect(mercos['Nome do produto (obrigatório)']).toBe('Caneca Porcelana');
+    // Nome SEMPRE em MAIÚSCULAS no export (padrão do sistema do cliente).
+    expect(mercos['Nome do produto (obrigatório)']).toBe('CANECA PORCELANA');
+    // 🔒 trava: qualquer entrada minúscula/mista sai 100% maiúscula
+    const lower = normalizeToMercos(makeProduto({ codigo: 'X1', nome: 'jogo de jantar opalina flor', precoFinal: 5 }));
+    expect(lower['Nome do produto (obrigatório)']).toBe('JOGO DE JANTAR OPALINA FLOR');
     expect(mercos['Preço de Tabela (obrigatório)']).toBe(29.90);
     expect(mercos['IPI (opcional - não informar o símbolo %)']).toBe(5);
     expect(String(mercos['Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)'])).toContain('Cx c/ 24 unidades');
@@ -214,7 +218,8 @@ describe('fornecedor sem contaminação Clink', () => {
     for (let i = 0; i < result.validos.length; i++) {
       const row = result.validos[i];
       expect(row['Código do produto (recomendado)']).toBe(`COD-${i + 1}`);
-      expect(String(row['Nome do produto (obrigatório)'])).toContain(fornecedores[i]);
+      // Nome exportado em MAIÚSCULAS (padrão do sistema do cliente)
+      expect(String(row['Nome do produto (obrigatório)'])).toContain(fornecedores[i].toUpperCase());
       expect(row['Preço de Tabela (obrigatório)']).toBe(10 + i);
     }
   });

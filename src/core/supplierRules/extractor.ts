@@ -188,6 +188,15 @@ export const extractProducts = (
     if (quantidadeCaixa <= 0 && campos['cx']) {
       quantidadeCaixa = toNum(campos['cx']);
     }
+    // Quantidade da caixa embutida no rótulo de embalagem "CX/36", "CX / 120".
+    // Petrin (reunião 11/06/2026): a planilha tem coluna de ESTOQUE (Qtd Emb
+    // Físico) e a embalagem "CX/N" — a qtd real da caixa é o N do "CX/N", não
+    // o estoque. Só dispara quando ainda não há qtd válida (genérico/seguro).
+    if (quantidadeCaixa <= 0 && fa.embalagem) {
+      const embVal = toStr(findValue(campos, fa.embalagem));
+      const m = embVal.match(/CX\s*\/?\s*(\d{1,4})/i);
+      if (m) quantidadeCaixa = parseInt(m[1], 10);
+    }
     if (quantidadeCaixa <= 0) quantidadeCaixa = adapter.defaultQuantidadeCaixa || 1;
 
     const embalagem = fa.embalagem ? toStr(findValue(campos, fa.embalagem)) : '';
