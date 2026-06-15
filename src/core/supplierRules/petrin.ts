@@ -6,8 +6,12 @@ import { SupplierAdapter } from './types';
  * - Referência → código
  * - Descrição → nome/descricao
  * - Valor Venda → preco
- * - Qtd Emb (Físico) → quantidadeCaixa (quantidade por caixa)
- * - Emb → embalagem
+ * - Emb ("CX/36") → quantidadeCaixa (parseado do "CX/N") + embalagem
+ *
+ * IMPORTANTE (reunião 11/06/2026): "Qtd Emb (Físico)" é ESTOQUE, NÃO a
+ * quantidade da caixa. A qtd real da caixa está no "CX/N" da coluna Emb.
+ * Por isso a coluna de estoque foi REMOVIDA do alias de quantidadeCaixa;
+ * o extractor parseia o N de "CX/N" da embalagem.
  */
 export const petrinAdapter: SupplierAdapter = {
   id: 'petrin',
@@ -32,10 +36,12 @@ export const petrinAdapter: SupplierAdapter = {
     descricao: ['descricao', 'desc', 'produto', 'nome'],
     preco: ['valor venda', 'valorvenda', 'preco venda', 'vlr venda', 'venda'],
     precoPromocional: ['valor promocional', 'preco promocional'],
-    // Ordem importa: 'qtd emb fisico' é mais específico, vem antes do alias
-    // genérico 'emb' (que está em embalagem). Engine resolve por inclusão.
-    quantidadeCaixa: ['qtd emb fisico', 'qtdembfisico', 'qtd emb (fisico)', 'qtd emb', 'qt emb', 'quantidade embalagem', 'cx'],
-    embalagem: ['embalagem', 'tipo emb', 'emb'],
+    // 'qtd emb fisico' (estoque) REMOVIDO — não é a caixa. A qtd real vem do
+    // "CX/N" da coluna Emb (parseada no extractor). Mantém só aliases que NÃO
+    // existem na planilha real (defensivo p/ variações futuras), sem capturar
+    // o estoque por engano.
+    quantidadeCaixa: ['quantidade caixa', 'qtd caixa', 'qtdcaixa'],
+    embalagem: ['emb', 'embalagem', 'tipo emb'],
     categoria: ['categoria', 'familia', 'setor'],
   },
 

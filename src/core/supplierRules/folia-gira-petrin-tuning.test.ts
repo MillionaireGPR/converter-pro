@@ -74,10 +74,13 @@ describe('🔒 PETRIN — mapeia Emb + Qtd Emb (Físico) + codigoPattern', () =>
     expect(petrinAdapter.fieldAliases.embalagem).toContain('emb');
   });
 
-  it('quantidadeCaixa cobre "Qtd Emb (Físico)" (header completo)', () => {
+  it('🔒 quantidadeCaixa NÃO usa "Qtd Emb (Físico)" (estoque) — corrigido 11/06/2026', () => {
+    // Antes capturava o ESTOQUE (bug reportado na reunião). Agora a qtd da
+    // caixa vem do "CX/N" da coluna Emb (parseado no extractor). O alias de
+    // quantidadeCaixa NÃO pode mais conter 'fisico' nem ser exatamente 'emb'.
     const aliases = petrinAdapter.fieldAliases.quantidadeCaixa || [];
-    const coverage = aliases.some(a => a.toLowerCase().includes('fisico') || a.toLowerCase().includes('emb'));
-    expect(coverage).toBe(true);
+    const pegaEstoque = aliases.some(a => a.toLowerCase().includes('fisico') || a.toLowerCase() === 'emb');
+    expect(pegaEstoque).toBe(false);
   });
 
   it('codigoPattern cobre RD1318, RD.1120, RD1098-1', () => {
