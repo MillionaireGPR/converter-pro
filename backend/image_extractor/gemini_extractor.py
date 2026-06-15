@@ -197,6 +197,17 @@ SUPPLIER_HINTS: Dict[str, str] = {
         "- quantidadeCaixa = número do campo 'CX: N PEÇAS'.\n"
         "- Cada bloco 'CÓD:' é um produto; nome e preço podem estar visualmente distantes do bloco."
     ),
+    "FORTAL": (
+        "DICAS ESPECÍFICAS DO FORNECEDOR FORTAL:\n"
+        "- Layout por bloco: NOME (em CAIXA ALTA) → código → dimensão/material → "
+        "'Qtd. p/ Caixa: N UND' → 'R$ X,XX'.\n"
+        "- quantidadeCaixa = o N de 'Qtd. p/ Caixa: N UND'.\n"
+        "- O código é variado (ex: SZ-01, SZ-02-08, JIN-2501, JXX-2502, ENS-01, HL100, UP012). "
+        "Extraia EXATAMENTE como aparece, logo abaixo do nome.\n"
+        "- O preço 'R$ X,XX' já é o preço FINAL (sem desconto). Use como 'preco'.\n"
+        "- 'CORES SORTIDAS' / dimensões (ex: 40x40cm) vão em observacoes, não no nome.\n"
+        "- Ignore a página de ÍNDICE (lista de categorias com números de página)."
+    ),
 }
 
 
@@ -641,6 +652,120 @@ def repair_prices_for_skus(
     }
 
 
+# ─────────────────────────────────────────────────────────────
+# v27 — Extração por TEXTO em CHUNKS (catálogos grandes/pesados)
+# ─────────────────────────────────────────────────────────────
+# Por que existe: catálogos como FORTAL têm 81MB / 96 páginas com IMAGENS
+# gigantes. Mandar o PDF inteiro pro Gemini (Files API/vision) dá 400
+# "invalid argument" (arquivo grande demais). Mas o TEXTO de todo o catálogo
+# é minúsculo (~18k tokens p/ 96 págs). Validado empiricamente:
+#   - 10 págs por texto → 90 produtos, 100% preço, 100% qtd caixa, ~83s
+#   - 30 págs numa só chamada → 504 (output longo demais)
+# Logo: extrai o TEXTO por página, fatia em chunks de ~10 págs, chama Gemini
+# (text-only, payload minúsculo) em PARALELO, e mescla deduplicando por código.
+
+LARGE_CATALOG_MB = 15          # acima disso, vision do PDF inteiro falha
+LARGE_CATALOG_PAGES = 30       # ou muitas páginas → modo texto-chunked
+TEXT_CHUNK_PAGES = 10          # validado: ~90 produtos/chunk sem estourar output
+TEXT_CHUNK_WORKERS = 3         # paralelismo (só HTTP, baixa RAM)
+
+
+def _extract_text_chunk(
+    page_texts: List[str], first_page: int, supplier_hints: str, model_name: str
+) -> List[Dict[str, Any]]:
+    """Extrai produtos do TEXTO de um chunk de páginas (sem imagens)."""
+    if not _ensure_initialized():
+        return []
+    bloco = "\n".join(
+        f"--- PG {first_page + i} ---\n{t}" for i, t in enumerate(page_texts)
+    )
+    prompt = EXTRACTION_PROMPT
+    if supplier_hints:
+        prompt += f"\n\n{supplier_hints}"
+    prompt += f"\n\nTEXTO DO CATÁLOGO (extraído por página):\n{bloco}"
+    try:
+        model = genai.GenerativeModel(model_name)
+        cfg = genai.GenerationConfig(
+            temperature=0.1,
+            response_mime_type="application/json",
+            max_output_tokens=65535,
+        )
+        resp = model.generate_content(
+            prompt, generation_config=cfg, request_options={"timeout": 180}
+        )
+        raw = (resp.text or "").strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`")
+            if raw.startswith("json"):
+                raw = raw[4:].strip()
+        return json.loads(raw).get("produtos", [])
+    except Exception as e:
+        print(f"[Gemini Chunk] pgs {first_page}+: erro {str(e)[:160]}")
+        return []
+
+
+def extract_with_fallback_text_chunked(pdf_path: str, supplier: str = "") -> Dict[str, Any]:
+    """
+    Extração por TEXTO em chunks paralelos — para catálogos grandes/pesados.
+    Retorna o mesmo shape de extract_with_fallback.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    if not _ensure_initialized():
+        return {"success": False, "produtos": [], "error": f"Gemini não configurado: {_init_error}", "model": MODEL_FLASH}
+
+    supplier_hints = get_supplier_hints(supplier)
+    start = time.time()
+
+    # Extrai texto por página (rápido, baixa RAM — 1 fitz.open)
+    page_texts: List[str] = []
+    try:
+        doc = fitz.open(pdf_path)
+        for i in range(len(doc)):
+            page_texts.append(doc[i].get_text())
+        doc.close()
+    except Exception as e:
+        return {"success": False, "produtos": [], "error": f"Falha ao ler PDF: {e}", "model": MODEL_FLASH}
+
+    n_pages = len(page_texts)
+    chunks = [(i, page_texts[i:i + TEXT_CHUNK_PAGES]) for i in range(0, n_pages, TEXT_CHUNK_PAGES)]
+    print(f"[Gemini TextChunk] {n_pages} págs → {len(chunks)} chunks de {TEXT_CHUNK_PAGES} (paralelo={TEXT_CHUNK_WORKERS})")
+
+    all_produtos: List[Dict[str, Any]] = []
+    chunks_ok = 0
+    with ThreadPoolExecutor(max_workers=TEXT_CHUNK_WORKERS) as pool:
+        futures = {
+            pool.submit(_extract_text_chunk, texts, first + 1, supplier_hints, MODEL_FLASH): first
+            for first, texts in chunks
+        }
+        for fut in as_completed(futures):
+            prods = fut.result()
+            if prods:
+                all_produtos.extend(prods)
+                chunks_ok += 1
+
+    # Dedup por código (chunks não se sobrepõem, mas é defensivo)
+    seen, deduped = set(), []
+    for p in all_produtos:
+        cod = str(p.get("codigo", "")).strip().upper()
+        if not cod or cod in seen:
+            continue
+        seen.add(cod)
+        deduped.append(p)
+
+    elapsed = time.time() - start
+    print(f"[Gemini TextChunk] ✓ {len(deduped)} produtos ({chunks_ok}/{len(chunks)} chunks) em {elapsed:.1f}s")
+    return {
+        "success": len(deduped) > 0,
+        "model": f"{MODEL_FLASH} (text-chunked)",
+        "produtos": deduped,
+        "fornecedor_detectado": supplier,
+        "total_paginas": n_pages,
+        "elapsed": elapsed,
+        "confianca": (sum(1 for p in deduped if p.get("codigo") and p.get("preco")) / len(deduped)) if deduped else 0,
+        "error": None if deduped else "Nenhum produto extraído nos chunks",
+    }
+
+
 def extract_with_fallback(pdf_path: str, supplier: str = "") -> Dict[str, Any]:
     """
     Extrai com cadeia de fallbacks (todos modelos atualmente ativos):
@@ -652,7 +777,21 @@ def extract_with_fallback(pdf_path: str, supplier: str = "") -> Dict[str, Any]:
     Se confiança < 80%, escala para Pro para validar/melhorar.
 
     v23: supplier define hints anexados ao prompt (ver SUPPLIER_HINTS).
+    v27: catálogos GRANDES/PESADOS (>15MB ou >30 págs) usam extração por
+    TEXTO em chunks (vision do PDF inteiro dá 400 nesses casos).
     """
+    # Roteamento v27: catálogo grande → modo texto-chunked
+    try:
+        size_mb = os.path.getsize(pdf_path) / 1024 / 1024
+        doc = fitz.open(pdf_path)
+        n_pages = len(doc)
+        doc.close()
+        if size_mb > LARGE_CATALOG_MB or n_pages > LARGE_CATALOG_PAGES:
+            print(f"[Gemini] Catálogo grande ({size_mb:.0f}MB, {n_pages} págs) → modo TEXTO-chunked")
+            return extract_with_fallback_text_chunked(pdf_path, supplier)
+    except Exception as e:
+        print(f"[Gemini] Falha ao medir catálogo (segue vision): {e}")
+
     # Cadeia de fallback de modelos (todos ATIVOS em 2026)
     fallback_chain = [MODEL_FLASH, MODEL_FLASH_STABLE, MODEL_FLASH_LATEST, MODEL_PRO]
 

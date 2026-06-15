@@ -142,9 +142,10 @@ export const extractProductsViaAI = async (
   if (!jobCreated) return null;
 
   // ─── FASE 2: Polling até status terminal (IV-08) ───
-  // Catálogos grandes podem levar minutos no Gemini. 8min de teto.
+  // Catálogos grandes (ex: FORTAL 96 págs) usam extração texto-chunked em
+  // paralelo (~6-10min). Teto 18min com folga; ainda finito (IV-08).
   const POLL_INTERVAL_MS = 4000;
-  const MAX_WAIT_MS = 8 * 60 * 1000;
+  const MAX_WAIT_MS = 18 * 60 * 1000;
   const MAX_CONSECUTIVE_ERRORS = 10;
   const MAX_NOT_FOUND_CHECKS = 3;
   const t0 = Date.now();
