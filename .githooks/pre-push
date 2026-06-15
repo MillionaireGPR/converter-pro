@@ -1,0 +1,16 @@
+#!/bin/sh
+# 🔒 Pre-push hook — trava anti-regressão LOCAL (não depende de GitHub CI).
+# Roda o verificador de invariantes antes de cada push. Se algo violar um
+# invariante (IV-01..20), o push é BLOQUEADO. Veja ARCHITECTURE.md.
+#
+# Para pular em emergência real (NÃO recomendado): git push --no-verify
+echo "🔒 Verificando invariantes antes do push (npm run verify)..."
+npm run verify
+if [ $? -ne 0 ]; then
+  echo ""
+  echo "❌ PUSH BLOQUEADO: invariante violado ou teste falhou."
+  echo "   Investigue a regressão (ARCHITECTURE.md). NÃO ajuste o teste pra passar."
+  exit 1
+fi
+echo "✅ Invariantes OK — push liberado."
+exit 0

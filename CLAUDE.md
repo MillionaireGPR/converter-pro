@@ -14,7 +14,8 @@ em sequência (PRs #7 a #11). A entrega NIX HOUSE finalmente funcionou:
 Antes de tocar qualquer arquivo, leia:
 
 1. **`ARCHITECTURE.md`** — invariantes IV-01 a IV-20 que NÃO podem mudar
-2. **`src/core/__tests__/regression-locks.test.ts`** — testes que travam esses invariantes
+2. **`scripts/verify-invariants.mjs`** — o verificador LOCAL (`npm run verify`) que trava tudo
+3. **`src/core/__tests__/regression-locks.test.ts`** — testes que travam esses invariantes
 
 Se sua mudança vai tocar:
 - `backend/image_extractor/gemini_extractor.py` → IV-01, IV-04, IV-10, IV-15, IV-18
@@ -58,21 +59,24 @@ deploye 1× só. (Foi assim que v26 resolveu LX15016/DXP57 em minutos.)
 
 2. **Faça a mudança**
 
-3. **Rode os checks LOCAIS antes de commitar**:
+3. **Rode o PORTÃO LOCAL antes de commitar/pushar** (substitui o CI):
    ```
-   npx tsc --noEmit
-   npx vitest run src/core/__tests__/regression-locks.test.ts
-   npx vitest run
+   npm run verify
    ```
+   Isso roda: 17 checks de invariante backend (IV-01..20) + `tsc --noEmit` +
+   suite completa (`vitest run`, 311+ testes, inclui golden/contract).
+   Atalho só dos greps de backend (rápido): `npm run verify:backend`.
 
-4. **Todos 213+ testes devem passar**. Se algum em `regression-locks.test.ts`
-   falhar, **NÃO ajuste o teste** — investigue a regressão.
+4. **Tudo deve passar**. Se um invariante/teste falhar, **NÃO ajuste o teste**
+   — investigue a regressão (ver `ARCHITECTURE.md`).
 
-5. **Abra PR** com checklist preenchido (template em `.github/pull_request_template.md`)
+5. **Pre-push hook automático**: `.githooks/pre-push` roda `npm run verify`
+   antes de todo `git push` e BLOQUEIA se algo violar. Ative uma vez por clone
+   com `npm run setup-hooks` (o `prepare` do npm install já faz isso).
 
-6. **CI valida tudo de novo** (`.github/workflows/regression-locks.yml`)
-
-7. **Smoke test em produção pós-deploy** roda automático
+> ⚠️ **A trava NÃO depende do GitHub** (repo é privado p/ proteger dados do
+> cliente; não usamos GitHub Actions/Pro). A segurança vive AQUI, no projeto,
+> via `npm run verify` + o pre-push hook. Validar local é o portão oficial.
 
 ## 🚫 O que NUNCA fazer
 
