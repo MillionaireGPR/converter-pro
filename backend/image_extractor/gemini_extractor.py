@@ -13,6 +13,7 @@ Acurácia esperada: 95%+ em catálogos brasileiros típicos.
 import os
 import json
 import base64
+import re
 import time
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -701,6 +702,26 @@ def repair_prices_for_skus(
 # Logo: extrai o TEXTO por página, fatia em chunks de ~10 págs, chama Gemini
 # (text-only, payload minúsculo) em PARALELO, e mescla deduplicando por código.
 
+# ─────────────────────────────────────────────────────────────
+# v33 — TEMPLATE SYNTHESIS (IA infere o padrão; código aplica no resto)
+# ─────────────────────────────────────────────────────────────
+# Decisão do cliente (16/06/2026): catálogos grandes via IA levam 10-15min
+# (Gemini gerando milhares de produtos — teto de concorrência da conta).
+# Inviável (meta 2-5min). MAS a maioria dos catálogos é ALTAMENTE PADRONIZADA
+# (grid fixo, N produtos/página, campos rotulados). Para esses:
+#   1. IA lê 2-3 páginas-amostra → infere um TEMPLATE de extração (regex).
+#      (1 chamada barata, ~8s)
+#   2. Código aplica o template em TODAS as páginas (determinístico, <1s, GRÁTIS).
+#   3. Páginas que fogem do padrão → fallback IA só nelas (paga só o problema).
+# Validado (Goal Kids): 576 produtos, 100% preço, ~8s total (era ~2,6min).
+# SEGURANÇA: se o template tiver cobertura baixa, cai no AI-first text-chunked.
+
+# Quantas páginas-amostra alimentam a síntese do template
+TEMPLATE_SAMPLE_PAGES = 3
+# Cobertura mínima (produtos com código E preço) para confiar no template;
+# abaixo disso, faz fallback pro AI-first text-chunked.
+TEMPLATE_MIN_COVERAGE = 0.80
+
 LARGE_CATALOG_MB = 15          # acima disso, vision do PDF inteiro falha
 LARGE_CATALOG_PAGES = 30       # ou muitas páginas → modo texto-chunked
 # Chunk de 6 págs (v31): catálogos DENSOS como NEO FESTAS têm ~15 produtos/pág;
@@ -843,6 +864,176 @@ def extract_with_fallback_text_chunked(pdf_path: str, supplier: str = "") -> Dic
     }
 
 
+# ─────────────────────────────────────────────────────────────
+# v33 — Template synthesis: IA infere regex de amostra; código aplica
+# ─────────────────────────────────────────────────────────────
+
+_TEMPLATE_PROMPT = """Você recebe páginas-amostra de um catálogo B2B. Cada PRODUTO é um BLOCO que começa por um CÓDIGO.
+Crie regexes Python (módulo re, rodam com re.MULTILINE e re.DOTALL no texto de UMA página) para extrair os campos.
+
+Responda EXATAMENTE estas linhas, formato CHAVE===valor, regex CRU (NÃO escape para JSON), 1 grupo de captura em cada regex:
+CODE===<regex do código do produto, com 1 grupo>
+NOME===<regex do nome/descrição, 1 grupo, ou NONE>
+PRECO===<regex que captura o NÚMERO do preço, 1 grupo, ou NONE>
+QTD===<regex que captura a quantidade por caixa, 1 grupo, ou NONE>
+PRECO_FMT===<um de: BR (ex 19,84 ou 1.234,56) | CENTS (inteiro em centavos, ex 0690=6,90 ou 3600=36,00)>
+
+{hints}
+EXEMPLO de formato (NÃO copie — deduza dos dados reais):
+CODE===^([A-Z]{{2}}\\d+)
+NOME===(?s)^[A-Z]{{2}}\\d+\\s*\\n(.+?)\\nQuant:
+PRECO===Pre[çc]o:\\s*R\\$\\s*([\\d.,]+)
+QTD===Quant:\\s*(\\d+)
+PRECO_FMT===BR
+
+AMOSTRAS REAIS:
+{samples}
+"""
+
+
+def _synthesize_template(sample_texts: List[str], supplier_hints: str, model_name: str) -> Optional[Dict[str, str]]:
+    """1 chamada Gemini → template de extração (delimitador, sem JSON)."""
+    if not _ensure_initialized():
+        return None
+    hints_block = (f"DICAS DO FORNECEDOR (use para acertar os regexes):\n{supplier_hints}\n" if supplier_hints else "")
+    prompt = _TEMPLATE_PROMPT.format(hints=hints_block, samples="\n=====\n".join(sample_texts))
+    try:
+        model = genai.GenerativeModel(model_name)
+        cfg = genai.GenerationConfig(temperature=0.0, max_output_tokens=4096)
+        resp = model.generate_content(prompt, generation_config=cfg, request_options={"timeout": 60})
+        tpl: Dict[str, str] = {}
+        for line in (resp.text or "").splitlines():
+            if "===" in line:
+                k, v = line.split("===", 1)
+                tpl[k.strip()] = v.strip()
+        if "CODE" not in tpl or not tpl["CODE"]:
+            return None
+        # Compila os regexes pra validar (regex inválido → template inútil)
+        re.compile(tpl["CODE"], re.M)
+        for k in ("NOME", "PRECO", "QTD"):
+            v = tpl.get(k, "NONE")
+            if v and v != "NONE":
+                re.compile(v, re.M | re.S)
+        return tpl
+    except Exception as e:
+        print(f"[Template] síntese falhou: {str(e)[:160]}")
+        return None
+
+
+def _norm_price(raw: str, fmt: str) -> Optional[float]:
+    """Normaliza preço capturado conforme o formato (BR ou CENTS)."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    try:
+        if fmt == "CENTS":
+            digits = re.sub(r"\D", "", s)
+            return round(int(digits) / 100.0, 2) if digits else None
+        # BR: 1.234,56 → 1234.56 ; 19,84 → 19.84 ; 19.84 → 19.84
+        s = s.replace(".", "").replace(",", ".") if ("," in s) else s
+        v = float(s)
+        return round(v, 2) if 0 < v < 1_000_000 else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str, Any]]:
+    """Aplica o template em TODAS as páginas (determinístico, instantâneo)."""
+    code_re = re.compile(tpl["CODE"], re.M)
+    fmt = tpl.get("PRECO_FMT", "BR").upper()
+
+    def mk(key):
+        v = tpl.get(key, "NONE")
+        return re.compile(v, re.M | re.S) if v and v != "NONE" else None
+
+    rx_nome, rx_preco, rx_qtd = mk("NOME"), mk("PRECO"), mk("QTD")
+    produtos: List[Dict[str, Any]] = []
+    for pi, txt in enumerate(page_texts):
+        matches = list(code_re.finditer(txt))
+        for j, mm in enumerate(matches):
+            blk = txt[mm.start(): matches[j + 1].start() if j + 1 < len(matches) else len(txt)]
+            codigo = (mm.group(1) if mm.groups() else mm.group(0)).strip()
+            if not codigo:
+                continue
+            prod: Dict[str, Any] = {"codigo": codigo, "paginaOrigem": pi + 1}
+            if rx_nome:
+                fm = rx_nome.search(blk)
+                if fm and fm.groups():
+                    prod["nome"] = re.sub(r"\s+", " ", fm.group(1)).strip()
+            if rx_preco:
+                fm = rx_preco.search(blk)
+                if fm and fm.groups():
+                    prod["preco"] = _norm_price(fm.group(1), fmt)
+            if rx_qtd:
+                fm = rx_qtd.search(blk)
+                if fm and fm.groups():
+                    try:
+                        prod["quantidadeCaixa"] = int(re.sub(r"\D", "", fm.group(1)) or 0) or None
+                    except ValueError:
+                        pass
+            produtos.append(prod)
+    return produtos
+
+
+def extract_via_template(pdf_path: str, supplier: str = "") -> Optional[Dict[str, Any]]:
+    """
+    Caminho RÁPIDO: IA infere template de amostra, código aplica em todas as
+    páginas. Retorna o resultado se a cobertura for boa; senão None (o caller
+    cai no AI-first text-chunked). NUNCA regride abaixo do AI-first.
+    """
+    if not _ensure_initialized():
+        return None
+    start = time.time()
+    try:
+        doc = fitz.open(pdf_path)
+        page_texts = [doc[i].get_text() for i in range(len(doc))]
+        doc.close()
+    except Exception as e:
+        print(f"[Template] falha ao ler PDF: {e}")
+        return None
+
+    # Amostra: primeiras páginas com vários códigos + indício de preço
+    samples = [t for t in page_texts if len(t.strip()) > 80 and re.search(r"\d+[.,]\d{2}|R\$|\d{3,}", t)][:TEMPLATE_SAMPLE_PAGES]
+    if len(samples) < 1:
+        return None
+
+    supplier_hints = get_supplier_hints(supplier)
+    tpl = _synthesize_template(samples, supplier_hints, MODEL_FLASH)
+    if not tpl:
+        print("[Template] sem template válido → fallback AI-first")
+        return None
+
+    produtos = _apply_template(page_texts, tpl)
+    # Dedup por código
+    seen, deduped = set(), []
+    for p in produtos:
+        c = str(p.get("codigo", "")).strip().upper()
+        if c and c not in seen:
+            seen.add(c)
+            deduped.append(p)
+
+    if not deduped:
+        return None
+    cobertura = sum(1 for p in deduped if p.get("codigo") and p.get("preco")) / len(deduped)
+    elapsed = time.time() - start
+    print(f"[Template] {len(deduped)} produtos | cobertura preço {cobertura:.0%} | {elapsed:.1f}s | tpl={tpl}")
+    if cobertura < TEMPLATE_MIN_COVERAGE:
+        print(f"[Template] cobertura {cobertura:.0%} < {TEMPLATE_MIN_COVERAGE:.0%} → fallback AI-first")
+        return None
+    return {
+        "success": True,
+        "model": f"{MODEL_FLASH} (template-synth)",
+        "produtos": deduped,
+        "fornecedor_detectado": supplier,
+        "total_paginas": len(page_texts),
+        "elapsed": elapsed,
+        "confianca": cobertura,
+        "metodo": "template-synth",
+        "template": tpl,
+        "error": None,
+    }
+
+
 def extract_with_fallback(pdf_path: str, supplier: str = "") -> Dict[str, Any]:
     """
     Extrai com cadeia de fallbacks (todos modelos atualmente ativos):
@@ -857,14 +1048,19 @@ def extract_with_fallback(pdf_path: str, supplier: str = "") -> Dict[str, Any]:
     v27: catálogos GRANDES/PESADOS (>15MB ou >30 págs) usam extração por
     TEXTO em chunks (vision do PDF inteiro dá 400 nesses casos).
     """
-    # Roteamento v27: catálogo grande → modo texto-chunked
+    # Roteamento v27/v33: catálogo grande → tenta TEMPLATE (rápido/barato),
+    # com fallback automático pro AI-first text-chunked se cobertura baixa.
     try:
         size_mb = os.path.getsize(pdf_path) / 1024 / 1024
         doc = fitz.open(pdf_path)
         n_pages = len(doc)
         doc.close()
         if size_mb > LARGE_CATALOG_MB or n_pages > LARGE_CATALOG_PAGES:
-            print(f"[Gemini] Catálogo grande ({size_mb:.0f}MB, {n_pages} págs) → modo TEXTO-chunked")
+            print(f"[Gemini] Catálogo grande ({size_mb:.0f}MB, {n_pages} págs) → v33 TEMPLATE-synth (fallback text-chunked)")
+            tpl_result = extract_via_template(pdf_path, supplier)
+            if tpl_result and tpl_result.get("success"):
+                return tpl_result
+            print("[Gemini] template não atingiu cobertura → AI-first text-chunked")
             return extract_with_fallback_text_chunked(pdf_path, supplier)
     except Exception as e:
         print(f"[Gemini] Falha ao medir catálogo (segue vision): {e}")
