@@ -871,6 +871,8 @@ def extract_with_fallback_text_chunked(pdf_path: str, supplier: str = "") -> Dic
 _TEMPLATE_PROMPT = """Você recebe páginas-amostra de um catálogo B2B. Cada PRODUTO é um BLOCO que começa por um CÓDIGO.
 Crie regexes Python (módulo re, rodam com re.MULTILINE e re.DOTALL no texto de UMA página) para extrair os campos.
 
+REGRAS DOS REGEX: Python re; NÃO use lookbehind de largura variável (?<=...) — só grupos de captura simples; cada regex deve COMPILAR em Python.
+
 Responda EXATAMENTE estas linhas, formato CHAVE===valor, regex CRU (NÃO escape para JSON), 1 grupo de captura em cada regex:
 CODE===<regex do código do produto, com 1 grupo>
 NOME===<regex do nome/descrição, 1 grupo, ou NONE>
@@ -918,6 +920,97 @@ def _synthesize_template(sample_texts: List[str], supplier_hints: str, model_nam
     except Exception as e:
         print(f"[Template] síntese falhou: {str(e)[:160]}")
         return None
+
+
+_TEMPLATE_FIX_PROMPT = """Você criou estes regexes de extração, mas eles capturaram PREÇO de apenas {cov}% dos produtos da amostra. CORRIJA.
+
+Template atual (formato CHAVE===regex):
+{tpl}
+
+Produtos cujo PREÇO/QTD NÃO foram capturados (códigos): {fails}
+
+{hints}
+Olhe COM ATENÇÃO como preço e quantidade aparecem nas amostras abaixo e reescreva os regexes que falham. Lembre: PRECO_FMT=CENTS quando o preço é inteiro em centavos (ex 0690=6,90, 3600=36,00); BR quando tem vírgula decimal.
+NÃO use lookbehind de largura variável (?<=...) — só grupos de captura. Cada regex deve COMPILAR em Python re.
+Responda EXATAMENTE no MESMO formato (CODE===, NOME===, PRECO===, QTD===, PRECO_FMT===), regex CRU, 1 grupo cada.
+
+AMOSTRAS:
+{samples}
+"""
+
+
+def _correct_template(tpl: Dict[str, str], sample_texts: List[str], fails: List[str],
+                      cov: float, supplier_hints: str, model_name: str) -> Optional[Dict[str, str]]:
+    """Pede à IA para corrigir os regexes do template, dado o que falhou."""
+    if not _ensure_initialized():
+        return None
+    tpl_str = "\n".join(f"{k}==={v}" for k, v in tpl.items())
+    hints_block = (f"DICAS DO FORNECEDOR:\n{supplier_hints}\n" if supplier_hints else "")
+    prompt = _TEMPLATE_FIX_PROMPT.format(
+        cov=round(cov * 100), tpl=tpl_str, fails=", ".join(fails) or "(vários)",
+        hints=hints_block, samples="\n=====\n".join(sample_texts))
+    try:
+        model = genai.GenerativeModel(model_name)
+        cfg = genai.GenerationConfig(temperature=0.0, max_output_tokens=4096)
+        resp = model.generate_content(prompt, generation_config=cfg, request_options={"timeout": 60})
+        nt: Dict[str, str] = {}
+        for line in (resp.text or "").splitlines():
+            if "===" in line:
+                k, v = line.split("===", 1)
+                nt[k.strip()] = v.strip()
+        if "CODE" not in nt or not nt["CODE"]:
+            return None
+        re.compile(nt["CODE"], re.M)
+        for k in ("NOME", "PRECO", "QTD"):
+            v = nt.get(k, "NONE")
+            if v and v != "NONE":
+                re.compile(v, re.M | re.S)
+        return nt
+    except Exception as e:
+        print(f"[Template] correção falhou: {str(e)[:120]}")
+        return None
+
+
+def _eval_template(tpl: Dict[str, str], texts: List[str]) -> Tuple[List[Dict[str, Any]], float]:
+    """Aplica o template e mede cobertura de preço (0..1)."""
+    prods = _apply_template(texts, tpl)
+    if not prods:
+        return prods, 0.0
+    return prods, sum(1 for p in prods if p.get("preco")) / len(prods)
+
+
+def _synthesize_template_robust(sample_texts: List[str], supplier_hints: str,
+                                model_name: str, max_fix_rounds: int = 2) -> Tuple[Optional[Dict[str, str]], float]:
+    """
+    Síntese ROBUSTA avaliada na AMOSTRA (barato):
+      - tenta sintetizar (2x, pois síntese é não-determinística);
+      - mede cobertura na amostra; se baixa, pede correção à IA (até N rodadas),
+        mantendo só correções que MELHORAM;
+      - retorna (melhor_template, melhor_cobertura_na_amostra).
+    Tudo nas ~3 páginas-amostra → 1 a 4 chamadas pequenas, segundos.
+    """
+    tpl = None
+    for _ in range(2):
+        tpl = _synthesize_template(sample_texts, supplier_hints, model_name)
+        if tpl:
+            break
+    if not tpl:
+        return None, 0.0
+    prods, cov = _eval_template(tpl, sample_texts)
+    for rnd in range(max_fix_rounds):
+        if cov >= TEMPLATE_MIN_COVERAGE:
+            break
+        fails = [p["codigo"] for p in prods if not p.get("preco")][:6]
+        corrected = _correct_template(tpl, sample_texts, fails, cov, supplier_hints, model_name)
+        if not corrected:
+            break
+        nprods, ncov = _eval_template(corrected, sample_texts)
+        print(f"[Template] correção rodada {rnd+1}: {round(cov*100)}% → {round(ncov*100)}%")
+        if ncov > cov:
+            tpl, prods, cov = corrected, nprods, ncov
+        else:
+            break  # não melhorou; para
+    return tpl, cov
 
 
 def _norm_price(raw: str, fmt: str) -> Optional[float]:
@@ -998,13 +1091,17 @@ def extract_via_template(pdf_path: str, supplier: str = "") -> Optional[Dict[str
         return None
 
     supplier_hints = get_supplier_hints(supplier)
-    tpl = _synthesize_template(samples, supplier_hints, MODEL_FLASH)
+    # Síntese ROBUSTA avaliada na amostra (com auto-correção). Barato/rápido.
+    tpl, sample_cov = _synthesize_template_robust(samples, supplier_hints, MODEL_FLASH)
     if not tpl:
         print("[Template] sem template válido → fallback AI-first")
         return None
+    if sample_cov < TEMPLATE_MIN_COVERAGE:
+        print(f"[Template] cobertura na amostra {sample_cov:.0%} < {TEMPLATE_MIN_COVERAGE:.0%} → fallback AI-first")
+        return None
 
+    # Template confiável na amostra → aplica em TODAS as páginas (instantâneo)
     produtos = _apply_template(page_texts, tpl)
-    # Dedup por código
     seen, deduped = set(), []
     for p in produtos:
         c = str(p.get("codigo", "")).strip().upper()
@@ -1015,14 +1112,67 @@ def extract_via_template(pdf_path: str, supplier: str = "") -> Optional[Dict[str
     if not deduped:
         return None
     cobertura = sum(1 for p in deduped if p.get("codigo") and p.get("preco")) / len(deduped)
+    cov_qtd = sum(1 for p in deduped if p.get("quantidadeCaixa")) / len(deduped)
+    print(f"[Template] {len(deduped)} produtos | preço {cobertura:.0%} | qtd {cov_qtd:.0%} (amostra {sample_cov:.0%}) | tpl={tpl}")
+    # GATE de QUALIDADE: o template só vale o caminho rápido se pegar bem preço
+    # E quantidade. Senão, AI-first (qualidade cheia) — nunca regride dados.
+    # Ex.: GIRA pegou 100% preço mas 0% qtd → cai no AI-first (que pega qtd).
+    if cov_qtd < 0.5:
+        print(f"[Template] qtd {cov_qtd:.0%} < 50% → fallback AI-first (preserva qualidade)")
+        return None
+
+    # ─── FALLBACK POR PÁGINA (v33): IA só nas páginas que o template ERROU ───
+    # "Só gastar com o que dá problema." Identifica páginas onde o template
+    # extraiu produtos mas a maioria ficou SEM preço (padrão diferente da
+    # amostra — ex: páginas tabela/lista no BM36, multi-variante no NeoFestas),
+    # e re-extrai SÓ essas páginas via IA, em paralelo. Mescla (IA vence).
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    page_stats: Dict[int, List[int]] = {}  # pagina → [total, com_preco]
+    for p in deduped:
+        pg = int(p.get("paginaOrigem", 0))
+        st = page_stats.setdefault(pg, [0, 0])
+        st[0] += 1
+        if p.get("preco"):
+            st[1] += 1
+    bad_pages = sorted([pg for pg, (tot, ok) in page_stats.items()
+                        if pg >= 1 and tot >= 2 and (ok / tot) < 0.6])
+    fallback_used = 0
+    if bad_pages and len(bad_pages) <= len(page_stats):  # nunca o catálogo inteiro
+        print(f"[Template] {len(bad_pages)} páginas abaixo de 60% preço → fallback IA por página")
+        # agrupa páginas ruins em chunks de TEXT_CHUNK_PAGES p/ paralelizar
+        groups = [bad_pages[i:i + TEXT_CHUNK_PAGES] for i in range(0, len(bad_pages), TEXT_CHUNK_PAGES)]
+        ai_prods: List[Dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=TEXT_CHUNK_WORKERS) as pool:
+            futs = {pool.submit(_extract_text_chunk, [page_texts[pg - 1] for pg in grp], grp[0], supplier_hints, MODEL_FLASH): grp for grp in groups}
+            for fut in as_completed(futs):
+                prods, _ok = fut.result()
+                if prods:
+                    ai_prods.extend(prods)
+        # Mescla: IA vence para os códigos que ela trouxe
+        ai_by_code = {str(p.get("codigo", "")).strip().upper(): p for p in ai_prods if p.get("codigo")}
+        merged = []
+        for p in deduped:
+            c = str(p.get("codigo", "")).strip().upper()
+            if c in ai_by_code and ai_by_code[c].get("preco"):
+                merged.append(ai_by_code.pop(c))  # versão IA (com preço)
+                fallback_used += 1
+            else:
+                merged.append(p)
+        # adiciona produtos novos que só a IA achou nas páginas ruins
+        for c, p in ai_by_code.items():
+            if c:
+                merged.append(p)
+        deduped = merged
+        cobertura = sum(1 for p in deduped if p.get("preco")) / len(deduped)
+        print(f"[Template] após fallback por página: {len(deduped)} produtos | cobertura {cobertura:.0%} | {fallback_used} corrigidos")
+
     elapsed = time.time() - start
-    print(f"[Template] {len(deduped)} produtos | cobertura preço {cobertura:.0%} | {elapsed:.1f}s | tpl={tpl}")
-    if cobertura < TEMPLATE_MIN_COVERAGE:
-        print(f"[Template] cobertura {cobertura:.0%} < {TEMPLATE_MIN_COVERAGE:.0%} → fallback AI-first")
+    if cobertura < (TEMPLATE_MIN_COVERAGE - 0.15):
+        print(f"[Template] cobertura total {cobertura:.0%} ainda baixa → fallback AI-first completo")
         return None
     return {
         "success": True,
-        "model": f"{MODEL_FLASH} (template-synth)",
+        "model": f"{MODEL_FLASH} (template-synth+pagefix)" if fallback_used else f"{MODEL_FLASH} (template-synth)",
         "produtos": deduped,
         "fornecedor_detectado": supplier,
         "total_paginas": len(page_texts),
