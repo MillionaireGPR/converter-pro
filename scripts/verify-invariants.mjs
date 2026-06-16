@@ -21,7 +21,7 @@
  * NÃO ajuste o teste — investigue a regressão (ver ARCHITECTURE.md).
  */
 import { readFileSync, existsSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -105,6 +105,21 @@ mustContain('IV-18', GE, ['SUPPLIER_HINTS', 'def get_supplier_hints']);
 })();
 // IV-20 — kill-switch
 mustContain('IV-20', MAIN, ['AI_PICKER_DISABLED']);
+
+// SMOKE — import real do gemini_extractor (pega NameError/erro de anotação que
+// o AST não vê — ex: usar Tuple sem importar). ModuleNotFoundError de dep
+// 3rd-party (fitz/google) é SKIP (ambiente sem deps); erro no NOSSO código FALHA.
+(() => {
+  const r = spawnSync('python', ['-c', "import sys; sys.path.insert(0, 'backend/image_extractor'); import gemini_extractor"], { cwd: ROOT, encoding: 'utf8' });
+  if (r.error) { console.log('\x1b[33m⚠️  SMOKE import pulado (python indisponível)\x1b[0m'); return; }
+  if (r.status === 0) { ok('SMOKE import gemini_extractor'); return; }
+  const err = (r.stderr || '') + (r.stdout || '');
+  if (/ModuleNotFoundError/.test(err)) {
+    console.log(`\x1b[33m⚠️  SMOKE import pulado (dep ausente): ${(err.match(/ModuleNotFoundError: (.*)/) || [])[1] || ''}\x1b[0m`);
+  } else {
+    fail(`SMOKE import gemini_extractor falhou:\n${err.split('\n').slice(-6).join('\n')}`);
+  }
+})();
 
 if (backendOnly) {
   console.log(`\n${failures === 0 ? '\x1b[32m✅ Backend OK\x1b[0m' : `\x1b[31m❌ ${failures} falha(s)\x1b[0m`}`);

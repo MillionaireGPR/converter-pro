@@ -14,7 +14,7 @@ import os
 import json
 import base64
 import time
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 import fitz  # PyMuPDF: renderiza páginas PDF como JPEG para enviar ao Gemini Vision
 
