@@ -708,7 +708,12 @@ LARGE_CATALOG_PAGES = 30       # ou muitas páginas → modo texto-chunked
 # 6 págs mantém ~90 produtos/chunk (zona segura validada no Fortal) → poucos
 # 504 → poucos re-splits → muito mais rápido.
 TEXT_CHUNK_PAGES = 6
-TEXT_CHUNK_WORKERS = 5         # paralelismo (só HTTP, baixa RAM); corta wall-time
+# Paralelismo ALTO (v32): o gargalo é o Gemini GERANDO o JSON (~83s/chunk),
+# não RAM/CPU (texto, HTTP-bound). Mais workers = menos "ondas" = menos
+# wall-time. Meta do cliente: 2-5min. Tier pago do Gemini aguarda dezenas de
+# chamadas simultâneas, então 12 é seguro. Ex.: NeoFestas 23 chunks / 12 ≈ 2
+# ondas ≈ ~3-4min (era ~15min com 5 workers).
+TEXT_CHUNK_WORKERS = 12
 
 
 def _extract_text_chunk_once(
