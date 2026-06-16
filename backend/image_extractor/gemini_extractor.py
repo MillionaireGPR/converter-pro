@@ -208,6 +208,43 @@ SUPPLIER_HINTS: Dict[str, str] = {
         "- 'CORES SORTIDAS' / dimensões (ex: 40x40cm) vão em observacoes, não no nome.\n"
         "- Ignore a página de ÍNDICE (lista de categorias com números de página)."
     ),
+    "GIRA": (
+        "DICAS ESPECÍFICAS DO FORNECEDOR GIRA IMPORTS:\n"
+        "- código: começa com 2-4 letras + dígitos (ex: TP1968, GU0220). Fica no início "
+        "do bloco. NUNCA confunda com EAN, NCM, IPI ou CX.\n"
+        "- nome: texto após o código (ex: 'VASO VIDRO BOTICA').\n"
+        "- preço: número COMPACTO com zeros à esquerda (ex: '0690', '0520', '0017900'). "
+        "Os ÚLTIMOS 2 dígitos são CENTAVOS: '0690'→6.90, '0520'→5.20, '0017900'→179.00.\n"
+        "- quantidadeCaixa: o N de 'CXnn' (ex: 'CX48'→48, 'CX80'→80).\n"
+        "- ipi: 'IP 9,75%' ou 'IPI 9,75%'."
+    ),
+    "BM36": (
+        "DICAS ESPECÍFICAS DO FORNECEDOR BM36 (e WORD CLASSIC):\n"
+        "- nome: linha de descrição em CAIXA ALTA (ex: 'LUMINARIA LED GLOBO 8CM').\n"
+        "- código: o valor de 'CD: BM######' ou 'CD: WC######'. O OUTRO 'CD:' com 13 "
+        "dígitos é o EAN/código de barras (vai em ncm/codigoBarras), NUNCA o código.\n"
+        "- preço: padrão 'B<n1>B<n2>' (ex: 'B3600B4320'). Use o PRIMEIRO número (n1) "
+        "em CENTAVOS → divida por 100: 'B3600B4320'→36.00.\n"
+        "- quantidadeCaixa: 'CX: N'."
+    ),
+    "NEO FESTAS": (
+        "DICAS ESPECÍFICAS DO FORNECEDOR NEO FESTAS (Tabela Fast):\n"
+        "- nome: linhas em CAIXA ALTA (ex: 'BANDEIRA TECIDO POLIÉSTER BRASIL').\n"
+        "- preço: prefira o UNITÁRIO 'R$ X,XX Un.' (ex: 'R$ 0,83 Un.'→0.83). Se só houver "
+        "preço de pacote 'R$ X,XX Pct. c/N un.', use esse.\n"
+        "- quantidadeCaixa: o N de 'c/N un' / 'Pct. c/N un' (ex: 'Pct. c/24 un'→24).\n"
+        "- código: número de 6 dígitos (ex: 153060).\n"
+        "- 'ESGOTADO' → produto sem estoque. Código com '*' = poucas unidades.\n"
+        "- Uma linha pode ter VÁRIAS variantes (ex: '90x120cm | R$238,44 c/12un | 124788'): "
+        "cada uma é um produto separado com seu próprio código, preço e dimensão."
+    ),
+    "NIX HOUSE": (
+        "DICAS ESPECÍFICAS DO FORNECEDOR NIX HOUSE:\n"
+        "- código: NX + dígitos (ex: NX020, NX445), pode ter sufixo de variação (-A, -P, -V).\n"
+        "- nome: descrição após o código (ex: 'FORMA DE GELO C/BASE SILICONE').\n"
+        "- preço: 'R$ X,XX'. quantidadeCaixa: 'CX N' ou 'C/N'. ipi: 'IPI N%'.\n"
+        "- O texto pode vir fragmentado/fora de ordem — agrupe por código NX."
+    ),
 }
 
 

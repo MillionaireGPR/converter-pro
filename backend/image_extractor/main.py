@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.15-v27-text-chunked"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.15-v28-hints-gira-bm36-neo-nix"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
