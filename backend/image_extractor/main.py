@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.16-v32-12workers-speed"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.16-v33-template-synth"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
