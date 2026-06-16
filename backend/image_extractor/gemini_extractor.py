@@ -707,12 +707,10 @@ TEXT_CHUNK_PAGES = 10          # validado: ~90 produtos/chunk sem estourar outpu
 TEXT_CHUNK_WORKERS = 3         # paralelismo (só HTTP, baixa RAM)
 
 
-def _extract_text_chunk(
+def _extract_text_chunk_once(
     page_texts: List[str], first_page: int, supplier_hints: str, model_name: str
 ) -> List[Dict[str, Any]]:
-    """Extrai produtos do TEXTO de um chunk de páginas (sem imagens)."""
-    if not _ensure_initialized():
-        return []
+    """UMA tentativa de extrair produtos do TEXTO de um chunk. Lança em erro."""
     bloco = "\n".join(
         f"--- PG {first_page + i} ---\n{t}" for i, t in enumerate(page_texts)
     )
@@ -720,25 +718,50 @@ def _extract_text_chunk(
     if supplier_hints:
         prompt += f"\n\n{supplier_hints}"
     prompt += f"\n\nTEXTO DO CATÁLOGO (extraído por página):\n{bloco}"
-    try:
-        model = genai.GenerativeModel(model_name)
-        cfg = genai.GenerationConfig(
-            temperature=0.1,
-            response_mime_type="application/json",
-            max_output_tokens=65535,
-        )
-        resp = model.generate_content(
-            prompt, generation_config=cfg, request_options={"timeout": 180}
-        )
-        raw = (resp.text or "").strip()
-        if raw.startswith("```"):
-            raw = raw.strip("`")
-            if raw.startswith("json"):
-                raw = raw[4:].strip()
-        return json.loads(raw).get("produtos", [])
-    except Exception as e:
-        print(f"[Gemini Chunk] pgs {first_page}+: erro {str(e)[:160]}")
-        return []
+    model = genai.GenerativeModel(model_name)
+    cfg = genai.GenerationConfig(
+        temperature=0.1, response_mime_type="application/json", max_output_tokens=65535,
+    )
+    resp = model.generate_content(prompt, generation_config=cfg, request_options={"timeout": 180})
+    raw = (resp.text or "").strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.startswith("json"):
+            raw = raw[4:].strip()
+    return json.loads(raw).get("produtos", [])
+
+
+def _extract_text_chunk(
+    page_texts: List[str], first_page: int, supplier_hints: str, model_name: str
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """
+    Extrai produtos do TEXTO de um chunk com RESILIÊNCIA (sem perda silenciosa):
+      1. tenta o chunk inteiro (2 tentativas);
+      2. se falhar (504/timeout/JSON inválido) E o chunk tem >1 página, DIVIDE
+         em duas metades e tenta cada uma recursivamente (páginas densas que
+         estouram o output viram chamadas menores);
+      3. página única que ainda falha é reportada como perdida.
+    Retorna (produtos, sucesso_total). sucesso_total=False se alguma página
+    do chunk não pôde ser extraída (visível no relatório, não some calado).
+    """
+    if not _ensure_initialized():
+        return [], False
+    last_err = None
+    for attempt in range(2):
+        try:
+            return _extract_text_chunk_once(page_texts, first_page, supplier_hints, model_name), True
+        except Exception as e:
+            last_err = e
+            print(f"[Gemini Chunk] pgs {first_page}-{first_page+len(page_texts)-1} tentativa {attempt+1}: {str(e)[:120]}")
+            time.sleep(2)
+    # Falhou as 2 tentativas → divide ao meio se possível
+    if len(page_texts) > 1:
+        mid = len(page_texts) // 2
+        left, lok = _extract_text_chunk(page_texts[:mid], first_page, supplier_hints, model_name)
+        right, rok = _extract_text_chunk(page_texts[mid:], first_page + mid, supplier_hints, model_name)
+        return left + right, (lok and rok)
+    print(f"[Gemini Chunk] ❌ PÁGINA {first_page} PERDIDA após retries: {str(last_err)[:120]}")
+    return [], False
 
 
 def extract_with_fallback_text_chunked(pdf_path: str, supplier: str = "") -> Dict[str, Any]:
@@ -769,16 +792,20 @@ def extract_with_fallback_text_chunked(pdf_path: str, supplier: str = "") -> Dic
 
     all_produtos: List[Dict[str, Any]] = []
     chunks_ok = 0
+    chunks_parciais = 0
     with ThreadPoolExecutor(max_workers=TEXT_CHUNK_WORKERS) as pool:
         futures = {
             pool.submit(_extract_text_chunk, texts, first + 1, supplier_hints, MODEL_FLASH): first
             for first, texts in chunks
         }
         for fut in as_completed(futures):
-            prods = fut.result()
+            prods, ok = fut.result()
             if prods:
                 all_produtos.extend(prods)
+            if ok:
                 chunks_ok += 1
+            else:
+                chunks_parciais += 1  # alguma página do chunk não extraiu (visível)
 
     # Dedup por código (chunks não se sobrepõem, mas é defensivo)
     seen, deduped = set(), []
@@ -790,13 +817,17 @@ def extract_with_fallback_text_chunked(pdf_path: str, supplier: str = "") -> Dic
         deduped.append(p)
 
     elapsed = time.time() - start
-    print(f"[Gemini TextChunk] ✓ {len(deduped)} produtos ({chunks_ok}/{len(chunks)} chunks) em {elapsed:.1f}s")
+    print(f"[Gemini TextChunk] ✓ {len(deduped)} produtos ({chunks_ok}/{len(chunks)} chunks OK, "
+          f"{chunks_parciais} parciais) em {elapsed:.1f}s")
     return {
         "success": len(deduped) > 0,
         "model": f"{MODEL_FLASH} (text-chunked)",
         "produtos": deduped,
         "fornecedor_detectado": supplier,
         "total_paginas": n_pages,
+        "chunks_total": len(chunks),
+        "chunks_ok": chunks_ok,
+        "chunks_parciais": chunks_parciais,  # transparência: chunks com perda
         "elapsed": elapsed,
         "confianca": (sum(1 for p in deduped if p.get("codigo") and p.get("preco")) / len(deduped)) if deduped else 0,
         "error": None if deduped else "Nenhum produto extraído nos chunks",
