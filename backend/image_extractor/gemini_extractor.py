@@ -703,8 +703,12 @@ def repair_prices_for_skus(
 
 LARGE_CATALOG_MB = 15          # acima disso, vision do PDF inteiro falha
 LARGE_CATALOG_PAGES = 30       # ou muitas páginas → modo texto-chunked
-TEXT_CHUNK_PAGES = 10          # validado: ~90 produtos/chunk sem estourar output
-TEXT_CHUNK_WORKERS = 3         # paralelismo (só HTTP, baixa RAM)
+# Chunk de 6 págs (v31): catálogos DENSOS como NEO FESTAS têm ~15 produtos/pág;
+# com 10 págs o output estourava (504) e o re-split sequencial levava ~39min.
+# 6 págs mantém ~90 produtos/chunk (zona segura validada no Fortal) → poucos
+# 504 → poucos re-splits → muito mais rápido.
+TEXT_CHUNK_PAGES = 6
+TEXT_CHUNK_WORKERS = 5         # paralelismo (só HTTP, baixa RAM); corta wall-time
 
 
 def _extract_text_chunk_once(

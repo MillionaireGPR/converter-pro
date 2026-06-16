@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.15-v30-chunk-retry-fix"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.16-v31-chunk6-5workers"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
