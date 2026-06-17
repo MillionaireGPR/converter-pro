@@ -5,13 +5,11 @@ import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useFornecedores } from "@/context/FornecedoresContext";
 import { Building2, Edit, Package, Calendar, Trash2 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 
 export default function Fornecedores() {
   const { fornecedores, updateFornecedor, removeFornecedor, seedSuppliers, isLoading } = useFornecedores();
-  const navigate = useNavigate();
   const [editId, setEditId] = useState<string | null>(null);
   const [removeId, setRemoveId] = useState<string | null>(null);
   const [deleteData, setDeleteData] = useState(false);
@@ -98,12 +96,12 @@ export default function Fornecedores() {
                 <div className="text-muted-foreground">Desc: <span className="text-foreground font-medium">{f.descontoPadrao}%</span></div>
                 <div className="text-muted-foreground">IPI: <span className="text-foreground font-medium">{f.ipiPadrao}%</span></div>
               </div>
+              {/* Botão "Regras" REMOVIDO (16/06/2026): mapeamento de colunas é
+                  automático no AI-first; a tela /regras é legada (segue acessível
+                  por URL direta se precisar internamente). Mantém UI limpa p/ cliente. */}
               <div className="flex gap-2 mt-auto pt-2">
                 <Button variant="outline" size="sm" className="flex-1" onClick={() => openEdit(f)}>
                   <Edit className="h-3.5 w-3.5 mr-1" /> Editar
-                </Button>
-                <Button variant="outline" size="sm" className="flex-1" onClick={() => navigate(`/regras?fornecedor=${f.nome}`)}>
-                  Regras
                 </Button>
                 <Button variant="outline" size="sm" className="w-10 text-destructive hover:bg-destructive/10 border-destructive/20" onClick={() => setRemoveId(f.id)}>
                   <Trash2 className="h-3.5 w-3.5" />
