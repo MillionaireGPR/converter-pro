@@ -64,12 +64,15 @@ export const processarArquivoV2 = async (
   // 100% preços, 5/5 EM BREVE em 45s (~R$0,25). Substitui o ciclo infinito
   // de manutenção de regex por fornecedor.
   //
-  // FALLBACK AUTOMÁTICO: qualquer falha da IA (timeout/erro/0 produtos) cai
-  // no pipeline regex existente — nada quebra, só fica menos preciso.
-  // EXCEÇÕES ao AI-first (não quebrar o que JÁ funciona perfeito):
-  //   - NIX HOUSE: caso-bandeira do regex (285 produtos, 0 erros) — IVs baseiam-se nele
-  //   - GOAL KIDS: 1042 páginas, excede contexto/custo — mantém workaround próprio
-  const AI_FIRST_BLOCKLIST = ['NIX', 'GOAL KIDS', 'GOALKIDS', 'GOAL-KIDS'];
+  // FALLBACK AUTOMÁTICO (trava de segurança): qualquer falha da IA
+  // (timeout/erro/0 produtos) cai no pipeline regex existente — nada quebra.
+  // EXCEÇÃO mantida no AI-first:
+  //   - NIX HOUSE: caso-bandeira do regex (285 produtos, 0 erros, 100%) — não
+  //     precisa de IA; decisão do cliente.
+  // GOAL KIDS: REMOVIDO da blocklist (16/06/2026) — usa AI-first/template-synth
+  //   (validado 576 produtos, 100%, ~12s). REVERT seguro: o adapter goal-kids
+  //   (regex) segue intacto; basta re-adicionar 'GOAL KIDS' aqui pra voltar.
+  const AI_FIRST_BLOCKLIST = ['NIX'];
   const supplierUpper = (supplierName || supplierId || '').toUpperCase();
   const isBlocked = AI_FIRST_BLOCKLIST.some(b => supplierUpper.includes(b));
 
