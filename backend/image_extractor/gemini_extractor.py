@@ -246,6 +246,13 @@ SUPPLIER_HINTS: Dict[str, str] = {
         "- preço: 'R$ X,XX'. quantidadeCaixa: 'CX N' ou 'C/N'. ipi: 'IPI N%'.\n"
         "- O texto pode vir fragmentado/fora de ordem — agrupe por código NX."
     ),
+    "GOAL KIDS": (
+        "DICAS ESPECÍFICAS DO FORNECEDOR GOAL (Brinquedos):\n"
+        "- bloco: código (ex: GK3493) → NOME em CAIXA ALTA → 'Quant: N PÇ/CX' → 'Preço: R$ X,XX'.\n"
+        "- código: GK + dígitos. quantidadeCaixa: o N de 'Quant: N PÇ/CX'.\n"
+        "- preço: o número de 'Preço: R$ X,XX' (é o preço de catálogo; desconto é aplicado depois no Mercos).\n"
+        "- 'Medidas'/'Embalagem' vão em observacoes, não no nome."
+    ),
 }
 
 

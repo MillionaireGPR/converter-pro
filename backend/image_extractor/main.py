@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.16-v34-template-autocorrect"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.16-v35-dute-goal"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
