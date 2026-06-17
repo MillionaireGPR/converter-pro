@@ -136,6 +136,12 @@
   to { background-position: -200% 0; }
 }
 
+/* Barra de progresso INDETERMINADA (sweep) — feedback honesto de atividade */
+@keyframes indeterminate {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(360%); }
+}
+
 /* Catalog card hover */
 .catalog-card {
   transition: all 0.2s ease;

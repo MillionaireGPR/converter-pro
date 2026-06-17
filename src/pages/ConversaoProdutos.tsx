@@ -37,7 +37,9 @@ export default function ConversaoProdutos() {
   const [progress, setProgress] = useState(0);
   const [progressMsg, setProgressMsg] = useState("");
   const [elapsedSec, setElapsedSec] = useState(0);
+  const [finalElapsedSec, setFinalElapsedSec] = useState<number | null>(null); // tempo total fixado ao concluir
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startTimeRef = useRef<number>(0);
   const [dragOver, setDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [resultData, setResultData] = useState<{ total: number; ok: number; pendentes: number; erros: number; duplicados: number; fileName: string; fornNome: string } | null>(null);
@@ -48,16 +50,25 @@ export default function ConversaoProdutos() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
-  // Timer de progresso — conta segundos enquanto está processando
+  // Timer de progresso — conta segundos enquanto está processando.
+  // Usa Date.now() (não soma de +1) p/ ser preciso mesmo se a aba ficar em 2º plano.
   useEffect(() => {
     if (state === 'processing') {
       setElapsedSec(0);
-      timerRef.current = setInterval(() => setElapsedSec(s => s + 1), 1000);
+      setFinalElapsedSec(null);
+      startTimeRef.current = Date.now();
+      timerRef.current = setInterval(
+        () => setElapsedSec(Math.floor((Date.now() - startTimeRef.current) / 1000)),
+        500
+      );
     } else {
       if (timerRef.current) clearInterval(timerRef.current);
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [state]);
+
+  // Formata segundos em "m:ss" (ex: 95 → "1:35")
+  const fmtTempo = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
   // Pegar últimas 5 conversões
   const ultimasConversoes = conversoesSalvas.slice(0, 5);
@@ -411,8 +422,11 @@ export default function ConversaoProdutos() {
       }
 
       setProgress(100);
+      // Fixa o tempo total da conversão (preciso, via timestamp de início)
+      const totalSec = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
+      setFinalElapsedSec(totalSec);
       setState('done');
-      toast.success(`Sucesso! ${result.stats.total} itens processados e salvos.`);
+      toast.success(`Sucesso! ${result.stats.total} itens em ${fmtTempo(totalSec)}.`);
     } catch (error: any) {
       console.error(error);
       setState('error');
@@ -565,29 +579,27 @@ export default function ConversaoProdutos() {
           {/* Processing State */}
           {state === 'processing' && (
             <Card className="shadow-card overflow-hidden border-l-2 border-l-primary">
-              <CardHeader className="py-2 px-3">
-                <CardTitle className="text-xs font-semibold flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                    Processando...
-                  </div>
-                  <span className="text-primary font-bold">{Math.min(progress, 100)}%</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="px-3 pb-3 space-y-2">
-                <Progress value={Math.min(progress, 100)} className="h-2" />
-                <div className="rounded p-2.5 space-y-1.5 bg-muted/50">
-                  <div className="flex items-center gap-1.5 text-xs text-foreground font-medium">
-                    <FileIcon className="h-3 w-3 text-primary" />
-                    {progressMsg || 'Preparando...'}
-                  </div>
-                  <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                    <span>Tempo decorrido: {Math.floor(elapsedSec / 60)}:{String(elapsedSec % 60).padStart(2, '0')}</span>
-                    {progress >= 55 && progress < 92 && (
-                      <span className="text-primary animate-pulse">⚡ Extraindo imagens do PDF...</span>
-                    )}
+              <CardContent className="p-4 space-y-3">
+                {/* CRONÔMETRO ao vivo — sinal honesto de evolução em tempo real */}
+                <div className="text-center">
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">Convertendo — tempo decorrido</div>
+                  <div className="flex items-center justify-center gap-2">
+                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                    <span className="text-3xl font-extrabold text-primary tabular-nums">{fmtTempo(elapsedSec)}</span>
                   </div>
                 </div>
+                {/* Barra INDETERMINADA (sweep) — mostra atividade sem fingir % */}
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div className="h-full w-1/3 rounded-full bg-primary animate-[indeterminate_1.4s_ease-in-out_infinite]" />
+                </div>
+                {/* Etapa atual (real) */}
+                <div className="flex items-center gap-1.5 text-xs text-foreground font-medium rounded p-2 bg-muted/50">
+                  <FileIcon className="h-3 w-3 text-primary shrink-0" />
+                  <span>{progressMsg || 'Preparando...'}</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground text-center">
+                  Catálogos grandes podem levar alguns minutos — pode usar outras abas, o processo roda em segundo plano.
+                </p>
               </CardContent>
             </Card>
           )}
@@ -604,6 +616,12 @@ export default function ConversaoProdutos() {
                     <CheckCircle className="h-3.5 w-3.5 text-success" />
                     <span className="text-success font-medium">{resultStats.ok} importados com sucesso</span>
                   </div>
+                  {finalElapsedSec != null && (
+                    <div className="flex items-center justify-center gap-1 text-xs mt-1.5 text-muted-foreground">
+                      <Clock className="h-3.5 w-3.5" />
+                      <span>Convertido em <span className="font-semibold text-foreground tabular-nums">{fmtTempo(finalElapsedSec)}</span></span>
+                    </div>
+                  )}
                   {(resultStats.pendentes > 0 || resultStats.erros > 0 || resultData.duplicados > 0) && (
                     <div className="flex flex-wrap justify-center gap-2 mt-2 pt-2 border-t border-dashed">
                       {resultStats.pendentes > 0 && (
