@@ -1120,12 +1120,22 @@ def extract_via_template(pdf_path: str, supplier: str = "") -> Optional[Dict[str
         return None
     cobertura = sum(1 for p in deduped if p.get("codigo") and p.get("preco")) / len(deduped)
     cov_qtd = sum(1 for p in deduped if p.get("quantidadeCaixa")) / len(deduped)
-    print(f"[Template] {len(deduped)} produtos | preço {cobertura:.0%} | qtd {cov_qtd:.0%} (amostra {sample_cov:.0%}) | tpl={tpl}")
+    cov_nome = sum(1 for p in deduped if p.get("nome") and str(p.get("nome")).strip()) / len(deduped)
+    print(f"[Template] {len(deduped)} produtos | preço {cobertura:.0%} | qtd {cov_qtd:.0%} | nome {cov_nome:.0%} (amostra {sample_cov:.0%}) | tpl={tpl}")
     # GATE de QUALIDADE: o template só vale o caminho rápido se pegar bem preço
     # E quantidade. Senão, AI-first (qualidade cheia) — nunca regride dados.
     # Ex.: GIRA pegou 100% preço mas 0% qtd → cai no AI-first (que pega qtd).
     if cov_qtd < 0.5:
         print(f"[Template] qtd {cov_qtd:.0%} < 50% → fallback AI-first (preserva qualidade)")
+        return None
+    # GATE de NOME (16/06/2026): o modelo de bloco (split por CÓDIGO) só captura
+    # o nome quando ele vem DEPOIS do código no bloco. Em catálogos onde o nome
+    # vem ANTES do código (ex: BM36 "NOME ... CÓDIGO \nCD: <EAN>"), o nome é
+    # deslocado/perdido → preço/qtd ok mas nome ~38%. Não dá p/ corrigir por
+    # página (os nomes presentes podem estar DESLOCADOS = errados, não vazios),
+    # então caímos no AI-first text-chunked (100% nome, validado localmente).
+    if cov_nome < TEMPLATE_MIN_COVERAGE:
+        print(f"[Template] nome {cov_nome:.0%} < {TEMPLATE_MIN_COVERAGE:.0%} → fallback AI-first (template não modela o nome corretamente)")
         return None
 
     # ─── FALLBACK POR PÁGINA (v33): IA só nas páginas que o template ERROU ───

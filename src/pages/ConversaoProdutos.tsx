@@ -394,13 +394,19 @@ export default function ConversaoProdutos() {
         zipUrl: result.imageResults?.zipUrl // Salvar URL do ZIP do backend
       });
 
-      // Registra histórico no banco
+      // Tempo total da conversão (preciso, via timestamp de início) — fixado
+      // ANTES do histórico para registrar o tempo no log (monitoramento de
+      // tempos/erros conforme o cliente usa a ferramenta).
+      const totalSec = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
+
+      // Registra histórico no banco (tempo embutido no tipoConversao — sem
+      // migração de schema: "Importação (parser) · 4:54").
       await registrarHistorico({
         arquivo: selectedFile.name,
         fornecedor: supplier.nome,
         usuario: 'Admin',
         data: new Date().toISOString().replace('T', ' ').substring(0, 16),
-        tipoConversao: `Importação (${result.metadata.parserUsado})`,
+        tipoConversao: `Importação (${result.metadata.parserUsado}) · ${fmtTempo(totalSec)}`,
         qtdItens: result.produtos.length,
         status: 'concluído',
       });
@@ -422,8 +428,7 @@ export default function ConversaoProdutos() {
       }
 
       setProgress(100);
-      // Fixa o tempo total da conversão (preciso, via timestamp de início)
-      const totalSec = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
+      // Fixa o tempo total da conversão (já calculado acima p/ o histórico)
       setFinalElapsedSec(totalSec);
       setState('done');
       toast.success(`Sucesso! ${result.stats.total} itens em ${fmtTempo(totalSec)}.`);
