@@ -118,6 +118,20 @@ bash scripts/smoke-test.sh --expect-version v26-center-badge
 Sempre inclua referência ao IV-NN se a mudança o afeta:
 > `fix(repair): ajusta retry sem violar IV-07`
 
+## 🗣️ Comunicação com o Gabriel (OBRIGATÓRIO)
+
+O Gabriel toca 4-5 projetos em paralelo e o contexto desta sessão é caro
+(estourar limite trava o trabalho). Portanto:
+
+- **Uma frase por passo.** Nada de parágrafos descrevendo cada ação. Diga o
+  que foi feito (ou o resultado) em 1 linha; o detalhe fica no log/PR/commit.
+- **Resumo final lido em ≤20s.** Use a tabela curta "o que mudou | versão |
+  resultado". Sem passo a passo minucioso.
+- **Vá direto ao COMO ficou e ao RESULTADO**, não ao processo.
+- **Não repita** o que já está no `ARCHITECTURE.md`/PR/commit — esses são a
+  fonte do detalhe. Aqui é só o essencial acionável.
+- Pergunta/decisão: objetiva, com a recomendação primeiro.
+
 ## 🆘 Em caso de fogo em produção
 
 1. Consulte `ARCHITECTURE.md` → "Como debugar produção em caso de fogo"
