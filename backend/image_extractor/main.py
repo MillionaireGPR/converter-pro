@@ -44,7 +44,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.17-v39-stream-upload"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.17-v40-thinking-off"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
