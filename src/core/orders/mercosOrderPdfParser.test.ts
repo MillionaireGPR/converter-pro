@@ -4,7 +4,7 @@
  * (que requer browser environment).
  */
 import { describe, it, expect } from 'vitest';
-import { parseDescPercent as parseDescExported, parseBRL as parseBRLExported } from './mercosOrderPdfParser';
+import { parseDescPercent as parseDescExported, parseBRL as parseBRLExported, parseItensFromLines } from './mercosOrderPdfParser';
 
 // Aliases para compatibilidade com os testes
 const parseDescPercent = parseDescExported;
@@ -149,5 +149,42 @@ Valor total: R$ 9.648,93`;
     };
     const estado = sample.match(/Estado:\s*(.+?)(?=\nTelefone:|\sTelefone:|\n)/i)?.[1].trim() || '';
     expect(ufMap[estado]).toBe('DF');
+  });
+});
+
+// 🔒 LOCK: parser de itens por LINHA (Pedido #13136). Cobre os DOIS layouts do
+// Mercos: "#" e código em linhas SEPARADAS e JUNTOS ("10 CB4904"), descrição
+// multi-linha, e ruído de cabeçalho repetido por página (não vira item).
+describe('parseItensFromLines (Mercos → JAW WEB)', () => {
+  const lines = [
+    // ruído de cabeçalho (não pode virar item)
+    'Pedido Nº 13136', 'Representada: MOMENT', 'CNPJ: 29.327.902/0001-19',
+    'Cliente: R & D CASA E UTILIDADES LTDA', '#', 'Código Produto', 'Qtde.', 'Subtotal',
+    // item 1 — # e código em linhas SEPARADAS, descrição em 2 linhas
+    '1', 'CB5026',
+    'PAPEL PAREDE ANTI-OLEO COZINHA MARMORE BRANCO',
+    'PLASTICO OPP E FOLHA DE ALUMINIO PET 60 cm X 5 m ***PR',
+    '24', 'R$ 7,99', 'R$ 191,69',
+    // item 10 — # e código JUNTOS na mesma linha
+    '10 CB4904',
+    'BRINQUEDO PELÚCIA COELHO POLIÉSTER 31 CM X 25 CM X 5',
+    'CM',
+    '6', 'R$ 16,11', 'R$ 96,67',
+    // rodapé (não pode virar item)
+    'TOTAIS', 'Valor total:', 'R$ 288,36',
+  ];
+
+  const itens = parseItensFromLines(lines);
+
+  it('extrai exatamente os 2 itens (ignora cabeçalho/rodapé)', () => {
+    expect(itens.length).toBe(2);
+  });
+  it('layout linhas separadas: código, qtde, preço, subtotal', () => {
+    expect(itens[0]).toMatchObject({ codigo: 'CB5026', qtde: 24, preco: 7.99, subtotal: 191.69 });
+    expect(itens[0].descricao).toContain('PAPEL PAREDE ANTI-OLEO');
+  });
+  it('layout "# código" juntos: código, qtde, preço, subtotal', () => {
+    expect(itens[1]).toMatchObject({ numero: '10', codigo: 'CB4904', qtde: 6, preco: 16.11, subtotal: 96.67 });
+    expect(itens[1].descricao).toContain('BRINQUEDO PELÚCIA COELHO');
   });
 });
