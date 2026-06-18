@@ -110,106 +110,71 @@ interface ItemRaw {
   subtotal: number;
 }
 
-const parseItensFromSpans = (allSpans: Span[]): ItemRaw[] => {
-  // Agrupa por Y com CENTRO FIXO (não média móvel — evitava mesclar linhas
-  // próximas de itens distintos quando a média gradualmente se deslocava).
-  const sorted = [...allSpans].sort((a, b) => a.y - b.y || a.x - b.x);
+// Agrupa spans em LINHAS (por Y) e devolve o texto de cada linha (spans
+// ordenados por X, juntos por espaço). Reconstrói a leitura natural do PDF.
+const spansToLines = (spans: Span[]): string[] => {
+  const sorted = [...spans].sort((a, b) => a.y - b.y || a.x - b.x);
   const linhas: { y: number; spans: Span[] }[] = [];
   const TOL_Y = 2.5;
   for (const s of sorted) {
-    let bucket = linhas.length > 0 ? linhas[linhas.length - 1] : null;
-    if (bucket && Math.abs(bucket.y - s.y) <= TOL_Y) {
-      bucket.spans.push(s);
-    } else {
-      linhas.push({ y: s.y, spans: [s] }); // y FIXO ao primeiro span do bucket
-    }
+    const bucket = linhas.length > 0 ? linhas[linhas.length - 1] : null;
+    if (bucket && Math.abs(bucket.y - s.y) <= TOL_Y) bucket.spans.push(s);
+    else linhas.push({ y: s.y, spans: [s] });
   }
-  linhas.forEach(l => l.spans.sort((a, b) => a.x - b.x));
+  return linhas.map(l =>
+    l.spans.sort((a, b) => a.x - b.x).map(s => s.str).join(' ').replace(/\s+/g, ' ').trim()
+  ).filter(Boolean);
+};
 
-  // ── Detecta limites verticais da TABELA de itens ──
-  // Topo: linha contendo "# Código Produto Qtde Desc Preço" (cabeçalho da tabela)
-  // Fundo: linha contendo "Valor total" (rodapé do pedido)
-  let yTabelaTop = -Infinity;
-  let yTabelaBottom = Infinity;
-  for (const linha of linhas) {
-    const texto = linha.spans.map(s => s.str).join(' ').toLowerCase();
-    if (
-      texto.includes('código') &&
-      texto.includes('produto') &&
-      texto.includes('qtde') &&
-      yTabelaTop === -Infinity
-    ) {
-      yTabelaTop = linha.y;
-    }
-    if (texto.includes('valor total') && linha.y > yTabelaTop) {
-      yTabelaBottom = Math.min(yTabelaBottom, linha.y);
-    }
-  }
+// Padrões de item (independente de posição X — robusto a layouts diferentes
+// do Mercos, com ou sem coluna de Desconto%, Foto etc.).
+const RE_NUM_COD = /^(\d{1,3})\s+([A-Z]{1,4}\d{2,8})$/;   // "10 CB4904" juntos
+const RE_COD = /^[A-Z]{1,4}\d{2,8}$/;                      // código sozinho
+const RE_INT = /^\d{1,5}$/;                                // qtde (ou # sozinho)
+const RE_RS = /^R\$\s*[\d.,]+$/;                           // "R$ 7,99"
 
-  // ── Detecta anchors apenas DENTRO da tabela ──
-  const anchorIdxs: number[] = [];
-  for (let i = 0; i < linhas.length; i++) {
-    if (linhas[i].y <= yTabelaTop || linhas[i].y >= yTabelaBottom) continue;
-    const sp = linhas[i].spans;
-    if (sp.length < 2) continue;
-    const s0 = sp[0], s1 = sp[1];
-    if (
-      s0.x < 50 && /^\d{1,3}$/.test(s0.str) &&
-      s1.x < 80 && /^[A-Z]{1,4}\d{2,8}$/i.test(s1.str)
-    ) {
-      anchorIdxs.push(i);
+/**
+ * Parser de itens BASEADO EM LINHA (não em posição X). O PDF do Mercos tem
+ * cada item como uma sequência regular de linhas:
+ *   [#]  CÓDIGO  →  descrição (1-2 linhas)  →  Qtde  →  R$ preço  →  R$ subtotal
+ * O "#" e o CÓDIGO podem vir na MESMA linha ("10 CB4904") ou em linhas
+ * separadas ("7" / "CB3912") — ambos suportados. Validado no Pedido #13136:
+ * 18/18 itens, soma dos subtotais = total do pedido.
+ */
+export const parseItensFromLines = (lines: string[]): ItemRaw[] => {
+  const startItem = (i: number): { numero: string; codigo: string; next: number } | null => {
+    const m = RE_NUM_COD.exec(lines[i]);
+    if (m) return { numero: m[1], codigo: m[2], next: i + 1 };
+    if (RE_INT.test(lines[i]) && i + 1 < lines.length && RE_COD.test(lines[i + 1])) {
+      return { numero: lines[i], codigo: lines[i + 1], next: i + 2 };
     }
-  }
-
-  // Ordena anchors por Y para definir as faixas de descrição corretamente
-  anchorIdxs.sort((a, b) => linhas[a].y - linhas[b].y);
+    return null;
+  };
 
   const itens: ItemRaw[] = [];
-
-  for (let ai = 0; ai < anchorIdxs.length; ai++) {
-    const anchorLine = linhas[anchorIdxs[ai]];
-    const sp = anchorLine.spans;
-
-    const numero = sp[0].str;
-    const codigo = sp[1].str;
-
-    const qtdeSpan = sp.find(s => s.x >= 330 && s.x <= 365 && /^\d+$/.test(s.str));
-    const descSpan = sp.filter(s => s.x >= 370 && s.x <= 410 && /%/.test(s.str));
-    const precoSpan = sp.find(s => s.x >= 450 && s.x <= 510 && /R\$/.test(s.str));
-    const subtotalSpan = sp.find(s => s.x >= 510 && s.x <= 560 && /R\$/.test(s.str));
-
-    // Faixa Y da descrição: do meio do anchor anterior até o meio do próximo
-    const prevAnchor = ai > 0 ? linhas[anchorIdxs[ai - 1]] : null;
-    const nextAnchor = ai < anchorIdxs.length - 1 ? linhas[anchorIdxs[ai + 1]] : null;
-    const yMin = prevAnchor ? (prevAnchor.y + anchorLine.y) / 2 : anchorLine.y - 35;
-    const yMax = nextAnchor ? (anchorLine.y + nextAnchor.y) / 2 : anchorLine.y + 35;
-
-    const descParts: { y: number; text: string }[] = [];
-    for (const linha of linhas) {
-      if (linha.y <= yMin || linha.y >= yMax) continue;
-      // INCLUI o anchor: alguns itens têm a descrição inline (mesma linha do código)
-      // O filtro X (140-320) já garante que não pegamos número/qtde/preço.
-      // Filtro X restrito: 140-320 (descrição-só, exclui colunas numéricas)
-      for (const s of linha.spans) {
-        if (s.x >= 140 && s.x <= 320) {
-          descParts.push({ y: linha.y, text: s.str });
-        }
-      }
+  let i = 0;
+  while (i < lines.length) {
+    const st = startItem(i);
+    if (!st) { i++; continue; }
+    const { numero, codigo } = st;
+    i = st.next;
+    // descrição: linhas até a qtde (inteiro), um preço (R$) ou o próximo item
+    const desc: string[] = [];
+    while (i < lines.length && !RE_INT.test(lines[i]) && !RE_RS.test(lines[i]) && !startItem(i)) {
+      desc.push(lines[i]); i++;
     }
-    descParts.sort((a, b) => a.y - b.y);
-    const descricao = descParts.map(p => p.text).join(' ').replace(/\s+/g, ' ').trim();
-
+    let qtde = 0;
+    if (i < lines.length && RE_INT.test(lines[i])) { qtde = Number(lines[i]); i++; }
+    let preco = 0;
+    if (i < lines.length && RE_RS.test(lines[i])) { preco = parseBRL(lines[i]); i++; }
+    let subtotal = 0;
+    if (i < lines.length && RE_RS.test(lines[i])) { subtotal = parseBRL(lines[i]); i++; }
     itens.push({
-      numero,
-      codigo,
-      descricao,
-      qtde: qtdeSpan ? Number(qtdeSpan.str) : 0,
-      descontoStr: descSpan.map(s => s.str).join(' ').trim(),
-      preco: precoSpan ? parseBRL(precoSpan.str) : 0,
-      subtotal: subtotalSpan ? parseBRL(subtotalSpan.str) : 0,
+      numero, codigo,
+      descricao: desc.join(' ').replace(/\s+/g, ' ').trim(),
+      qtde, descontoStr: '', preco, subtotal,
     });
   }
-
   return itens;
 };
 
@@ -286,12 +251,10 @@ export const parseMercosOrderPdf = async (
   const allText = pages.map(buildPageText).join('\n');
   const cabecalho = parseCabecalho(allText);
 
-  // Itens: processa CADA página separadamente (Y se repete entre páginas)
-  // depois agrega na ordem correta usando o # de cada item.
-  const rawItens: ItemRaw[] = [];
-  for (const pageSpans of pages) {
-    rawItens.push(...parseItensFromSpans(pageSpans));
-  }
+  // Itens: reconstrói TODAS as linhas (todas as páginas, em ordem) e parseia
+  // por padrão de linha — robusto a layouts e a cabeçalhos repetidos por página.
+  const allLines = pages.flatMap(spansToLines);
+  const rawItens = parseItensFromLines(allLines);
   // Ordena pelo número do item para garantir sequência correta
   rawItens.sort((a, b) => Number(a.numero) - Number(b.numero));
 
