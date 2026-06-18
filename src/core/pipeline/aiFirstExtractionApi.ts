@@ -41,6 +41,7 @@ export interface AiProduto {
   paginaOrigem?: number | null;
   observacoes?: string | null;
   emBreve?: boolean;
+  promocional?: boolean;  // item já com desconto aplicado (tag/selo) → bloqueia desconto
 }
 
 export interface ResultadoAiExtraction {
@@ -263,6 +264,12 @@ export const mapAiProductsToBrutos = (produtos: AiProduto[]): ProdutoBruto[] => 
       campos['__emBreve'] = true;
       campos['informacoesAdicionais'] = 'EM BREVE';
       delete campos['preco']; // EM BREVE não tem preço por design
+    }
+
+    // PROMOÇÃO: item que já vem com desconto aplicado → bloqueia desconto em massa
+    // (extractor vira visualCategory='promocional' + ***PROMOCAO*** + bloqueiaDesconto).
+    if (p.promocional === true) {
+      campos['__promo'] = true;
     }
 
     brutos.push({
