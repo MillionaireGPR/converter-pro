@@ -43,7 +43,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.17-v37-job-queue"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.17-v38-fortal-promo"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")

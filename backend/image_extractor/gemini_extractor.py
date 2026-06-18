@@ -205,8 +205,11 @@ SUPPLIER_HINTS: Dict[str, str] = {
         "- quantidadeCaixa = o N de 'Qtd. p/ Caixa: N UND'.\n"
         "- O código é variado (ex: SZ-01, SZ-02-08, JIN-2501, JXX-2502, ENS-01, HL100, UP012). "
         "Extraia EXATAMENTE como aparece, logo abaixo do nome.\n"
-        "- O preço 'R$ X,XX' já é o preço FINAL (sem desconto). Use como 'preco'.\n"
-        "- 'CORES SORTIDAS' / dimensões (ex: 40x40cm) vão em observacoes, não no nome.\n"
+        "- O preço 'R$ X,XX' já é o preço FINAL. Use como 'preco'.\n"
+        "- PROMOÇÃO: quando houver 'OFF N%' e DOIS preços na linha (ex: 'R$ 61,60 R$ 77,00'), "
+        "o preço FINAL é o MENOR (o PRIMEIRO: 61,60); o segundo (77,00) é o original riscado — IGNORE-O.\n"
+        "- 'CORES SORTIDAS' / dimensões (ex: 40x40cm) / 'OFF N%' vão em observacoes, NÃO no nome. "
+        "NUNCA junte o texto de mais de um produto no mesmo nome — cada bloco (nome→código→preço) é UM produto.\n"
         "- Ignore a página de ÍNDICE (lista de categorias com números de página)."
     ),
     "GIRA": (
