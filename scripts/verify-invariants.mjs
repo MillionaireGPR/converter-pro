@@ -105,6 +105,9 @@ mustContain('IV-18', GE, ['SUPPLIER_HINTS', 'def get_supplier_hints']);
 })();
 // IV-20 — kill-switch
 mustContain('IV-20', MAIN, ['AI_PICKER_DISABLED']);
+// IV-21 — fila/limite de concorrência (trava anti-OOM no Render 512MB):
+// jobs pesados (imagem + IA) passam pelo semáforo global. Não remover.
+mustContain('IV-21', MAIN, ['_HEAVY_SLOT', '_job_slot', 'MAX_CONCURRENT_JOBS']);
 
 // SMOKE — import real do gemini_extractor (pega NameError/erro de anotação que
 // o AST não vê — ex: usar Tuple sem importar). ModuleNotFoundError de dep

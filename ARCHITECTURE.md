@@ -207,6 +207,11 @@ filtro: area >= 20000 pixels
 **Por que existe**: controlar custo e blast-radius. AI Picker roda só para fornecedores na whitelist (`['DAGIA']` hoje) ou via `useAiPicker=true`. `AI_PICKER_DISABLED=1` no Render desliga sem rollback de código (segurança operacional).
 **Travado por**: `src/core/images/image-extraction-contract.test.ts`
 
+### IV-21 — Fila/limite de concorrência de jobs pesados (trava anti-OOM)
+**Arquivos**: `main.py` (`_HEAVY_SLOT`, `_job_slot`, `MAX_CONCURRENT_JOBS`)
+**Por que existe**: Render Starter = 512MB. Jobs pesados (extração de IMAGEM — renderiza páginas em bitmap — e extração de IA) rodando em paralelo estouram a RAM → Render reinicia a instância → jobs em andamento morrem EM SILÊNCIO (comprovado: 6 catálogos simultâneos → 3 sem imagem + 1 travado + e-mail "exceeded its memory limit"). Um semáforo GLOBAL compartilhado pelos dois tipos de job limita a `MAX_CONCURRENT_JOBS` (default 1) simultâneos; o resto fica "na fila" (status=processing, stage=queued — compatível com o polling). Configurável por env `MAX_CONCURRENT_JOBS` (subir só se aumentar a RAM do Render). NÃO remover nem trocar por execução paralela sem upgrade de RAM.
+**Travado por**: grep IV-21 em `scripts/verify-invariants.mjs`
+
 ---
 
 ## 🎯 Métricas do sistema em produção (baseline)

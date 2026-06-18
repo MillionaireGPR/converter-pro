@@ -9,6 +9,7 @@ if hasattr(sys.stderr, "reconfigure"):
 import os
 import json
 import zipfile
+import threading
 import uvicorn
 import fitz
 from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks
@@ -42,7 +43,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.17-v36-name-gate"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.17-v37-job-queue"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
@@ -237,8 +238,51 @@ def _load_status(job_id: str) -> dict:
 
     return data
 
+# ─────────────────────────────────────────────────────────────
+# FILA / LIMITE DE CONCORRÊNCIA (trava anti-OOM) — IV-21
+# ─────────────────────────────────────────────────────────────
+# Render Starter = 512MB. Os jobs pesados (extração de IMAGEM, que renderiza
+# páginas em bitmap, e extração de IA) consomem muita RAM. Rodar vários em
+# paralelo estoura a memória → Render reinicia a instância → jobs em andamento
+# morrem EM SILÊNCIO (foi o que aconteceu no teste de 6 catálogos simultâneos:
+# 3 sem imagem + 1 travado). Solução: 1 semáforo GLOBAL compartilhado pelos dois
+# tipos de job → processa N por vez (default 1) e o resto fica "na fila".
+# Configurável por env MAX_CONCURRENT_JOBS (subir p/ 2 só se aumentar a RAM).
+MAX_CONCURRENT_JOBS = max(1, int(os.getenv("MAX_CONCURRENT_JOBS", "1")))
+_HEAVY_SLOT = threading.BoundedSemaphore(MAX_CONCURRENT_JOBS)
+
+
+class _job_slot:
+    """Context manager: adquire o slot de job pesado. Se não houver vaga, marca
+    o job como 'na fila' (status=processing, stage=queued — compatível com o
+    polling do frontend, que segue aguardando) e BLOQUEIA até liberar. Libera no
+    fim, sempre. Garante no máximo MAX_CONCURRENT_JOBS jobs pesados simultâneos."""
+
+    def __init__(self, job_id: str, stage_label: str):
+        self.job_id = job_id
+        self.stage_label = stage_label
+
+    def __enter__(self):
+        # Tenta entrar sem bloquear; se conseguiu, mantém o status atual.
+        if not _HEAVY_SLOT.acquire(blocking=False):
+            print(f"[Fila] {self.job_id} aguardando vaga (servidor processa {MAX_CONCURRENT_JOBS} por vez)...")
+            _save_status(self.job_id, {
+                "status": "processing", "stage": "queued",
+                "message": "Na fila — o servidor processa um catálogo por vez",
+            })
+            _HEAVY_SLOT.acquire()  # bloqueia até uma vaga liberar
+            print(f"[Fila] {self.job_id} saiu da fila → processando")
+            _save_status(self.job_id, {"status": "processing", "stage": self.stage_label})
+        return self
+
+    def __exit__(self, *exc):
+        _HEAVY_SLOT.release()
+        return False
+
+
 def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, output_folder: str, page_heights: dict, total_pages: int, supplier: str = "", use_ai_picker: bool = False):
     try:
+      with _job_slot(jobId, "image_extraction"):
         # 4. Converter Y dos SKUs com spatialContext (PDF.js Y-up -> PyMuPDF Y-down)
         skus_list = _convert_sku_y_coords(skus_list, page_heights)
 
@@ -423,6 +467,7 @@ def _run_ai_extraction_task(ai_job_id: str, pdf_path: str, supplier: str):
     heartbeat.start()
 
     try:
+      with _job_slot(ai_job_id, "ai_extraction"):
         # LAZY IMPORT: só importa aqui, mantém startup leve
         from gemini_extractor import extract_with_fallback as gemini_extract
 
