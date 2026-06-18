@@ -502,7 +502,10 @@ export default function ConversaoProdutos() {
                   <label className="text-xs font-medium text-muted-foreground">Fornecedor</label>
                   <Select value={fornecedor} onValueChange={setFornecedor}>
                     <SelectTrigger className="h-9"><SelectValue placeholder="Selecionar" /></SelectTrigger>
-                    <SelectContent>
+                    {/* Dropdown compacto e SEMPRE pra baixo (side=bottom, sem flip):
+                        em 100% de zoom a lista inteira não cabia e estourava pra
+                        cima; agora mostra ~4-5 itens com rolagem, ancorado abaixo. */}
+                    <SelectContent position="popper" side="bottom" sideOffset={4} className="max-h-[200px]">
                       <SelectItem value="novo" className="font-semibold text-primary">+ Novo</SelectItem>
                       {[...fornecedores].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')).map(f => <SelectItem key={f.id} value={f.id}>{f.nome}</SelectItem>)}
                     </SelectContent>
