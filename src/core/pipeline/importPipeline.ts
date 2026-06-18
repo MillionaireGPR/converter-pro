@@ -772,6 +772,11 @@ const normalizeExtracted = (
     if (isEmBreve && nome && !/em\s+breve/i.test(nome)) {
       nome = `${nome} ***EM BREVE***`;
     }
+    // PROMOÇÃO (AI-first): mesmo padrão visual; só anexa se não houver
+    // nomeComercial (que já traria o sufixo) e ainda não estiver marcado.
+    if (visualCategory === 'promocional' && nome && !/\*\*\*PROMOCAO\*\*\*/i.test(nome) && !/promo[çc][ãa]o/i.test(nome)) {
+      nome = `${nome} ***PROMOCAO***`;
+    }
 
     const precoBase = e.preco || 0;
 

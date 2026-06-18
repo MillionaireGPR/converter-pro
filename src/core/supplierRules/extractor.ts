@@ -236,6 +236,13 @@ export const extractProducts = (
     // preço no Mercos quando catálogo anunciar.
     const isEmBreve = !!campos['__emBreve'];
 
+    // PROMOÇÃO: item que JÁ vem com desconto aplicado (tag/selo "X% OFF",
+    // "PROMOÇÃO", "preço já com desconto", "desconto aplicado" etc.). A IA
+    // marca __promo=true; aqui viramos visualCategory='promocional' +
+    // bloqueiaDesconto pra NÃO aplicar desconto em massa sobre preço já baixado
+    // (risco financeiro citado pelo cliente). Reusa o padrão da família CLINK.
+    const isPromo = !!campos['__promo'];
+
     // informacoesAdicionais setado por post-processamento específico do supplier
     const informacoesAdicionais = campos['informacoesAdicionais']
       ? toStr(campos['informacoesAdicionais'])
@@ -296,6 +303,8 @@ export const extractProducts = (
       // EM BREVE: categoria visual (mesmo padrão de promocional/preco-fixo
       // da família CLINK). Frontend mostra badge e Info Adicional.
       ...(isEmBreve ? { visualCategory: 'em-breve' as const } : {}),
+      // PROMOÇÃO: bloqueia desconto em massa + marca ***PROMOCAO*** no nome.
+      ...(isPromo ? { visualCategory: 'promocional' as const, isPromotional: true, bloqueiaDesconto: true } : {}),
     } as any);
   }
 

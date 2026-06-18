@@ -183,6 +183,7 @@ Analise TODAS as páginas do PDF anexado e extraia CADA produto encontrado. Para
 - **paginaOrigem**: número da página onde o produto aparece (1-based)
 - **observacoes**: informações adicionais relevantes (dimensões, material, cor), max 200 chars
 - **emBreve**: true se o produto está marcado como "EM BREVE" / "EM BREVE..." / lançamento futuro (sem preço por design). false caso contrário.
+- **promocional**: true SOMENTE se o item exibir um selo/tag/texto indicando que o preço JÁ ESTÁ COM DESCONTO APLICADO — ex: "PROMOÇÃO", "PROMO", "OFF", "X% OFF", "-X%", "preço já com desconto", "desconto já aplicado", ou um preço cheio riscado ao lado do menor. Caso contrário false. NÃO marque true só porque o preço parece baixo.
 
 REGRAS CRÍTICAS:
 1. Extraia TODOS os produtos visíveis, mesmo que tenham informações parciais.
@@ -210,7 +211,8 @@ RETORNE APENAS JSON VÁLIDO no seguinte formato:
       "ncm": "3924.10.00",
       "categoria": "COZINHA",
       "paginaOrigem": 4,
-      "observacoes": "DIMENSÃO: 25x11,5x3cm"
+      "observacoes": "DIMENSÃO: 25x11,5x3cm",
+      "promocional": false
     }
   ]
 }
@@ -243,7 +245,10 @@ SUPPLIER_HINTS: Dict[str, str] = {
         "- O NOME do produto é a linha em CAIXA ALTA próxima ao bloco (ex: 'KIT BOWL DE CERÂMICA'), "
         "NUNCA o campo MATERIAL (ex: 'CERÂMICA' ou 'FIBRA DE BAMBU ECO' são materiais, não nomes).\n"
         "- quantidadeCaixa = número do campo 'CX: N PEÇAS'.\n"
-        "- Cada bloco 'CÓD:' é um produto; nome e preço podem estar visualmente distantes do bloco."
+        "- Cada bloco 'CÓD:' é um produto; nome e preço podem estar visualmente distantes do bloco.\n"
+        "- PROMOÇÃO: a Lila marca itens já com desconto com uma TAG (ex: '50%', "
+        "'preço já com desconto', 'desconto já aplicado'). Para esses, promocional=true "
+        "e use o preço exibido (que já é o com desconto)."
     ),
     "FORTAL": (
         "DICAS ESPECÍFICAS DO FORNECEDOR FORTAL:\n"
