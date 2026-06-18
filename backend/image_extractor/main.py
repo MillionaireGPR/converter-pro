@@ -9,6 +9,7 @@ if hasattr(sys.stderr, "reconfigure"):
 import os
 import json
 import zipfile
+import shutil
 import threading
 import uvicorn
 import fitz
@@ -43,7 +44,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.17-v38-fortal-promo"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.17-v39-stream-upload"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
@@ -366,10 +367,10 @@ async def process_pdf(
     try:
         # 1. Salvar PDF localmente
         pdf_local_path = os.path.join(output_folder, "input.pdf")
-        content = await file.read()
+        # STREAM p/ disco (IV-22): não carrega o PDF inteiro na RAM (FORTAL=85MB).
         with open(pdf_local_path, "wb") as f:
-            f.write(content)
-        print(f"Arquivo salvo: {len(content)} bytes -> {pdf_local_path}")
+            shutil.copyfileobj(file.file, f, length=1024 * 1024)
+        print(f"Arquivo salvo (stream): {os.path.getsize(pdf_local_path)} bytes -> {pdf_local_path}")
 
         # 2. Parse dos SKUs
         skus_list = json.loads(skus) if skus else []
@@ -539,10 +540,10 @@ async def extract_products_ai(
         os.makedirs(output_folder, exist_ok=True)
         pdf_path = os.path.join(output_folder, "ai_input.pdf")
 
-        content = await file.read()
+        # STREAM p/ disco (IV-22): não segura o PDF inteiro na RAM.
         with open(pdf_path, "wb") as f:
-            f.write(content)
-        print(f"PDF salvo: {len(content)} bytes -> {pdf_path}")
+            shutil.copyfileobj(file.file, f, length=1024 * 1024)
+        print(f"PDF salvo (stream): {os.path.getsize(pdf_path)} bytes -> {pdf_path}")
 
         # Marca como processando ANTES de disparar a task
         _save_status(ai_job_id, {"status": "processing", "stage": "ai_extraction"})
@@ -686,8 +687,8 @@ async def repair_prices_ai(
 
         # Persiste PDF em temp (job worker vai ler depois)
         tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-        content = await file.read()
-        tmp.write(content)
+        # STREAM p/ disco (IV-22): não segura o PDF inteiro na RAM.
+        shutil.copyfileobj(file.file, tmp, length=1024 * 1024)
         tmp.close()
         pdf_path = tmp.name
 
