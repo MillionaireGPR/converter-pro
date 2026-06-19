@@ -44,7 +44,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.17-v41-promo-lila"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.17-v42-code-gate"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")

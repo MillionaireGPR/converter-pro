@@ -1068,6 +1068,28 @@ def _synthesize_template_robust(sample_texts: List[str], supplier_hints: str,
     return tpl, cov
 
 
+def _code_looks_valid(code: str) -> bool:
+    """Heurística genérica de CÓDIGO plausível (sem fornecedor-específico).
+    Protege o caminho rápido quando a IA infere um CODE regex errado (ex:
+    fornecedor NOVO sem hints, layout nome-antes-do-código) e captura preço/
+    palavra como 'código'. Código bom: alfanumérico curto, sem espaço, sem R$,
+    não é preço puro."""
+    if not code:
+        return False
+    c = str(code).strip()
+    if not (2 <= len(c) <= 24):
+        return False
+    if " " in c or "$" in c.upper().replace("R$", "$"):
+        return False
+    if "R$" in c.upper():
+        return False
+    if re.match(r"^\d{1,3}([.,]\d{3})*[.,]\d{2}$", c):  # preço puro (44,00 / 1.234,56)
+        return False
+    if not re.match(r"^[A-Za-z0-9][\w\-./]{1,23}$", c):
+        return False
+    return True
+
+
 def _norm_price(raw: str, fmt: str) -> Optional[float]:
     """Normaliza preço capturado conforme o formato (BR ou CENTS)."""
     if raw is None:
@@ -1184,6 +1206,13 @@ def extract_via_template(pdf_path: str, supplier: str = "") -> Optional[Dict[str
     # então caímos no AI-first text-chunked (100% nome, validado localmente).
     if cov_nome < TEMPLATE_MIN_COVERAGE:
         print(f"[Template] nome {cov_nome:.0%} < {TEMPLATE_MIN_COVERAGE:.0%} → fallback AI-first (template não modela o nome corretamente)")
+        return None
+    # GATE de CÓDIGO (fornecedor NOVO sem hints): se a IA inferiu um CODE regex
+    # errado (captura preço/palavra como 'código'), os códigos saem inválidos.
+    # Essencial p/ o fluxo autônomo "cadastra só pelo nome + sobe catálogo".
+    cov_code = sum(1 for p in deduped if _code_looks_valid(p.get("codigo", ""))) / len(deduped)
+    if cov_code < TEMPLATE_MIN_COVERAGE:
+        print(f"[Template] código válido {cov_code:.0%} < {TEMPLATE_MIN_COVERAGE:.0%} → fallback AI-first (CODE regex inferido errado)")
         return None
 
     # ─── FALLBACK POR PÁGINA (v33): IA só nas páginas que o template ERROU ───
