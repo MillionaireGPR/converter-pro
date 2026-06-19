@@ -719,6 +719,28 @@ def _extract_perfect_image(
 # Utilitários
 # ─────────────────────────────────────────────────────────────
 
+def _is_barcode_like(img_bgr: np.ndarray) -> bool:
+    """Detecta CÓDIGO DE BARRAS (EAN) p/ NÃO escolher a barra no lugar da foto
+    do produto (Lila: barra colada/sobreposta à imagem). Assinatura: baixa
+    saturação (preto/branco) + alta densidade de transições verticais (barras)
+    + largo. Limiares validados nas imagens reais da Lila (30 barras pegas,
+    0 fotos de produto). Fail-open: erro → não é barra."""
+    try:
+        h, w = img_bgr.shape[:2]
+        if h < 8 or w < 8:
+            return False
+        sat = float(np.mean(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)[:, :, 1])) / 255.0
+        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        _, binr = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        trans = [int(np.count_nonzero(np.diff(binr[int(h * f), :].astype(np.int16)) != 0))
+                 for f in (0.3, 0.5, 0.7)]
+        dens = (sum(trans) / len(trans)) / max(w, 1)
+        aspect = w / max(h, 1)
+        return dens >= 0.15 and sat <= 0.08 and aspect >= 1.5
+    except Exception:
+        return False
+
+
 def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set,
                               allow_fullpage: bool = False) -> List[Dict]:
     """Retorna imagens válidas da página com posição (PDF-points) e xref.
@@ -750,6 +772,22 @@ def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set,
             continue
         if not allow_fullpage and iw > page_w * 0.85 and ih > page_h * 0.85:
             continue
+        # CÓDIGO DE BARRAS: gate pelo aspect dos PIXELS (não do rect, que pode
+        # estar escalado). extract_image traz width/height sem decodificar; só
+        # imdecode as LARGAS (barras são largas/baixas; fotos são quadradas/
+        # retrato). Evita escolher a barra colada na foto (Lila). Memory-safe:
+        # decodifica 1 por vez e descarta (não acumula arrays — IV-16).
+        try:
+            ext = page.parent.extract_image(xref)
+            pw, ph = ext.get("width", 0), ext.get("height", 1)
+            if pw / max(ph, 1) >= 1.5:
+                arr = cv2.imdecode(np.frombuffer(ext["image"], np.uint8), cv2.IMREAD_COLOR)
+                is_bar = arr is not None and _is_barcode_like(arr)
+                del arr
+                if is_bar:
+                    continue
+        except Exception:
+            pass
         result.append({
             "xref": xref,
             "rect": rect,
