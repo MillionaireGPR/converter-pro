@@ -95,6 +95,10 @@ export const CLINK_FAMILY_FIELD_ALIASES: FieldAliases = {
     'preco final', 'preço final', 'pfinal', 'p.final', 'preco promocional', 'preço promocional'
   ],
   quantidadeCaixa: [
+    // "Qtd Caixa inner" (col H da Moment, que ABRE caixa) tem PRIORIDADE: é o
+    // múltiplo de venda. Match é EXATO, então só pega quando a coluna existe
+    // (Clink/Flash não têm → caem na caixa cheia abaixo). Reunião 18/06/2026.
+    'qtd caixa inner', 'qtdcaixainner', 'qtd caixa inn', 'qtd cx inner', 'caixa inner',
     'qtdcaixa', 'qtd caixa', 'quantidade caixa', 'qtde caixa', 'caixa', 'cx',
     'master', 'emb', 'embalagem', 'un cx', 'un por cx', 'unidades caixa'
   ],
