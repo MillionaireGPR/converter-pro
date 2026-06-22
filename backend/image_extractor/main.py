@@ -44,7 +44,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.17-v43-lila-barcode"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.22-v44-oom-malloc-trim"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
@@ -278,6 +278,17 @@ class _job_slot:
 
     def __exit__(self, *exc):
         _HEAVY_SLOT.release()
+        # Devolve páginas livres do heap Python ao SO antes do próximo job.
+        # Sem isso, o alocador Python retém memória entre jobs → heap cresce job
+        # a job até estourar o limite Render 512MB (OOM confirmado DAGIA 215 págs).
+        import gc
+        gc.collect()
+        try:
+            import ctypes
+            ctypes.cdll.LoadLibrary("libc.so.6").malloc_trim(0)
+            print("[Job] malloc_trim(0) OK — memória devolvida ao SO")
+        except Exception as _e:
+            print(f"[Job] malloc_trim ignorado ({_e})")
         return False
 
 

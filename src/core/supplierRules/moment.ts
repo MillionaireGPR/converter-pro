@@ -12,6 +12,11 @@ import {
 } from './clink-family-base';
 import { ProdutoBruto } from '../types/productPipeline';
 
+// Moment ABRE CAIXA: o múltiplo de venda é a coluna "Qtd Caixa inner" (col H),
+// NÃO a "Qtd Caixa" cheia (col G). Isso é tratado na família (alias "qtd caixa
+// inner" tem prioridade em CLINK_FAMILY_FIELD_ALIASES.quantidadeCaixa); como o
+// match é por chave EXATA, Clink/Flash (sem essa coluna) não são afetados.
+
 export const momentAdapter: SupplierAdapter = {
   id: 'm0000000-0000-4000-a000-000000000000',
   nome: 'Moment',

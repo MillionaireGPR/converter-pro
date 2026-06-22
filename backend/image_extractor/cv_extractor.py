@@ -27,11 +27,11 @@ def extract_cells_via_cv(
     pdf_path: str,
     skus_list: list,
     output_folder: str,
-    scale: float = 1.2,  # Reduzido de 1.5 → 1.2 (28/05/2026):
-                        # OOM recorrente no Render Starter 512MB. scale=1.5 gera
-                        # raster 890×1260×3 = ~3.3MB/página. scale=1.2 gera
-                        # 712×1010×3 = ~2.2MB/página (-33% RAM). Qualidade ainda
-                        # suficiente para detecção de grid e extração via xref.
+    scale: float = 1.0,  # Reduzido de 1.5 → 1.2 (28/05/2026) → 1.0 (22/06/2026):
+                        # OOM DAGIA 215 págs: cada redução de 0.2 poupa ~30% de RAM.
+                        # scale=1.5 → 3.3MB/pág | scale=1.2 → 2.2MB/pág | scale=1.0 → 1.5MB/pág.
+                        # Sem impacto em qualidade: imagens são extraídas via xref (PDF raw),
+                        # não do raster. O raster serve só pra grid detection e fallback.
     supplier_id: Optional[str] = None,  # v21: usado para ativar Gemini Vision
                                         # como decisor de imagem (DAGIA).
     use_ai_picker: bool = False,        # v21: se True, Gemini decide qual
@@ -780,12 +780,14 @@ def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set,
         try:
             ext = page.parent.extract_image(xref)
             pw, ph = ext.get("width", 0), ext.get("height", 1)
+            is_bar = False
             if pw / max(ph, 1) >= 1.5:
                 arr = cv2.imdecode(np.frombuffer(ext["image"], np.uint8), cv2.IMREAD_COLOR)
                 is_bar = arr is not None and _is_barcode_like(arr)
                 del arr
-                if is_bar:
-                    continue
+            del ext  # libera bytes raw imediatamente (fotos DAGIA ~1-5MB cada)
+            if is_bar:
+                continue
         except Exception:
             pass
         result.append({

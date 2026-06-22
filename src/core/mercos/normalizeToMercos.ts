@@ -63,6 +63,17 @@ export const buildInformacoesAdicionais = (p: ProdutoNormalizadoV2): string => {
     pushUnique('Novidade/Reposição');
   }
 
+  // NOTAS DE MÚLTIPLO/CAIXA por fornecedor (regras de negócio da reunião 18/06):
+  // - LILA: abre caixa em frações (1/3 ou 1/2) → aviso pro vendedor.
+  // - FORTAL: só abre caixa se o preço unitário for >= R$100 → aviso só nesses.
+  // (MOMENT já vem com o múltiplo = "Qtd Caixa inner" via adapter; sem nota.)
+  const forn = (p.fornecedor || '').toUpperCase();
+  if (forn.includes('LILA')) {
+    pushUnique('Múltiplo: caixa fracionável (1/3 ou 1/2)');
+  } else if (forn.includes('FORTAL') && (p.precoBase || 0) >= 100) {
+    pushUnique('Abre caixa (mínimo R$100 por produto)');
+  }
+
   return sanitizeForExport(normalizeSpaces(parts.join(' | ')));
 };
 
