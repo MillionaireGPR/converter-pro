@@ -44,7 +44,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.22-v46-dagia-em-breve-price"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.23-v47-dagia-price-code-gate-oom"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")

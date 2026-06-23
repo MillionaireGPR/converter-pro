@@ -214,70 +214,81 @@ def extract_cells_via_cv(
         kit_skus = [s for s in kit_skus_raw if s.get("sku") not in ai_decided_skus]
         if kit_skus and page_imgs:
             print(f"[CV] KIT detectado em pág {page_num}: {len(kit_skus)} SKU(s), buscando imagem maior (caixa)")
-            # Extrai TODAS as imagens embedded da página e mede tamanho real
-            kit_candidates: List[Tuple[np.ndarray, int]] = []
+
+            # Heurística refinada (v20) para identificar a CAIXA do kit DAGIA:
+            # Análise empírica de páginas reais 4-10 do catálogo:
+            #   - Pratos: aspect h/w ≈ 0.97-1.01 (quadrados perfeitos)
+            #   - Caixas (3D em perspectiva): aspect h/w ≈ 0.65-0.90 (mais larga)
+            #   - Peças avulsas: aspect ≈ 0.95-1.05
+            # Logo: BÔNUS FORTE para aspect 0.65-0.90, PENALIDADE para ~1.0.
+            def _box_score(img: np.ndarray) -> float:
+                h, w = img.shape[:2]
+                if h == 0 or w == 0:
+                    return -1.0
+                ratio = h / w
+                if 0.65 <= ratio <= 0.90:
+                    aspect_score = 1.0  # zona ouro da caixa
+                elif 0.55 <= ratio < 0.65 or 0.90 < ratio <= 1.05:
+                    aspect_score = 0.6  # zona ambígua
+                elif 0.40 <= ratio < 0.55 or 1.05 < ratio <= 1.30:
+                    aspect_score = 0.3  # menos provável
+                else:
+                    aspect_score = 0.1  # quase certo não é caixa
+                try:
+                    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+                    std_dev = float(np.std(gray)) / 255.0
+                except Exception:
+                    std_dev = 0.3
+                import math as _math
+                size_score = min(_math.log10(max(h * w, 1)) / 6.0, 1.0)
+                return aspect_score * 0.55 + std_dev * 0.30 + size_score * 0.15
+
+            # ─── STREAMING anti-OOM (23/06/2026) ──────────────────────────
+            # NÃO acumula todas as imagens da página como arrays. Em DZ01 (pág 36)
+            # isso chegava a ~65MB de arrays VIVOS de uma vez → OOM no Render
+            # 512MB. fitz.store_shrink/malloc_trim (v44/v45) NÃO liberam refs
+            # vivas — por isso não resolveram. Aqui mantemos só o MELHOR array
+            # por vez (pico ~2 imagens). Re-honra IV-16 (não materializar todas
+            # as candidatas antes de decidir). Medido: 65MB → ~5MB de pico.
+            best_img = None          # melhor candidata (área >= 20000)
+            best_score = -1.0
+            fallback_img = None      # maior área entre TODAS (se nenhuma >= 20000)
+            fallback_area = -1
             for img_info in page_imgs:
                 try:
                     arr = _extract_perfect_image(doc, img_info, raster, width, height, scale)
-                    if arr is not None and arr.size > 0:
-                        h, w = arr.shape[:2]
-                        kit_candidates.append((arr, h * w))
                 except Exception as e:
                     print(f"[CV] kit: falha ao extrair imagem (xref={img_info.get('xref')}): {e}")
+                    continue
+                if arr is None or arr.size == 0:
+                    continue
+                h, w = arr.shape[:2]
+                area = h * w
+                keep = False
+                if area >= 20000:  # ignora fragmentos (ícones/badges/logos)
+                    sc = _box_score(arr)
+                    if sc > best_score:
+                        best_score = sc
+                        best_img = arr  # rebinda: best antigo perde ref e é coletado
+                        keep = True
+                elif area > fallback_area:
+                    fallback_area = area
+                    fallback_img = arr
+                    keep = True
+                if not keep:
+                    del arr  # libera imediatamente (não é melhor nem fallback)
 
-            if kit_candidates:
-                # Filtra fragmentos pequenos (< 20000 pixels = 200x100). Tipicamente
-                # ícones, etiquetas, badges, logos. Caixas reais são > 50k.
-                kit_candidates_filtered = [(img, area) for (img, area) in kit_candidates if area >= 20000]
-                if not kit_candidates_filtered:
-                    kit_candidates_filtered = kit_candidates  # se filtrou tudo, volta ao original
-
-                # Heurística refinada (v20) para identificar a CAIXA do kit DAGIA:
-                # Análise empírica de páginas reais 4-10 do catálogo:
-                #   - Pratos: aspect h/w ≈ 0.97-1.01 (quadrados perfeitos)
-                #   - Caixas (3D em perspectiva): aspect h/w ≈ 0.65-0.90 (mais larga)
-                #   - Peças avulsas: aspect ≈ 0.95-1.05
-                # Logo: BÔNUS FORTE para aspect 0.65-0.90, PENALIDADE para ~1.0.
-                def _box_score(img: np.ndarray) -> float:
-                    h, w = img.shape[:2]
-                    if h == 0 or w == 0:
-                        return -1.0
-                    ratio = h / w
-                    # Score aspect: caixa típica DAGIA tem aspect 0.65-0.90
-                    if 0.65 <= ratio <= 0.90:
-                        aspect_score = 1.0  # zona ouro da caixa
-                    elif 0.55 <= ratio < 0.65 or 0.90 < ratio <= 1.05:
-                        aspect_score = 0.6  # zona ambígua
-                    elif 0.40 <= ratio < 0.55 or 1.05 < ratio <= 1.30:
-                        aspect_score = 0.3  # menos provável
-                    else:
-                        aspect_score = 0.1  # quase certo não é caixa
-                    # Cor: caixa colorida tem desvio padrão alto
-                    try:
-                        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-                        std_dev = float(np.std(gray)) / 255.0
-                    except Exception:
-                        std_dev = 0.3
-                    # Tamanho: log normalizado
-                    import math as _math
-                    size_score = min(_math.log10(max(h * w, 1)) / 6.0, 1.0)
-                    # Peso: aspect 0.55, cor 0.30, size 0.15 (aspect é o sinal mais forte)
-                    return aspect_score * 0.55 + std_dev * 0.30 + size_score * 0.15
-
-                # Ordena por score combinado decrescente
-                kit_candidates_filtered.sort(key=lambda t: _box_score(t[0]), reverse=True)
-                box_image = kit_candidates_filtered[0][0]
+            box_image = best_img if best_img is not None else fallback_img
+            if box_image is not None:
                 h0, w0 = box_image.shape[:2]
-                print(f"[CV] kit: escolhida imagem aspect={h0/max(w0,1):.2f}, área={h0*w0}, "
-                      f"score_top={_box_score(box_image):.2f} (entre {len(kit_candidates_filtered)} candidatas filtradas)")
-                # Override do max_dim do _save_image para preservar qualidade
-                # (max_dim default é 600, vamos forçar 1200 pra kit)
+                print(f"[CV] kit: escolhida imagem aspect={h0/max(w0,1):.2f}, área={h0*w0}, score={best_score:.2f}")
+                # max_dim 1200 pra kit (preserva qualidade da foto da caixa)
                 box_image_hires = _resize_keep_aspect(box_image, max_dim=1200)
+                del best_img, fallback_img, box_image  # libera os full-res
                 for kit_sku in kit_skus:
                     sku_code = kit_sku["sku"]
                     existing = next((m for m in pm if m["sku"] == sku_code), None)
                     if existing:
-                        # Sobrescreve arquivo do match com a caixa em alta resolução
                         _save_image_hires(box_image_hires, sku_code, output_folder)
                         existing["match_type"] = "kit_box"
                         print(f"[CV] kit box salvo (1200px): {sku_code}")
@@ -286,6 +297,8 @@ def extract_cells_via_cv(
                         pm.append(_make_match(kit_sku, page_num, filepath, "kit_box"))
                         pu = [u for u in pu if u.get("sku") != sku_code]
                         print(f"[CV] kit box (novo match): {sku_code}")
+                del box_image_hires
+                gc.collect()
 
         matches.extend(pm)
         unmatched.extend(pu)

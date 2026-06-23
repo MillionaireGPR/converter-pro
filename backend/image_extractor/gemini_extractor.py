@@ -243,8 +243,13 @@ SUPPLIER_HINTS: Dict[str, str] = {
         "  Exemplo correto: DV003 marcado '***EM BREVE***' com tag 'R$37,37' → preco=37.37, emBreve=true.\n"
         "- Produtos marcados '***PROMOCAO***': é um selo de promoção — extraia o preço R$ normalmente. "
         "  NÃO confunda o preço de um produto PROMOCAO com o do produto anterior.\n"
-        "- ATENÇÃO preços: cada R$ na página pertence ao produto mais próximo acima/esquerda. "
-        "  Nunca desloque um preço de um produto para o próximo.\n"
+        "- ATENÇÃO preços (CRÍTICO): no texto extraído, os preços (R$ X,XX) costumam vir "
+        "  AGRUPADOS NO FIM de cada página, DEPOIS de todos os códigos/nomes, na MESMA ORDEM "
+        "  em que os produtos aparecem. Mapeie o 1º R$ ao 1º produto da página, o 2º R$ ao 2º, etc. "
+        "  Exemplo real de uma página: 'ES7018-1R Copo... ES7018-2R Copo... R$32,50 R$30,00' → "
+        "  ES7018-1R=32.50 e ES7018-2R=30.00 (NÃO o contrário, e NUNCA o número do código como preço).\n"
+        "- O preço NUNCA é o número que está dentro do código (ES7018 NÃO custa 7018). "
+        "  Se não encontrar um 'R$ X,XX' para um produto, use preco=null (não invente).\n"
         "- Produtos DXPD51-55 marcados 'EM BREVE' no catálogo antigo não tinham preço — "
         "  se não houver R$ visível, preco=null. Mas não generalize: outros EM BREVE podem ter preço.\n"
         "- Jogos DZ01-DZ04 vêm 2 jogos por caixa (etiqueta 'CX C/2Jgs')."
@@ -1116,6 +1121,42 @@ def _norm_price(raw: str, fmt: str) -> Optional[float]:
         return None
 
 
+def _price_looks_like_code(codigo: str, preco: Any, fmt: str = "BR") -> bool:
+    """True se o preço == número embutido no CÓDIGO (sinal de regex de preço
+    FROUXO que capturou os dígitos do código em vez do preço real).
+
+    Bug DAGIA (23/06/2026): catálogo com preços AGRUPADOS no fim da página +
+    template sintetizado com PRECO regex frouxo → cada produto recebeu os
+    dígitos do próprio código como "preço" (ES7018→7018, EY3003→3003, DV091→91).
+    A cobertura ficava 100% (todo produto "com preço") e o gate não disparava
+    o fallback. Validado deterministicamente contra o catálogo real.
+
+    SEGURANÇA (validado por análise adversarial cross-supplier, 23/06):
+      - SÓ fmt=='BR'. CENTS (GIRA '0690'→6.90, BM36 '3600'→36.00) divide por 100
+        e nunca produz inteiro == dígitos do código → pulado de saída.
+      - SÓ preço INTEIRO (sem centavos reais). R$ X,XX nunca é sinalizado.
+      - SÓ preço >= 10. Evita falso-positivo de preço pequeno legítimo (R$2-R$9)
+        que coincida com dígitos do código (ex.: HP002 custando R$2 de verdade).
+      - Compara contra QUALQUER run de dígitos do código (ES7018-1R → '7018').
+    A decisão de fallback usa a FRAÇÃO de produtos nesse estado (>=50% em
+    extract_via_template), nunca 1 caso isolado — dupla proteção contra
+    falso-positivo de um preço real que por acaso bate com o número do código.
+    """
+    if preco is None or str(fmt or "BR").upper() != "BR":
+        return False
+    try:
+        pv = float(preco)
+    except (ValueError, TypeError):
+        return False
+    if pv != int(pv) or pv < 10:
+        return False  # centavos reais OU preço pequeno → trata como preço legítimo
+    pv_str = str(int(pv))
+    for run in re.findall(r"\d+", str(codigo or "")):
+        if run == pv_str or run.lstrip("0") == pv_str:
+            return True
+    return False
+
+
 def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str, Any]]:
     """Aplica o template em TODAS as páginas (determinístico, instantâneo)."""
     code_re = re.compile(tpl["CODE"], re.M)
@@ -1224,6 +1265,22 @@ def extract_via_template(pdf_path: str, supplier: str = "") -> Optional[Dict[str
         print(f"[Template] código válido {cov_code:.0%} < {TEMPLATE_MIN_COVERAGE:.0%} → fallback AI-first (CODE regex inferido errado)")
         return None
 
+    # ─── GATE PREÇO-VINDO-DO-CÓDIGO (23/06/2026) ───────────────────────────
+    # Se a MAIORIA dos preços é igual ao número do próprio código, o PRECO
+    # regex sintetizado é frouxo (capturou os dígitos do código). Sinal de
+    # catálogo com preços AGRUPADOS no fim da página (ex: DAGIA), que o modelo
+    # de bloco-por-código NÃO consegue mapear. Cai no AI text-chunked, que faz
+    # o mapeamento posicional corretamente. Threshold 50% (a fração no DAGIA
+    # real é ~89%) evita falso-positivo de coincidência isolada (1-2 produtos).
+    tpl_fmt = (tpl.get("PRECO_FMT") or "BR")
+    com_preco = [p for p in deduped if p.get("preco")]
+    if com_preco:
+        code_as_price = sum(1 for p in com_preco if _price_looks_like_code(p.get("codigo"), p.get("preco"), tpl_fmt))
+        frac_cap = code_as_price / len(com_preco)
+        if frac_cap >= 0.5:
+            print(f"[Template] {frac_cap:.0%} dos preços == número do código → PRECO regex inválido, fallback AI text-chunked (DAGIA-like)")
+            return None
+
     # ─── FALLBACK POR PÁGINA (v33): IA só nas páginas que o template ERROU ───
     # "Só gastar com o que dá problema." Identifica páginas onde o template
     # extraiu produtos mas a maioria ficou SEM preço (padrão diferente da
@@ -1235,7 +1292,8 @@ def extract_via_template(pdf_path: str, supplier: str = "") -> Optional[Dict[str
         pg = int(p.get("paginaOrigem", 0))
         st = page_stats.setdefault(pg, [0, 0])
         st[0] += 1
-        if p.get("preco"):
+        # preço-vindo-do-código NÃO conta como preço válido (força re-extração IA da página)
+        if p.get("preco") and not _price_looks_like_code(p.get("codigo"), p.get("preco"), tpl_fmt):
             st[1] += 1
     bad_pages = sorted([pg for pg, (tot, ok) in page_stats.items()
                         if pg >= 1 and tot >= 2 and (ok / tot) < 0.6])

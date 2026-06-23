@@ -109,18 +109,42 @@ mustContain('IV-20', MAIN, ['AI_PICKER_DISABLED']);
 // jobs pesados (imagem + IA) passam pelo semáforo global. Não remover.
 mustContain('IV-21', MAIN, ['_HEAVY_SLOT', '_job_slot', 'MAX_CONCURRENT_JOBS']);
 
+// IV-22 — GATE preço-vindo-do-código (23/06/2026): no caminho template-synth,
+// se a maioria dos preços é igual ao número do próprio código (PRECO regex
+// frouxo capturou os dígitos do código), o template é rejeitado e cai no
+// AI text-chunked. Sem isso, DAGIA (preços agrupados no fim da página) sai
+// com preço = número do código. Não remover o gate nem o helper.
+mustContain('IV-22', GE, ['_price_looks_like_code', /==\s*número do código|preços == número do código|PRECO regex inválido/]);
+
 // SMOKE — import real do gemini_extractor (pega NameError/erro de anotação que
 // o AST não vê — ex: usar Tuple sem importar). ModuleNotFoundError de dep
 // 3rd-party (fitz/google) é SKIP (ambiente sem deps); erro no NOSSO código FALHA.
+// Inclui asserção COMPORTAMENTAL do gate IV-22 (preço==código → True; preço
+// real com centavos → False) — trava a regressão do bug DAGIA.
 (() => {
-  const r = spawnSync('python', ['-c', "import sys; sys.path.insert(0, 'backend/image_extractor'); import gemini_extractor"], { cwd: ROOT, encoding: 'utf8' });
+  const code = [
+    "import sys; sys.path.insert(0, 'backend/image_extractor')",
+    "import gemini_extractor as g",
+    "assert g._price_looks_like_code('ES7018', 7018.0) is True, 'gate deveria pegar codigo-como-preco'",
+    "assert g._price_looks_like_code('ES7018-1R', 7018.0) is True",
+    "assert g._price_looks_like_code('DV091', 91.0) is True",
+    "assert g._price_looks_like_code('ES7018-1R', 32.50) is False, 'preco real (centavos) NAO pode ser sinalizado'",
+    "assert g._price_looks_like_code('GU0220', 6.90) is False, 'centavos'",
+    "assert g._price_looks_like_code('BM123456', 45.90) is False",
+    "assert g._price_looks_like_code('BM3600', 36.00, 'CENTS') is False, 'fmt CENTS pulado'",
+    "assert g._price_looks_like_code('HP002', 2.0) is False, 'preco pequeno (<10) legitimo nao sinaliza'",
+    // detector e SENSIVEL de proposito (pega 2+ digitos p/ maximizar a fracao no DAGIA);
+    // a seguranca cross-supplier vem do THRESHOLD de fracao >=50%, nao deste detector.
+    "print('IV-22 gate OK')",
+  ].join('; ');
+  const r = spawnSync('python', ['-c', code], { cwd: ROOT, encoding: 'utf8' });
   if (r.error) { console.log('\x1b[33m⚠️  SMOKE import pulado (python indisponível)\x1b[0m'); return; }
-  if (r.status === 0) { ok('SMOKE import gemini_extractor'); return; }
+  if (r.status === 0) { ok('SMOKE import gemini_extractor + gate IV-22'); return; }
   const err = (r.stderr || '') + (r.stdout || '');
   if (/ModuleNotFoundError/.test(err)) {
     console.log(`\x1b[33m⚠️  SMOKE import pulado (dep ausente): ${(err.match(/ModuleNotFoundError: (.*)/) || [])[1] || ''}\x1b[0m`);
   } else {
-    fail(`SMOKE import gemini_extractor falhou:\n${err.split('\n').slice(-6).join('\n')}`);
+    fail(`SMOKE import/gate gemini_extractor falhou:\n${err.split('\n').slice(-6).join('\n')}`);
   }
 })();
 
