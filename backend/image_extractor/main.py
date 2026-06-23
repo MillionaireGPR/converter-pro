@@ -44,7 +44,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.22-v44-oom-malloc-trim"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.22-v45-fitz-store-shrink"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
@@ -147,6 +147,7 @@ def _infer_spatial_context(pdf_path: str, skus_list: list) -> list:
             inferidos += 1
 
     doc.close()
+    fitz.TOOLS.store_shrink(100)  # flush MuPDF store — search_for popula o cache
     print(f"[Main] spatialContext inferido em {inferidos}/{len(sem_ctx)} SKUs via busca textual")
     return skus_list
 
@@ -281,6 +282,14 @@ class _job_slot:
         # Devolve páginas livres do heap Python ao SO antes do próximo job.
         # Sem isso, o alocador Python retém memória entre jobs → heap cresce job
         # a job até estourar o limite Render 512MB (OOM confirmado DAGIA 215 págs).
+        # Flush do cache interno MuPDF (principal causa de OOM em catálogos com
+        # fotos high-res: store acumula até 256MB de objetos renderizados mesmo
+        # após doc.close(). store_shrink(100) = libera 100% do store).
+        try:
+            fitz.TOOLS.store_shrink(100)
+            print(f"[Job] fitz.TOOLS.store_shrink(100) OK — store liberado")
+        except Exception as _e:
+            print(f"[Job] store_shrink ignorado ({_e})")
         import gc
         gc.collect()
         try:
