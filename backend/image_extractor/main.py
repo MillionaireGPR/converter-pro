@@ -44,7 +44,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.22-v45-fitz-store-shrink"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.22-v46-dagia-em-breve-price"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")

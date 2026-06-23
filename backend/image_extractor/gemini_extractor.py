@@ -237,7 +237,16 @@ SUPPLIER_HINTS: Dict[str, str] = {
         "- quantidadeCaixa = número da etiqueta técnica 'CX C/N Jgs' (jogos por caixa). "
         "NUNCA use o 'C/N Pçs' que faz parte do NOME do produto (esse é o conteúdo do jogo).\n"
         "  Exemplo: 'Copo 458 ml C/6 Pçs' com etiqueta 'CX C/8Jgs' → quantidadeCaixa=8 (não 6).\n"
-        "- Produtos da linha DXPD marcados 'EM BREVE...' não têm preço: emBreve=true, preco=null.\n"
+        "- Produtos marcados '***EM BREVE***' ou 'EM BREVE...': marque emBreve=true. "
+        "  SE houver um R$ visível na página associado ao produto, use-o como preco normalmente. "
+        "  Só use preco=null quando NENHUM R$ estiver disponível para o produto.\n"
+        "  Exemplo correto: DV003 marcado '***EM BREVE***' com tag 'R$37,37' → preco=37.37, emBreve=true.\n"
+        "- Produtos marcados '***PROMOCAO***': é um selo de promoção — extraia o preço R$ normalmente. "
+        "  NÃO confunda o preço de um produto PROMOCAO com o do produto anterior.\n"
+        "- ATENÇÃO preços: cada R$ na página pertence ao produto mais próximo acima/esquerda. "
+        "  Nunca desloque um preço de um produto para o próximo.\n"
+        "- Produtos DXPD51-55 marcados 'EM BREVE' no catálogo antigo não tinham preço — "
+        "  se não houver R$ visível, preco=null. Mas não generalize: outros EM BREVE podem ter preço.\n"
         "- Jogos DZ01-DZ04 vêm 2 jogos por caixa (etiqueta 'CX C/2Jgs')."
     ),
     "LILA HOME": (
