@@ -55,6 +55,12 @@ def extract_cells_via_cv(
     """
     import gc
 
+    # Limita o store MuPDF a 50MB — default é 256MB que, somado ao heap Python
+    # (~150MB), ultrapassa os 512MB do Render Starter em catálogos com fotos
+    # high-res. Com 50MB o MuPDF evicta agressivamente em vez de acumular.
+    fitz.TOOLS.store_maxsize = 50 * 1024 * 1024
+    fitz.TOOLS.store_shrink(100)  # começa limpo
+
     doc = fitz.open(pdf_path)
     matches: List[Dict] = []
     unmatched: List[Dict] = []
@@ -291,9 +297,11 @@ def extract_cells_via_cv(
         # confirmado em catálogo DAGIA (apenas 24 páginas com imagens pesadas).
         if (page_idx + 1) % 5 == 0:
             gc.collect()
-            print(f"[CV] gc.collect() em pág {page_idx+1}/{total_pages}")
+            fitz.TOOLS.store_shrink(100)
+            print(f"[CV] gc+store_shrink em pág {page_idx+1}/{total_pages}")
 
     doc.close()
+    fitz.TOOLS.store_shrink(100)
     gc.collect()
     print(f"[CV] Total: {len(matches)} matches | {len(unmatched)} unmatched")
     return matches, unmatched
