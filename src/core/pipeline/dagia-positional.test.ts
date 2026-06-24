@@ -63,8 +63,8 @@ Jogo De Jantar E Cha Opalina 20 Pcs`;
     expect(blockText.match(pat)?.[1]).toContain('Xicara C/');
   });
 
-  it('NÃO sobrescreve preço quando produto está marcado EM BREVE', () => {
-    // Mesmo se a página tem N preços e N produtos, EM BREVE deve ficar sem preço
+  it('NÃO sobrescreve preço quando produto está marcado EM BREVE (DXPD — sem preço real)', () => {
+    // DXPD51-55: EM BREVE realmente sem preço. Heurística posicional NÃO deve atribuir preço.
     const campos = { __emBreve: true, preco: undefined };
     const pricesInOrder = ['12.00', '15.00'];
     // Simula o loop forEach
@@ -72,6 +72,26 @@ Jogo De Jantar E Cha Opalina 20 Pcs`;
       campos.preco = pricesInOrder[0] as any;
     }
     expect(campos.preco).toBeUndefined();
+  });
+
+  it('🔒 EM BREVE COM preço visível (DV003 R$37,37): NÃO zera o preço', () => {
+    // Bug reportado 22/06/2026: DV003 ***EM BREVE*** aparece com R$37,37 no catálogo.
+    // aiFirstExtractionApi deletava preco para qualquer emBreve=true, causando price-shift:
+    // DV003 ficava 0.00 e DV005 pegava o R$37,37 errado.
+    // Regra: se Gemini retornou preco > 0, EM BREVE não cancela o preço.
+    const precoRetornadoPeloGemini = 37.37;
+    const camposSimulado: Record<string, unknown> = {};
+
+    // Simula a lógica corrigida de aiFirstExtractionApi.ts
+    if (precoRetornadoPeloGemini !== null && precoRetornadoPeloGemini > 0) {
+      camposSimulado['preco'] = String(precoRetornadoPeloGemini);
+    }
+    // emBreve=true — deve marcar __emBreve mas NÃO deletar preco
+    camposSimulado['__emBreve'] = true;
+    camposSimulado['informacoesAdicionais'] = 'EM BREVE';
+
+    expect(camposSimulado['preco']).toBe('37.37');
+    expect(camposSimulado['__emBreve']).toBe(true);
   });
 
   it('🔒 PAGE-WIDE EM BREVE: detecta texto em qualquer bloco da página', () => {

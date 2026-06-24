@@ -212,6 +212,11 @@ filtro: area >= 20000 pixels
 **Por que existe**: Render Starter = 512MB. Jobs pesados (extração de IMAGEM — renderiza páginas em bitmap — e extração de IA) rodando em paralelo estouram a RAM → Render reinicia a instância → jobs em andamento morrem EM SILÊNCIO (comprovado: 6 catálogos simultâneos → 3 sem imagem + 1 travado + e-mail "exceeded its memory limit"). Um semáforo GLOBAL compartilhado pelos dois tipos de job limita a `MAX_CONCURRENT_JOBS` (default 1) simultâneos; o resto fica "na fila" (status=processing, stage=queued — compatível com o polling). Configurável por env `MAX_CONCURRENT_JOBS` (subir só se aumentar a RAM do Render). NÃO remover nem trocar por execução paralela sem upgrade de RAM.
 **Travado por**: grep IV-21 em `scripts/verify-invariants.mjs`
 
+### IV-22 — Gate "preço == número do código" no template-synth (anti-dado-errado)
+**Arquivos**: `gemini_extractor.py` (`_price_looks_like_code` + gate em `extract_via_template`)
+**Por que existe**: catálogos com texto esparso e preços AGRUPADOS no fim da página (ex: DAGIA — 41 págs, 7KB de texto, preços R$ depois de TODOS os códigos) quebram o modelo bloco-por-código do template-synth. Sem R$ dentro do bloco, o PRECO regex sintetizado (frouxo, roda com `re.DOTALL`) captura os DÍGITOS DO PRÓPRIO CÓDIGO como preço: `ES7018→7018,00`, `EY3003→3003,00`, `DV091→91,00`. O gate de cobertura contava qualquer preço não-nulo → via ~100% → NUNCA caía no fallback → entregava preço errado ao cliente (validado deterministicamente: cobertura "100%" enganada vs ~12% real). O gate: se ≥50% dos preços (fmt=BR, inteiros, ≥10) forem iguais a um run de dígitos do código, o template é REJEITADO → cai no `extract_with_fallback_text_chunked` (a IA mapeia os preços posicionalmente). A fração ≥50% é a trava de segurança cross-supplier (FORTAL/GIRA/BM36 têm centavos ou CENTS → fração ~0, nunca disparam). NÃO remover o gate nem o helper, nem contar preço-vindo-do-código como cobertura válida.
+**Travado por**: grep IV-22 + smoke comportamental em `scripts/verify-invariants.mjs`
+
 ---
 
 ## 🎯 Métricas do sistema em produção (baseline)

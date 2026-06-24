@@ -263,7 +263,8 @@ export const mapAiProductsToBrutos = (produtos: AiProduto[]): ProdutoBruto[] => 
     if (p.emBreve === true) {
       campos['__emBreve'] = true;
       campos['informacoesAdicionais'] = 'EM BREVE';
-      delete campos['preco']; // EM BREVE não tem preço por design
+      // Não deletar preco: EM BREVE pode ter preço visível (ex: DV003 R$37,37).
+      // Se Gemini retornou preco=null, o campo já não foi setado na linha acima.
     }
 
     // PROMOÇÃO: item que já vem com desconto aplicado → bloqueia desconto em massa
