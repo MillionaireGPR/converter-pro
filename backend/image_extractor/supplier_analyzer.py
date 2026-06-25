@@ -33,22 +33,39 @@ SAMPLE_END   = 6   # até pág 5 (0-indexed), ou menos se catálogo for curto
 MAX_CHARS_PER_PAGE = 1500
 
 
-_ANALYSIS_PROMPT = """Você está analisando amostras de texto das primeiras páginas de um catálogo \
-de produtos do fornecedor "{supplier}".
-Sua tarefa: identificar o padrão estrutural para que uma IA extraia todos os produtos corretamente.
+_ANALYSIS_PROMPT = """Você é um engenheiro de dados que vai criar REGRAS DE EXTRAÇÃO para um catálogo.
 
-Retorne APENAS um objeto JSON válido (sem markdown, sem explicação):
+ATENÇÃO — NÃO extraia os produtos. NÃO faça uma lista de itens.
+Sua única tarefa é descrever como a IA deve ENCONTRAR as informações.
+
+Responda com UM ÚNICO objeto JSON descrevendo as regras (não os dados):
+
+Exemplo de SAÍDA CORRETA para um catálogo "Tabela Fast":
 {{
-  "codigo": "Onde e como o código do produto aparece. Ex: 'número de 6 dígitos sozinho após os preços' ou 'início da linha antes do pipe | (ex: AX21042-A)'",
-  "nome": "Onde e como está o nome. Ex: 'CAIXA ALTA antes dos preços, pode ter 2+ linhas' ou 'texto após o | na mesma linha do código'",
-  "preco": "Qual preço usar quando há vários. Ex: 'R$ X,XX Un. (sufixo Un.)' ou 'primeiro R$ quando há dois — CX ABERTA'",
-  "quantidade_caixa": "Campo de quantidade por caixa ou múltiplo. Ex: 'c/N un.' ou 'Múltiplo: N Pçs'. Use null se não houver.",
-  "marcadores": "Marcadores especiais: promoção, esgotado, IPI incluso, asterisco, etc. Use null se não houver.",
-  "armadilhas": "2-3 erros que a IA deve evitar. Ex: 'código vem DEPOIS do preço, não antes; não confundir EAN de 13 dígitos com código do produto'",
-  "format_type": "Tipo do formato: tabela_fast | grid_preco_final | lista_codigo_nome | planilha | imagem_grade | outro"
+  "codigo": "número de 6 dígitos que aparece sozinho em uma linha APÓS os preços (ex: '156043')",
+  "nome": "texto em CAIXA ALTA em 1-2 linhas ANTES dos preços unitário e de pacote",
+  "preco": "usar 'R$ X,XX Un.' (preço unitário com sufixo 'Un.'); ignorar 'R$ X,XX Pct. c/N' (preço de pacote)",
+  "quantidade_caixa": "número N de 'Pct. c/N un.' ou 'c/N un.' junto ao preço de pacote",
+  "marcadores": "código com asterisco (*) = poucas unidades; texto 'ESGOTADO' = sem estoque; preço em vermelho = promoção",
+  "armadilhas": "código vem DEPOIS dos preços, não antes; não confundir preço de pacote com unitário",
+  "format_type": "tabela_fast"
 }}
 
-TEXTO AMOSTRAL DO CATÁLOGO:
+Exemplo de SAÍDA CORRETA para catálogo com código|nome na mesma linha:
+{{
+  "codigo": "início da linha antes do separador '|', formato letras+dígitos (ex: 'AX21042-A')",
+  "nome": "texto após o '|' na mesma linha do código (ex: 'Balança digital 10Kg')",
+  "preco": "primeiro R$ da linha seguinte — preço CX ABERTA (abrir caixa); ignorar o segundo R$ (CX FECHADA)",
+  "quantidade_caixa": "número N de 'Múltiplo: N Pçs'",
+  "marcadores": "texto 'CORES SORTIDAS' vai em observações, não no nome",
+  "armadilhas": "há dois preços por produto: CX ABERTA e CX FECHADA; usar sempre o CX ABERTA (menor)",
+  "format_type": "grid_preco_final"
+}}
+
+Agora analise o catálogo do fornecedor "{supplier}" abaixo e retorne o JSON com as regras.
+APENAS O OBJETO JSON. Sem markdown. Sem texto extra. Sem lista de produtos.
+
+TEXTO DO CATÁLOGO (primeiras páginas):
 {sample_text}"""
 
 
@@ -69,16 +86,33 @@ def _call_gemini_analysis(prompt: str) -> Optional[dict]:
     """Envia o prompt ao Gemini 2.5 Flash e retorna o JSON parseado."""
     try:
         import google.generativeai as genai  # lazy import
-        model = genai.GenerativeModel(
-            "gemini-2.5-flash",
-            generation_config={"temperature": 0, "max_output_tokens": 1024},
-        )
-        resp = model.generate_content(prompt)
+        from google.generativeai.types import GenerationConfig
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        # 8192: Gemini 2.5 Flash usa thinking tokens que consomem o budget;
+        # 4096 resulta em resposta truncada (~500 chars úteis).
+        cfg = GenerationConfig(temperature=0, max_output_tokens=8192)
+        resp = model.generate_content(prompt, generation_config=cfg)
         raw = (resp.text or "").strip()
-        # Remove possível bloco markdown
+
+        # Remove possível bloco markdown ```json ... ```
         raw = re.sub(r"```json\s*", "", raw)
         raw = re.sub(r"```\s*", "", raw)
-        return json.loads(raw.strip())
+        raw = raw.strip()
+
+        # Se Gemini retornou uma LISTA (erro: extraiu produtos ao invés de analisar),
+        # a Phase 0 não pode usar esse resultado.
+        if raw.startswith("["):
+            print("[Phase0] Gemini retornou lista de produtos em vez de análise estrutural. "
+                  "Ignorando resultado.")
+            return None
+
+        # Tenta extrair só o objeto JSON se houver texto extra ao redor
+        if not raw.startswith("{"):
+            m = re.search(r"\{[\s\S]+\}", raw)
+            if m:
+                raw = m.group(0)
+
+        return json.loads(raw)
     except Exception as e:
         print(f"[Phase0] Erro na chamada Gemini: {e}")
         return None
@@ -142,10 +176,20 @@ def analyze_and_cache(pdf_path: str, supplier: str) -> Optional[str]:
         return None
 
     prompt = _ANALYSIS_PROMPT.format(supplier=supplier, sample_text=sample_text)
-    analysis = _call_gemini_analysis(prompt)
+
+    # Gemini 2.5 Flash usa thinking tokens que variam por chamada; retry garante
+    # que uma rodada com thinking pesado não descarte a análise inteira.
+    analysis = None
+    for attempt in range(3):
+        analysis = _call_gemini_analysis(prompt)
+        if analysis:
+            break
+        if attempt < 2:
+            print(f"[Phase0] Tentativa {attempt + 1} falhou, repetindo...")
+            time.sleep(2)
 
     if not analysis:
-        print(f"[Phase0] '{supplier}': Gemini não retornou análise válida.")
+        print(f"[Phase0] '{supplier}': Gemini não retornou análise válida após 3 tentativas.")
         return None
 
     hints = _analysis_to_hints(analysis, supplier)
