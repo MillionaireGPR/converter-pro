@@ -326,18 +326,48 @@ SUPPLIER_HINTS: Dict[str, str] = {
 
 
 def get_supplier_hints(supplier: str) -> str:
-    """Retorna hints do fornecedor (lookup tolerante a caixa/acentos/espaços)."""
+    """
+    Retorna hints do fornecedor.
+    Prioridade: 1) SUPPLIER_HINTS hardcoded  2) perfil auto-gerado (Phase 0).
+    IV-23: hardcoded sempre vence o cache.
+    """
     if not supplier:
         return ""
     norm = supplier.strip().upper()
-    # normaliza acentos básicos
     for a, b in [("Á", "A"), ("Ã", "A"), ("Â", "A"), ("É", "E"), ("Ê", "E"),
                  ("Í", "I"), ("Ó", "O"), ("Õ", "O"), ("Ô", "O"), ("Ú", "U"), ("Ç", "C")]:
         norm = norm.replace(a, b)
+    # 1. Hardcoded (alta confiança)
     for key, hints in SUPPLIER_HINTS.items():
         if key in norm or norm in key:
             return hints
+    # 2. Cache Phase 0 (auto-gerado)
+    try:
+        from supplier_profile import get_cached_hints
+        cached = get_cached_hints(supplier)
+        if cached:
+            return cached
+    except Exception:
+        pass
     return ""
+
+
+def _ensure_supplier_profile(pdf_path: str, supplier: str) -> None:
+    """
+    Phase 0 (IV-23): se não há hints para este fornecedor, analisa a estrutura
+    do catálogo via Gemini e cacheia as dicas para todas as conversões futuras.
+    Falhas são silenciosas — extração continua sem hints se a análise falhar.
+    """
+    if not supplier:
+        return
+    try:
+        from supplier_profile import get_cached_hints
+        if get_cached_hints(supplier):
+            return  # já cacheado, nada a fazer
+        from supplier_analyzer import analyze_and_cache
+        analyze_and_cache(pdf_path, supplier)
+    except Exception as e:
+        print(f"[Phase0] Análise ignorada p/ '{supplier}': {e}")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1359,6 +1389,11 @@ def extract_with_fallback(pdf_path: str, supplier: str = "") -> Dict[str, Any]:
     v27: catálogos GRANDES/PESADOS (>15MB ou >30 págs) usam extração por
     TEXTO em chunks (vision do PDF inteiro dá 400 nesses casos).
     """
+    # Phase 0 (IV-23): gera hints automáticos para fornecedor sem hints hardcoded.
+    # Corre antes do roteamento p/ que template-synth e text-chunked já os usem.
+    if supplier and not get_supplier_hints(supplier):
+        _ensure_supplier_profile(pdf_path, supplier)
+
     # Roteamento v27/v33: catálogo grande → tenta TEMPLATE (rápido/barato),
     # com fallback automático pro AI-first text-chunked se cobertura baixa.
     try:

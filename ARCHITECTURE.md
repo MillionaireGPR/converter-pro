@@ -217,6 +217,17 @@ filtro: area >= 20000 pixels
 **Por que existe**: catálogos com texto esparso e preços AGRUPADOS no fim da página (ex: DAGIA — 41 págs, 7KB de texto, preços R$ depois de TODOS os códigos) quebram o modelo bloco-por-código do template-synth. Sem R$ dentro do bloco, o PRECO regex sintetizado (frouxo, roda com `re.DOTALL`) captura os DÍGITOS DO PRÓPRIO CÓDIGO como preço: `ES7018→7018,00`, `EY3003→3003,00`, `DV091→91,00`. O gate de cobertura contava qualquer preço não-nulo → via ~100% → NUNCA caía no fallback → entregava preço errado ao cliente (validado deterministicamente: cobertura "100%" enganada vs ~12% real). O gate: se ≥50% dos preços (fmt=BR, inteiros, ≥10) forem iguais a um run de dígitos do código, o template é REJEITADO → cai no `extract_with_fallback_text_chunked` (a IA mapeia os preços posicionalmente). A fração ≥50% é a trava de segurança cross-supplier (FORTAL/GIRA/BM36 têm centavos ou CENTS → fração ~0, nunca disparam). NÃO remover o gate nem o helper, nem contar preço-vindo-do-código como cobertura válida.
 **Travado por**: grep IV-22 + smoke comportamental em `scripts/verify-invariants.mjs`
 
+### IV-23 — Phase 0: auto-análise de estrutura para fornecedores desconhecidos
+**Arquivos**: `supplier_analyzer.py` (análise), `supplier_profile.py` (cache), `gemini_extractor.py` (`_ensure_supplier_profile`, `get_supplier_hints` com fallback ao cache)
+**Por que existe**: adicionar um novo fornecedor exigia o dev criar manualmente um bloco em `SUPPLIER_HINTS`, fazer branch, PR e deploy — tornando o produto dependente do desenvolvedor para cada cliente novo. A Phase 0 resolve isso: na primeira conversão de um fornecedor desconhecido, o sistema analisa automaticamente 4-5 páginas de amostra do catálogo via Gemini, gera as dicas de extração no mesmo formato do `SUPPLIER_HINTS` e as cacheia em `supplier_profiles/<NOME>.json`. Conversões seguintes do mesmo fornecedor reusam o cache (sem nova chamada Gemini). O cliente consegue cadastrar fornecedores novos sozinho, sem intervenção do dev.
+**Regras obrigatórias**:
+- `SUPPLIER_HINTS` hardcoded tem SEMPRE prioridade sobre o cache Phase 0 (IV-23-a). Não inverter essa ordem.
+- Phase 0 só roda quando `get_supplier_hints()` retorna vazio — se há hints hardcoded, não analisa (IV-23-b).
+- Falha na Phase 0 é SILENCIOSA: extração continua sem hints genéricos, nunca falha o job (IV-23-c).
+- `supplier_profiles/` está no `.gitignore` — é específico por instalação (Render, local, etc.) (IV-23-d).
+- Para FORÇAR re-análise: `DELETE /supplier_profile/{nome}` — o próximo job gera novo perfil.
+**Travado por**: grep `_ensure_supplier_profile` + `get_cached_hints` em `scripts/verify-invariants.mjs`
+
 ---
 
 ## 🎯 Métricas do sistema em produção (baseline)

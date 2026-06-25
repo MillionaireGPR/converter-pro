@@ -116,6 +116,12 @@ mustContain('IV-21', MAIN, ['_HEAVY_SLOT', '_job_slot', 'MAX_CONCURRENT_JOBS']);
 // com preço = número do código. Não remover o gate nem o helper.
 mustContain('IV-22', GE, ['_price_looks_like_code', /==\s*número do código|preços == número do código|PRECO regex inválido/]);
 
+// IV-23 — Phase 0: auto-análise de estrutura para fornecedores desconhecidos.
+// SUPPLIER_HINTS hardcoded tem SEMPRE prioridade; Phase 0 só roda quando hints
+// estão vazios. Falha na Phase 0 é silenciosa (extração continua). Garante que
+// o cliente cadastre novos fornecedores sem intervenção do dev.
+mustContain('IV-23', GE, ['_ensure_supplier_profile', 'get_cached_hints']);
+
 // SMOKE — import real do gemini_extractor (pega NameError/erro de anotação que
 // o AST não vê — ex: usar Tuple sem importar). ModuleNotFoundError de dep
 // 3rd-party (fitz/google) é SKIP (ambiente sem deps); erro no NOSSO código FALHA.

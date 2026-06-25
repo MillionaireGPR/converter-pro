@@ -44,7 +44,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.23-v47-dagia-price-code-gate-oom"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.24-v48-phase0-auto-hints"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
@@ -54,6 +54,35 @@ async def health_check():
         "service": "image-extractor",
         "version": SERVICE_VERSION,
     }
+
+
+# ─────────────────────────────────────────────────────────────
+# Endpoints de gerenciamento de perfis Phase 0
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/supplier_profiles")
+async def list_supplier_profiles():
+    """Lista todos os fornecedores com perfil auto-gerado (Phase 0)."""
+    from supplier_profile import list_profiles
+    return {"profiles": list_profiles()}
+
+
+@app.get("/supplier_profile/{supplier_name}")
+async def get_supplier_profile(supplier_name: str):
+    """Retorna o perfil Phase 0 de um fornecedor (hints + análise bruta)."""
+    from supplier_profile import load_profile
+    profile = load_profile(supplier_name)
+    if not profile:
+        return {"found": False, "supplier": supplier_name}
+    return {"found": True, **profile}
+
+
+@app.delete("/supplier_profile/{supplier_name}")
+async def delete_supplier_profile(supplier_name: str):
+    """Remove perfil Phase 0 de um fornecedor (força re-análise na próxima conversão)."""
+    from supplier_profile import delete_profile
+    deleted = delete_profile(supplier_name)
+    return {"deleted": deleted, "supplier": supplier_name}
 
 
 # ─────────────────────────────────────────────────────────────
