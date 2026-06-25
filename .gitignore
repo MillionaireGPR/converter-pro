@@ -45,6 +45,9 @@ backend/image_extractor/temp/
 **/temp/
 *.bak
 
+# Perfis Phase 0 auto-gerados (específicos por instalação/cliente)
+backend/image_extractor/supplier_profiles/
+
 # Test outputs
 test-output.txt
 playwright-report/
