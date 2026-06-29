@@ -518,6 +518,17 @@ def _match_via_grid(
                 if best_img:
                     print(f"    [ColMatch] {sku_code}: match cross-col (col_idx={col_idx})")
 
+            # LAST-RESORT: catálogos de lista exportados de planilha (ex: UNIVERSAL)
+            # onde imagens ficam numa coluna separada dos SKUs por mais de 1 coluna
+            # de distância (UNIVERSAL: imagem x≈109, SKU x≈339, col_2 não alcança
+            # col_0 pelo ±1 acima). Tenta qualquer imagem não usada na página pela
+            # proximidade Y — só ativa quando todos os outros métodos falharam.
+            if not best_img:
+                all_page_imgs = [img for imgs in col_imgs.values() for img in imgs]
+                _try_match(all_page_imgs)
+                if best_img:
+                    print(f"    [ColMatch] {sku_code}: match last-resort Y-proximity (col_idx={col_idx})")
+
             if not best_img:
                 unmatched.append({"sku": sku_code, "page": page_num, "reason": "no_img_in_col"})
                 continue

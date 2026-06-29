@@ -44,7 +44,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.25-v49-phase0-genconfig-retry"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.29-v50-lastresort-colmatch"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")

@@ -468,7 +468,7 @@ export default function ConversaoProdutos() {
                   const file = e.dataTransfer.files[0];
                   if (file) {
                     setSelectedFile(file);
-                    setTipoArquivo("excel");
+                    setTipoArquivo(detectFileType(file.name) === 'pdf' ? 'pdf' : 'excel');
                     toast.success(`Arquivo ${file.name} recebido!`);
                   }
                 }}
