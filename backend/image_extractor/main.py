@@ -44,7 +44,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.29-v50-lastresort-colmatch"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.06.30-v51-universal-promo-price"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")

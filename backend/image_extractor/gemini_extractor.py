@@ -322,6 +322,20 @@ SUPPLIER_HINTS: Dict[str, str] = {
         "- preço: o número de 'Preço: R$ X,XX' (é o preço de catálogo; desconto é aplicado depois no Mercos).\n"
         "- 'Medidas'/'Embalagem' vão em observacoes, não no nome."
     ),
+    "UNIVERSAL": (
+        "DICAS ESPECÍFICAS DO FORNECEDOR UNIVERSAL (catálogo UNIVERSAL - PRECO FINAL):\n"
+        "- Layout: planilha exportada como PDF. Cada linha: número sequencial + descrição do produto "
+        "+ código após traço (ex: '1 Papel PVC 60x60 - UC202806'). O código fica SEMPRE ao FINAL da linha, "
+        "após o último traço.\n"
+        "- código: prefixo 'UC' + 6 dígitos (ex: UC202806, UC202015). Extraia EXATAMENTE como aparece.\n"
+        "- preço: valor 'R$ X,XX' na coluna 'Price'. Use esse valor normalmente.\n"
+        "- PROMOÇÃO — PREÇO (CRÍTICO): quando um produto tem tag de promoção e a coluna 'Price' exibir "
+        "DOIS valores (ex: 'R$4,35 / R$3,87' ou 'R$4,35 R$3,87'), use SEMPRE o SEGUNDO valor (o MENOR) "
+        "como preço final (preco=3.87 no exemplo). O PRIMEIRO é o preço original sem desconto — IGNORE-O. "
+        "Nunca use o primeiro preço para produtos em promoção com dois valores listados.\n"
+        "- quantidadeCaixa: coluna 'Qtd/Cx' ou equivalente.\n"
+        "- nome: a descrição antes do traço e do código (sem o número sequencial inicial e sem o código)."
+    ),
 }
 
 
