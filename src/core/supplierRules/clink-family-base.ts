@@ -87,19 +87,21 @@ export const CLINK_FAMILY_FIELD_ALIASES: FieldAliases = {
     'observacao', 'observação', 'obs', 'detalhe', 'info adicional'
   ],
   preco: [
-    'preco', 'preço', 'p.venda', 'p venda', 'pvenda', 'preco venda', 'preço venda',
-    'valor', 'vlr', 'preco tabela', 'preço tabela', 'custo', 'preco base', 'preço base'
+    'preco', 'preço', 'p.venda', 'p venda', 'pvenda', 'p.vend', 'pvend',
+    'preco venda', 'preço venda', 'valor', 'vlr', 'preco tabela', 'preço tabela',
+    'custo', 'preco base', 'preço base'
   ],
   precoPromocional: [
     'preco especial', 'preço especial', 'pespecial', 'p.especial', 'p especial',
     'preco final', 'preço final', 'pfinal', 'p.final', 'preco promocional', 'preço promocional'
   ],
   quantidadeCaixa: [
-    // "Qtd Caixa inner" (col H da Moment, que ABRE caixa) tem PRIORIDADE: é o
-    // múltiplo de venda. Match é EXATO, então só pega quando a coluna existe
-    // (Clink/Flash não têm → caem na caixa cheia abaixo). Reunião 18/06/2026.
-    'qtd caixa inner', 'qtdcaixainner', 'qtd caixa inn', 'qtd cx inner', 'caixa inner',
-    'qtdcaixa', 'qtd caixa', 'quantidade caixa', 'qtde caixa', 'caixa', 'cx',
+    // inner box (ABRE a caixa) tem PRIORIDADE para Moment — é o múltiplo de venda.
+    // Clink/Flash não têm coluna "inner" → caem nos aliases de caixa cheia abaixo.
+    // Reunião 18/06/2026. 'qtd caixa ini' = nova abreviação Moment TABELA C3B 06/07/26.
+    'qtd caixa inner', 'qtdcaixainner', 'qtd caixa inn', 'qtd caixa ini', 'qtd cx inner', 'caixa inner',
+    // outer/master box
+    'qtdcaixa', 'qtd caixa', 'qtd cai', 'qtdcai', 'quantidade caixa', 'qtde caixa', 'caixa', 'cx',
     'master', 'emb', 'embalagem', 'un cx', 'un por cx', 'unidades caixa'
   ],
   unidade: ['un', 'unidade', 'unid', 'und', 'tipo'],
@@ -738,13 +740,41 @@ export function extractClinkFamily(
 
   const findValue = (campos: Record<string, any>, aliases: string[]): any => {
     const keys = Object.keys(campos);
+
+    // Nível 1: match exato pós-normalização (maior confiança, sem risco de falso positivo)
     for (const alias of aliases) {
-      const normalizedAlias = norm(alias);
-      const foundKey = keys.find(k => norm(k) === normalizedAlias);
+      const na = norm(alias);
+      const foundKey = keys.find(k => norm(k) === na);
       if (foundKey !== undefined && campos[foundKey] !== undefined && campos[foundKey] !== '') {
         return campos[foundKey];
       }
     }
+
+    // Nível 2: near-prefix match — detecta quando o fornecedor abreviou o nome da coluna.
+    // Critérios: (a) comprimento relativo min/max ≥ 0.6 (evita curtas vs longas),
+    //            (b) prefixo comum ≥ 80% do menor string.
+    // Ex: "Qtd Cai"     → alias "qtd caixa"      (6/8=75%≥60%; prefixo 6/6=100%≥80%) ✓
+    // Ex: "P.Vend"      → alias "p.venda"         (5/6=83%≥60%; prefixo 5/5=100%≥80%) ✓
+    // Ex: "Qtd Caixa ini"→ alias "qtd caixa inner"(11/13=85%≥60%; prefixo 10/11=91%≥80%)✓
+    // Ex: "Qtd Cai"     → alias "qtd caixa inner" (6/13=46%< 60%) → REJEITADO ✓
+    for (const alias of aliases) {
+      const na = norm(alias);
+      if (na.length < 4) continue;
+      const foundKey = keys.find(k => {
+        const nk = norm(k);
+        if (nk.length < 4) return false;
+        const shorter = Math.min(na.length, nk.length);
+        const longer  = Math.max(na.length, nk.length);
+        if (shorter / longer < 0.6) return false;
+        let i = 0;
+        while (i < na.length && i < nk.length && na[i] === nk[i]) i++;
+        return i / shorter >= 0.8;
+      });
+      if (foundKey !== undefined && campos[foundKey] !== undefined && campos[foundKey] !== '') {
+        return campos[foundKey];
+      }
+    }
+
     return undefined;
   };
 
@@ -766,6 +796,28 @@ export function extractClinkFamily(
     }
     return false;
   };
+
+  // Valida mapeamento de colunas antes de iniciar o loop.
+  // Loga aviso quando o fornecedor renomeou/abreviou colunas críticas — útil para diagnóstico.
+  const primeiroValido = brutos.find(b => !shouldExclude(b.campos));
+  if (primeiroValido) {
+    const camposCriticos: Array<[keyof typeof fa, string]> = [
+      ['codigo',          'Código'],
+      ['descricao',       'Descrição'],
+      ['preco',           'Preço'],
+      ['quantidadeCaixa', 'Qtd/Caixa'],
+    ];
+    const naoMapeados = camposCriticos
+      .filter(([f]) => findValue(primeiroValido.campos, fa[f] as string[]) === undefined)
+      .map(([, label]) => label);
+    if (naoMapeados.length > 0) {
+      const headers = Object.keys(primeiroValido.campos).filter(k => !k.startsWith('__')).join(' | ');
+      console.warn(`[ClinkFamily][${fornecedorNome}] ⚠️ Campos críticos não mapeados: ${naoMapeados.join(', ')}`);
+      console.warn(`[ClinkFamily][${fornecedorNome}] Headers detectados: ${headers}`);
+    } else {
+      console.log(`[ClinkFamily][${fornecedorNome}] ✅ Mapeamento de colunas validado`);
+    }
+  }
 
   for (let idx = 0; idx < brutos.length; idx++) {
     const bruto = brutos[idx];
