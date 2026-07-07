@@ -7,6 +7,7 @@ import {
   buildCommercialProductName,
   hasCommercialSuffix,
   removeCommercialSuffix,
+  CLINK_FAMILY_FIELD_ALIASES,
   VisualCategory,
 } from './clink-family-base';
 
@@ -131,5 +132,40 @@ describe('removeCommercialSuffix', () => {
 
   it('deve retornar string vazia para input vazio', () => {
     expect(removeCommercialSuffix('')).toBe('');
+  });
+});
+
+// ===================================================================
+// TESTES: Cobertura de aliases — variantes abreviadas Moment TABELA C3B
+// Garante que novos nomes de colunas introduzidos em 06/07/26 são reconhecidos.
+// ===================================================================
+
+describe('CLINK_FAMILY_FIELD_ALIASES — variantes abreviadas Moment TABELA C3B (06/07/26)', () => {
+  it('preco deve conter alias p.vend (nova abreviação Moment)', () => {
+    expect(CLINK_FAMILY_FIELD_ALIASES.preco).toContain('p.vend');
+  });
+
+  it('preco deve conter alias pvend (normalizado de p.vend)', () => {
+    expect(CLINK_FAMILY_FIELD_ALIASES.preco).toContain('pvend');
+  });
+
+  it('quantidadeCaixa deve conter alias qtd cai (nova abreviação Moment)', () => {
+    expect(CLINK_FAMILY_FIELD_ALIASES.quantidadeCaixa).toContain('qtd cai');
+  });
+
+  it('quantidadeCaixa deve conter alias qtdcai (normalizado de qtd cai)', () => {
+    expect(CLINK_FAMILY_FIELD_ALIASES.quantidadeCaixa).toContain('qtdcai');
+  });
+
+  it('quantidadeCaixa deve conter alias qtd caixa ini (inner abreviado Moment)', () => {
+    expect(CLINK_FAMILY_FIELD_ALIASES.quantidadeCaixa).toContain('qtd caixa ini');
+  });
+
+  it('inner box aliases devem ter prioridade sobre outer box aliases (invariante Moment)', () => {
+    const aliases = CLINK_FAMILY_FIELD_ALIASES.quantidadeCaixa;
+    const innerIdx = aliases.indexOf('qtd caixa inner');
+    const outerIdx = aliases.indexOf('qtd caixa');
+    expect(innerIdx).toBeGreaterThanOrEqual(0);
+    expect(outerIdx).toBeGreaterThan(innerIdx);
   });
 });
