@@ -17,17 +17,41 @@ const norm = (s: string): string => {
 
 /**
  * Busca o valor de um campo em um objeto bruto usando aliases.
- * Retorna o primeiro match encontrado.
+ * Nível 1: match exato pós-normalização.
+ * Nível 2: near-prefix match — detecta quando o fornecedor abreviou o header.
+ *   Critérios: comprimento relativo min/max >= 60% E prefixo comum >= 80% do menor.
  */
 const findValue = (campos: Record<string, any>, aliases: string[]): any => {
   const keys = Object.keys(campos);
+
+  // Nível 1: match exato (maior confiança)
   for (const alias of aliases) {
-    const normalizedAlias = norm(alias);
-    const foundKey = keys.find(k => norm(k) === normalizedAlias);
+    const na = norm(alias);
+    const foundKey = keys.find(k => norm(k) === na);
     if (foundKey !== undefined && campos[foundKey] !== undefined && campos[foundKey] !== '') {
       return campos[foundKey];
     }
   }
+
+  // Nível 2: near-prefix match (fornecedor abreviou o nome da coluna)
+  for (const alias of aliases) {
+    const na = norm(alias);
+    if (na.length < 4) continue;
+    const foundKey = keys.find(k => {
+      const nk = norm(k);
+      if (nk.length < 4) return false;
+      const shorter = Math.min(na.length, nk.length);
+      const longer  = Math.max(na.length, nk.length);
+      if (shorter / longer < 0.6) return false;
+      let i = 0;
+      while (i < na.length && i < nk.length && na[i] === nk[i]) i++;
+      return i / shorter >= 0.8;
+    });
+    if (foundKey !== undefined && campos[foundKey] !== undefined && campos[foundKey] !== '') {
+      return campos[foundKey];
+    }
+  }
+
   return undefined;
 };
 
