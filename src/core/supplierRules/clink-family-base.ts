@@ -98,8 +98,10 @@ export const CLINK_FAMILY_FIELD_ALIASES: FieldAliases = {
   quantidadeCaixa: [
     // inner box (ABRE a caixa) tem PRIORIDADE para Moment — é o múltiplo de venda.
     // Clink/Flash não têm coluna "inner" → caem nos aliases de caixa cheia abaixo.
-    // Reunião 18/06/2026. 'qtd caixa ini' = nova abreviação Moment TABELA C3B 06/07/26.
+    // v52: 'qtd caixa ini' = nova abreviação Moment TABELA C3B 06/07/26.
+    // v54: 'qtd cai inner/inn' = variante onde Moment abrevia "Caixa"→"Cai" mas mantém "inner/inn".
     'qtd caixa inner', 'qtdcaixainner', 'qtd caixa inn', 'qtd caixa ini', 'qtd cx inner', 'caixa inner',
+    'qtd cai inner', 'qtdcaiinner', 'qtd cai inn', 'qtdcaiinn',
     // outer/master box
     'qtdcaixa', 'qtd caixa', 'qtd cai', 'qtdcai', 'quantidade caixa', 'qtde caixa', 'caixa', 'cx',
     'master', 'emb', 'embalagem', 'un cx', 'un por cx', 'unidades caixa'
