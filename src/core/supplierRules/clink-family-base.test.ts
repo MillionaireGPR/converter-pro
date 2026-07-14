@@ -252,3 +252,60 @@ describe('🔒 MOMENT — inner vs outer box (extração real via momentAdapter)
     expect(p.quantidadeCaixa).toBe(24);
   });
 });
+
+// ===================================================================
+// TESTES COM DADOS REAIS — TABELA C3B 06.07.26
+// Estrutura real confirmada do Excel:
+//   Col E: "Qtd Caixa" (outer, numerico)
+//   Col F: "Qtd Caixa inner" (inner, STRING — "30" ou "NÃO POSSUI CX INNER")
+//   Col G: "P.Venda" (preco)
+// 1245/1851 produtos (67%) tem inner = "NÃO POSSUI CX INNER"
+// ===================================================================
+
+describe('🔒 MOMENT — TABELA C3B 06.07.26 (dados reais do catalogo)', () => {
+  it('CB2700: inner STRING "30" — usa inner (30), NÃO outer (60)', () => {
+    const [p] = momentAdapter.extract!([brutoMoment({
+      'Codigo': 'CB2700',
+      'Descr Compl': 'PRODUTO COM INNER STRING',
+      'P.Venda': 3.30,
+      'Qtd Caixa': 60,
+      'Qtd Caixa inner': '30',  // string, como gravado no Excel real
+    })], momentAdapter) as any[];
+    expect(p.quantidadeCaixa).toBe(30);
+    expect(p.preco).toBeCloseTo(3.30);
+  });
+
+  it('CB3804: inner "NÃO POSSUI CX INNER" — usa outer Qtd Caixa (24), NÃO default 1 — v54', () => {
+    const [p] = momentAdapter.extract!([brutoMoment({
+      'Codigo': 'CB3804',
+      'Descr Compl': '2PC PAPEL DE PAREDE MARMORE',
+      'P.Venda': 7.13,
+      'Qtd Caixa': 24,
+      'Qtd Caixa inner': 'NÃO POSSUI CX INNER',
+    })], momentAdapter) as any[];
+    expect(p.quantidadeCaixa).toBe(24);  // NÃO deve ser 1 (default)
+    expect(p.preco).toBeCloseTo(7.13);
+  });
+
+  it('CB3665: inner "NÃO POSSUI CX INNER" — usa outer Qtd Caixa (8)', () => {
+    const [p] = momentAdapter.extract!([brutoMoment({
+      'Codigo': 'CB3665',
+      'Descr Compl': 'ABAJUR S/ LAMPADA CERAMICA',
+      'P.Venda': 52.35,
+      'Qtd Caixa': 8,
+      'Qtd Caixa inner': 'NÃO POSSUI CX INNER',
+    })], momentAdapter) as any[];
+    expect(p.quantidadeCaixa).toBe(8);
+  });
+
+  it('Grupo Hutz CB2382: inner "30" outer 60 — prioridade inner', () => {
+    const [p] = momentAdapter.extract!([brutoMoment({
+      'Codigo': 'CB2382',
+      'Descr Compl': 'PRODUTO HUTZ',
+      'P.Venda': 3.53,
+      'Qtd Caixa': 60,
+      'Qtd Caixa inner': '30',
+    })], momentAdapter) as any[];
+    expect(p.quantidadeCaixa).toBe(30);
+  });
+});

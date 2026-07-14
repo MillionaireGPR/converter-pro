@@ -882,6 +882,16 @@ export function extractClinkFamily(
     let multiplo = extractMultiplo(`${descricao} ${descricaoComplementar} ${allValues}`);
     let quantidadeCaixa = toNum(findValue(campos, fa.quantidadeCaixa));
 
+    // Quando a coluna inner existe mas contém texto não-numérico ("NÃO POSSUI CX INNER"),
+    // toNum retorna 0. Nesse caso, tentamos o outer box diretamente antes do heurístico.
+    // Catalogo TABELA C3B 06.07.26: 1245/1851 produtos têm inner não-numérico.
+    if (quantidadeCaixa <= 0) {
+      const outerQtd = toNum(findValue(campos, [
+        'qtdcaixa', 'qtd caixa', 'qtd cai', 'qtdcai', 'quantidade caixa', 'qtde caixa', 'caixa', 'cx',
+      ]));
+      if (outerQtd > 0) quantidadeCaixa = outerQtd;
+    }
+
     if (!quantidadeCaixa || quantidadeCaixa <= 0) {
       const qtdExtraida = extractCaixa(`${descricao} ${descricaoComplementar} ${allValues}`);
       if (qtdExtraida) {
