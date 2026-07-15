@@ -10,6 +10,12 @@ import {
   CLINK_FAMILY_FIELD_ALIASES,
   VisualCategory,
 } from './clink-family-base';
+import { momentAdapter } from './moment';
+import { ProdutoBruto } from '../types/productPipeline';
+
+const brutoMoment = (campos: Record<string, any>): ProdutoBruto => ({
+  campos, linhaOrigem: 0, paginaOrigem: 1, textoBruto: '',
+});
 
 describe('buildCommercialProductName', () => {
   it('deve adicionar sufixo ***PROMOCAO*** para itens promocionais', () => {
@@ -167,5 +173,139 @@ describe('CLINK_FAMILY_FIELD_ALIASES — variantes abreviadas Moment TABELA C3B 
     const outerIdx = aliases.indexOf('qtd caixa');
     expect(innerIdx).toBeGreaterThanOrEqual(0);
     expect(outerIdx).toBeGreaterThan(innerIdx);
+  });
+
+  it('quantidadeCaixa deve conter alias qtd cai inner (variante abreviada de inner — v54)', () => {
+    expect(CLINK_FAMILY_FIELD_ALIASES.quantidadeCaixa).toContain('qtd cai inner');
+  });
+
+  it('quantidadeCaixa deve conter alias qtd cai inn (variante abreviada de inner — v54)', () => {
+    expect(CLINK_FAMILY_FIELD_ALIASES.quantidadeCaixa).toContain('qtd cai inn');
+  });
+
+  it('qtd cai inner deve ter prioridade sobre qtd caixa (outer)', () => {
+    const aliases = CLINK_FAMILY_FIELD_ALIASES.quantidadeCaixa;
+    const innerNewIdx = aliases.indexOf('qtd cai inner');
+    const outerIdx = aliases.indexOf('qtd caixa');
+    expect(innerNewIdx).toBeGreaterThanOrEqual(0);
+    expect(outerIdx).toBeGreaterThan(innerNewIdx);
+  });
+});
+
+// ===================================================================
+// TESTES DE INTEGRAÇÃO: Extração real do Moment (inner vs outer box)
+// ===================================================================
+
+describe('🔒 MOMENT — inner vs outer box (extração real via momentAdapter)', () => {
+  it('formato antigo: usa "Qtd Caixa inner" (12) e NÃO "Qtd Caixa" outer (96)', () => {
+    const [p] = momentAdapter.extract!([brutoMoment({
+      'Codigo': 'MO12345',
+      'Descricao': 'PRODUTO TESTE FORMATO ANTIGO',
+      'P.Venda': 25.50,
+      'Qtd Caixa inner': 12,
+      'Qtd Caixa': 96,
+    })], momentAdapter) as any[];
+    expect(p.quantidadeCaixa).toBe(12);
+  });
+
+  it('TABELA C3B 06/07/26: usa "Qtd Caixa ini" (12) e NÃO "Qtd Cai" outer (96) — v52', () => {
+    const [p] = momentAdapter.extract!([brutoMoment({
+      'Codigo': 'MO12345',
+      'Descricao': 'PRODUTO TESTE C3B',
+      'P.Vend': 25.50,
+      'Qtd Caixa ini': 12,
+      'Qtd Cai': 96,
+    })], momentAdapter) as any[];
+    expect(p.quantidadeCaixa).toBe(12);
+    expect(p.preco).toBeCloseTo(25.50);
+  });
+
+  it('variante "Qtd Cai Inner": usa inner (12) e NÃO "Qtd Caixa" outer (96) — v54', () => {
+    const [p] = momentAdapter.extract!([brutoMoment({
+      'Codigo': 'MO12345',
+      'Descricao': 'PRODUTO TESTE CAI INNER',
+      'P.Vend': 25.50,
+      'Qtd Cai Inner': 12,
+      'Qtd Caixa': 96,
+    })], momentAdapter) as any[];
+    expect(p.quantidadeCaixa).toBe(12);
+  });
+
+  it('variante "Qtd Cai Inn": usa inner (12) e NÃO "Qtd Caixa" outer (96) — v54', () => {
+    const [p] = momentAdapter.extract!([brutoMoment({
+      'Codigo': 'MO12345',
+      'Descricao': 'PRODUTO TESTE CAI INN',
+      'P.Vend': 25.50,
+      'Qtd Cai Inn': 12,
+      'Qtd Caixa': 96,
+    })], momentAdapter) as any[];
+    expect(p.quantidadeCaixa).toBe(12);
+  });
+
+  it('catalogo somente com "Qtd Cai" (sem inner): usa o único valor disponível', () => {
+    const [p] = momentAdapter.extract!([brutoMoment({
+      'Codigo': 'MO12345',
+      'Descricao': 'PRODUTO TESTE UNICO',
+      'P.Vend': 15.00,
+      'Qtd Cai': 24,
+    })], momentAdapter) as any[];
+    expect(p.quantidadeCaixa).toBe(24);
+  });
+});
+
+// ===================================================================
+// TESTES COM DADOS REAIS — TABELA C3B 06.07.26
+// Estrutura real confirmada do Excel:
+//   Col E: "Qtd Caixa" (outer, numerico)
+//   Col F: "Qtd Caixa inner" (inner, STRING — "30" ou "NÃO POSSUI CX INNER")
+//   Col G: "P.Venda" (preco)
+// 1245/1851 produtos (67%) tem inner = "NÃO POSSUI CX INNER"
+// ===================================================================
+
+describe('🔒 MOMENT — TABELA C3B 06.07.26 (dados reais do catalogo)', () => {
+  it('CB2700: inner STRING "30" — usa inner (30), NÃO outer (60)', () => {
+    const [p] = momentAdapter.extract!([brutoMoment({
+      'Codigo': 'CB2700',
+      'Descr Compl': 'PRODUTO COM INNER STRING',
+      'P.Venda': 3.30,
+      'Qtd Caixa': 60,
+      'Qtd Caixa inner': '30',  // string, como gravado no Excel real
+    })], momentAdapter) as any[];
+    expect(p.quantidadeCaixa).toBe(30);
+    expect(p.preco).toBeCloseTo(3.30);
+  });
+
+  it('CB3804: inner "NÃO POSSUI CX INNER" — usa outer Qtd Caixa (24), NÃO default 1 — v54', () => {
+    const [p] = momentAdapter.extract!([brutoMoment({
+      'Codigo': 'CB3804',
+      'Descr Compl': '2PC PAPEL DE PAREDE MARMORE',
+      'P.Venda': 7.13,
+      'Qtd Caixa': 24,
+      'Qtd Caixa inner': 'NÃO POSSUI CX INNER',
+    })], momentAdapter) as any[];
+    expect(p.quantidadeCaixa).toBe(24);  // NÃO deve ser 1 (default)
+    expect(p.preco).toBeCloseTo(7.13);
+  });
+
+  it('CB3665: inner "NÃO POSSUI CX INNER" — usa outer Qtd Caixa (8)', () => {
+    const [p] = momentAdapter.extract!([brutoMoment({
+      'Codigo': 'CB3665',
+      'Descr Compl': 'ABAJUR S/ LAMPADA CERAMICA',
+      'P.Venda': 52.35,
+      'Qtd Caixa': 8,
+      'Qtd Caixa inner': 'NÃO POSSUI CX INNER',
+    })], momentAdapter) as any[];
+    expect(p.quantidadeCaixa).toBe(8);
+  });
+
+  it('Grupo Hutz CB2382: inner "30" outer 60 — prioridade inner', () => {
+    const [p] = momentAdapter.extract!([brutoMoment({
+      'Codigo': 'CB2382',
+      'Descr Compl': 'PRODUTO HUTZ',
+      'P.Venda': 3.53,
+      'Qtd Caixa': 60,
+      'Qtd Caixa inner': '30',
+    })], momentAdapter) as any[];
+    expect(p.quantidadeCaixa).toBe(30);
   });
 });
