@@ -22,6 +22,10 @@ export default function ExportacoesMercos() {
   const { produtosPadronizados } = useProdutos();
   const navigate = useNavigate();
   const [precoMode, setPrecoMode] = useState<'tabela' | 'desconto'>('desconto');
+  // Regra de múltiplo (reunião 06/07): por padrão zera a coluna Múltiplo (evita
+  // travar a importação Mercos), mantendo só p/ fornecedores que abrem caixa (Moment).
+  // Marcar mantém o múltiplo de TODOS os fornecedores.
+  const [manterTodosMultiplos, setManterTodosMultiplos] = useState(false);
   
   // Filtros de coluna para identificar dados faltantes
   const [busca, setBusca] = useState("");
@@ -148,8 +152,11 @@ export default function ExportacoesMercos() {
 
   // Gera os produtos Mercos usando o pipeline de normalização
   const mercosResult = useMemo(() => {
-    return batchNormalizeToMercos(produtosV2, { incluirInvalidos: false });
-  }, [produtosV2]);
+    return batchNormalizeToMercos(produtosV2, {
+      incluirInvalidos: false,
+      aplicarRegraMultiplo: !manterTodosMultiplos,
+    });
+  }, [produtosV2, manterTodosMultiplos]);
 
   const validProducts = displayProducts.filter(p => p.status !== 'erro' && (p.codigoFinal || p.codigoOriginal) && (precoMode === 'tabela' ? p.precoBase > 0 : p.precoFinal > 0));
 
@@ -243,6 +250,10 @@ export default function ExportacoesMercos() {
               <SelectItem value="tabela">Preço Base (Tabela)</SelectItem>
             </SelectContent>
           </Select>
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer h-9 px-2 rounded-md border bg-card" title="Por padrão a coluna Múltiplo sai vazia (evita travar a importação Mercos), exceto para fornecedores que abrem caixa (ex: Moment). Marque para manter o múltiplo de todos.">
+            <input type="checkbox" checked={manterTodosMultiplos} onChange={e => setManterTodosMultiplos(e.target.checked)} className="w-3.5 h-3.5" />
+            Manter múltiplo de todos
+          </label>
           <Badge variant="outline" className="text-xs h-9">{exportacoesMercos.length} exportação(ões) realizadas</Badge>
           <Button size="sm" className="gradient-primary text-primary-foreground h-9" onClick={handleGerarPlanilha}>
             <Download className="h-4 w-4 mr-1" /> Gerar Planilha Mercos

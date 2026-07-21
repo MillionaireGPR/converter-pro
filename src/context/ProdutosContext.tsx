@@ -15,6 +15,7 @@ interface ProdutosContextType {
   validarProdutos: (ids: string[]) => Promise<void>;
   aplicarDesconto: (ids: string[], percentual: number, campanha?: string, fornecedor?: string, descontoString?: string) => Promise<void>;
   aplicarIpi: (ids: string[], ipi: number, fornecedor?: string, updatesIndividuais?: { id: string; ipi: number }[]) => Promise<void>;
+  aplicarMultiplicadorPreco: (ids: string[], fator: number, fornecedor?: string) => Promise<void>;
   limparBase: (fornecedorNome?: string) => Promise<void>;
   descontos: import('./types').DescontoSalvo[];
 }
@@ -301,6 +302,40 @@ export function ProdutosProvider({ children }: { children: ReactNode }) {
     }
   }, [produtosPadronizados, registrarHistorico]);
 
+  // Multiplica o PREÇO BASE por um fator (reunião 06/07): alguns fornecedores
+  // mandam o preço pela metade do valor do cliente (ex: catálogo x2). Recalcula
+  // o preço final preservando o desconto já aplicado no produto.
+  const aplicarMultiplicadorPreco = useCallback(async (ids: string[], fator: number, fornecedor?: string) => {
+    if (!fator || fator <= 0) { toast.error("Informe um fator de multiplicação válido (> 0)."); return; }
+    try {
+      const results = await Promise.all(ids.map(async (id) => {
+        const p = produtosPadronizados.find(x => x.id === id);
+        if (!p) return null;
+        const novoPrecoBase = +(p.precoBase * fator).toFixed(2);
+        const desc = p.descontoPercentual || 0;
+        const novoPrecoFinal = p.bloqueiaDesconto
+          ? novoPrecoBase
+          : +(novoPrecoBase * (1 - desc / 100)).toFixed(2);
+
+        await (supabase.from('standardized_products') as any).update({
+          base_price: novoPrecoBase, final_price: novoPrecoFinal
+        }).eq('id', id);
+
+        return { ...p, precoBase: novoPrecoBase, precoFinal: novoPrecoFinal };
+      }));
+
+      const updatedProds = results.filter(Boolean) as Produto[];
+      setProdutosPadronizados(prev => prev.map(p => updatedProds.find(u => u.id === p.id) || p));
+
+      await registrarHistorico({
+        arquivo: '-', fornecedor: fornecedor || 'Diversos', usuario: 'Admin', data: now(),
+        tipoConversao: `Multiplicador de Preço (x${fator})`, qtdItens: updatedProds.length, status: 'concluído'
+      });
+    } catch (e) {
+      toast.error("Erro ao aplicar multiplicador de preço.");
+    }
+  }, [produtosPadronizados, registrarHistorico]);
+
   const limparBase = useCallback(async (fornecedorNome?: string) => {
     try {
       if (fornecedorNome) {
@@ -319,7 +354,7 @@ export function ProdutosProvider({ children }: { children: ReactNode }) {
   return (
     <ProdutosContext.Provider value={{
       produtosPadronizados, setProdutosPadronizados, descontos, addProdutos, addProdutosNormalizados,
-      updateProduto, validarProdutos, aplicarDesconto, aplicarIpi, limparBase
+      updateProduto, validarProdutos, aplicarDesconto, aplicarIpi, aplicarMultiplicadorPreco, limparBase
     }}>
       {children}
     </ProdutosContext.Provider>
