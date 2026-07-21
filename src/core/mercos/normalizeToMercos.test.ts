@@ -242,3 +242,42 @@ describe('fornecedor sem contaminação Clink', () => {
     }
   });
 });
+
+// ===================================================================
+// REGRA DE MÚLTIPLO POR FORNECEDOR (reunião 06/07/2026)
+// Só mantém o múltiplo p/ quem abre caixa (Moment); demais saem vazios.
+// ===================================================================
+describe('🔒 regra de múltiplo por fornecedor no export', () => {
+  it('sem a regra (legado): múltiplo é sempre preenchido', () => {
+    const produtos = [
+      makeProduto({ fornecedor: 'Dagia', codigo: 'D1', quantidadeCaixa: 12 }),
+      makeProduto({ fornecedor: 'Moment', codigo: 'M1', quantidadeCaixa: 30 }),
+    ];
+    const { validos } = batchNormalizeToMercos(produtos);
+    expect(validos[0]['Múltiplo (opcional)']).toBe(12);
+    expect(validos[1]['Múltiplo (opcional)']).toBe(30);
+  });
+
+  it('com a regra: Moment mantém múltiplo, Dagia sai vazio', () => {
+    const produtos = [
+      makeProduto({ fornecedor: 'Dagia', codigo: 'D1', quantidadeCaixa: 12 }),
+      makeProduto({ fornecedor: 'Moment', codigo: 'M1', quantidadeCaixa: 30 }),
+    ];
+    const { validos } = batchNormalizeToMercos(produtos, { aplicarRegraMultiplo: true });
+    expect(validos[0]['Múltiplo (opcional)']).toBe(''); // Dagia zerado
+    expect(validos[1]['Múltiplo (opcional)']).toBe(30); // Moment mantém
+  });
+
+  it('com a regra: qtd por caixa continua no info adicional mesmo com múltiplo vazio', () => {
+    const produtos = [makeProduto({ fornecedor: 'Dagia', codigo: 'D1', quantidadeCaixa: 12 })];
+    const { validos } = batchNormalizeToMercos(produtos, { aplicarRegraMultiplo: true });
+    expect(validos[0]['Múltiplo (opcional)']).toBe('');
+    expect(String(validos[0]['Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)'])).toContain('Cx c/ 12 unidades');
+  });
+
+  it('produto com múltiplo vazio continua válido (coluna é opcional)', () => {
+    const produtos = [makeProduto({ fornecedor: 'Dagia', codigo: 'D1', quantidadeCaixa: 12 })];
+    const { validos } = batchNormalizeToMercos(produtos, { aplicarRegraMultiplo: true });
+    expect(validateMercosProduct(validos[0])).toHaveLength(0);
+  });
+});

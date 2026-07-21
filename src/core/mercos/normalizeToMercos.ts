@@ -12,6 +12,22 @@ import {
 } from '../types/productPipeline';
 import { sanitizeForExport, normalizeSpaces } from '../normalizers/cleaners';
 
+// ===================================================================
+// REGRA DE MÚLTIPLO (reunião 06/07/2026)
+// A importação do Mercos trava quando a coluna "Múltiplo" vem preenchida
+// para fornecedores que NÃO trabalham abrindo caixa. Por isso, no export,
+// o múltiplo só é mantido para os fornecedores que realmente vendem por
+// múltiplo (abrem caixa inner) — os demais saem com a coluna vazia.
+// A qtd por caixa continua indo em "Informações adicionais" como referência.
+// ===================================================================
+export const FORNECEDORES_COM_MULTIPLO = ['MOMENT'];
+
+/** True se o fornecedor usa múltiplo de venda (abre caixa) e deve manter a coluna. */
+export const fornecedorUsaMultiplo = (fornecedor: string | undefined): boolean => {
+  const f = (fornecedor || '').toUpperCase();
+  return FORNECEDORES_COM_MULTIPLO.some(nome => f.includes(nome));
+};
+
 /**
  * Monta o campo "Informações adicionais" do Mercos.
  * Prioridade:
@@ -106,8 +122,14 @@ const createEmptyMercosRow = (): ProdutoMercos => {
  * - Complementos vão para observações
  * - Se faltar código ou descrição → item inválido
  */
-export const normalizeToMercos = (p: ProdutoNormalizadoV2): ProdutoMercos => {
+export const normalizeToMercos = (
+  p: ProdutoNormalizadoV2,
+  opts?: { manterMultiplo?: boolean }
+): ProdutoMercos => {
   const row = createEmptyMercosRow();
+  // Por padrão mantém o múltiplo (compatível com comportamento legado/testes P3).
+  // O export decide via `manterMultiplo` quando aplica a regra por fornecedor.
+  const manterMultiplo = opts?.manterMultiplo !== false;
 
   const finalCode = sanitizeForExport(p.codigo || p.codigoOriginal || '');
   // Nome SEMPRE em MAIÚSCULAS no export Mercos.
@@ -135,7 +157,11 @@ export const normalizeToMercos = (p: ProdutoNormalizadoV2): ProdutoMercos => {
     : builtAdicionais;
 
   // Múltiplo = quantidade por caixa (sempre >= 1; unidade = 1).
-  const finalMultiplo = p.quantidadeCaixa && p.quantidadeCaixa > 0 ? p.quantidadeCaixa : 1;
+  // Se a regra por fornecedor pedir para não manter, a coluna sai vazia
+  // (evita travar a importação do Mercos p/ quem não abre caixa).
+  const finalMultiplo = manterMultiplo
+    ? (p.quantidadeCaixa && p.quantidadeCaixa > 0 ? p.quantidadeCaixa : 1)
+    : '';
 
   row['Código do produto (recomendado)'] = finalCode;
   row['Nome do produto (obrigatório)'] = finalName;
@@ -155,7 +181,14 @@ export const normalizeToMercos = (p: ProdutoNormalizadoV2): ProdutoMercos => {
  */
 export const batchNormalizeToMercos = (
   produtos: ProdutoNormalizadoV2[],
-  options?: { incluirInvalidos?: boolean; incluirEsgotados?: boolean }
+  options?: {
+    incluirInvalidos?: boolean;
+    incluirEsgotados?: boolean;
+    // Quando true (padrão no export), aplica a regra de múltiplo por fornecedor:
+    // mantém o múltiplo só para quem abre caixa (FORNECEDORES_COM_MULTIPLO) e
+    // zera para os demais. Sem esta flag o comportamento legado é preservado.
+    aplicarRegraMultiplo?: boolean;
+  }
 ): { validos: ProdutoMercos[]; invalidos: ProdutoNormalizadoV2[]; total: number } => {
   const validos: ProdutoMercos[] = [];
   const invalidos: ProdutoNormalizadoV2[] = [];
@@ -185,7 +218,10 @@ export const batchNormalizeToMercos = (
       continue;
     }
 
-    validos.push(normalizeToMercos(p));
+    const manterMultiplo = options?.aplicarRegraMultiplo
+      ? fornecedorUsaMultiplo(p.fornecedor)
+      : true;
+    validos.push(normalizeToMercos(p, { manterMultiplo }));
   }
 
   return { validos, invalidos, total: produtos.length };

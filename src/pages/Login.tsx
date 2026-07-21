@@ -3,16 +3,29 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
+import { useAuth } from "@/context/AuthContext";
+import { toast } from "sonner";
 import logo from "@/assets/logo-nunes.png";
 
 export default function Login() {
   const navigate = useNavigate();
+  const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
+  const [erro, setErro] = useState("");
+  const [carregando, setCarregando] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    navigate("/dashboard");
+    setCarregando(true);
+    setErro("");
+    const ok = await login(email, senha);
+    setCarregando(false);
+    if (ok) {
+      navigate("/dashboard");
+    } else {
+      setErro("Usuário ou senha inválidos.");
+    }
   };
 
   return (
@@ -29,22 +42,29 @@ export default function Login() {
           </div>
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground">E-mail</label>
-              <Input type="email" placeholder="seu@email.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <label className="text-sm font-medium text-foreground">Usuário</label>
+              <Input type="text" placeholder="usuário" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" />
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-foreground">Senha</label>
-              <Input type="password" placeholder="••••••••" value={senha} onChange={(e) => setSenha(e.target.value)} />
+              <Input type="password" placeholder="••••••••" value={senha} onChange={(e) => setSenha(e.target.value)} autoComplete="current-password" />
             </div>
+            {erro && <p className="text-xs text-destructive">{erro}</p>}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Checkbox id="remember" />
                 <label htmlFor="remember" className="text-xs text-muted-foreground cursor-pointer">Lembrar acesso</label>
               </div>
-              <a href="#" className="text-xs text-primary hover:underline">Esqueci a senha</a>
+              <button
+                type="button"
+                onClick={() => toast.info("Acesso interno: a senha é definida pelo administrador. Fale com o Gabriel para redefinir.")}
+                className="text-xs text-primary hover:underline"
+              >
+                Esqueci a senha
+              </button>
             </div>
-            <Button type="submit" className="w-full gradient-primary text-primary-foreground font-semibold">
-              Entrar
+            <Button type="submit" disabled={carregando} className="w-full gradient-primary text-primary-foreground font-semibold">
+              {carregando ? "Entrando..." : "Entrar"}
             </Button>
           </form>
           <p className="text-center text-[10px] text-muted-foreground">Nunes Representações © 2026</p>

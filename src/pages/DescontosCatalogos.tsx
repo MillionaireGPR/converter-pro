@@ -20,7 +20,7 @@ import logo from "@/assets/logo-nunes.png";
 
 export default function DescontosCatalogos() {
   const { gerarCatalogo } = useApp();
-  const { produtosPadronizados, setProdutosPadronizados, aplicarDesconto, aplicarIpi } = useProdutos();
+  const { produtosPadronizados, setProdutosPadronizados, aplicarDesconto, aplicarIpi, aplicarMultiplicadorPreco } = useProdutos();
   const { fornecedores } = useFornecedores();
   const { registrarHistorico } = useHistorico();
   const navigate = useNavigate();
@@ -34,6 +34,9 @@ export default function DescontosCatalogos() {
   
   // Estado para IPI em massa
   const [novoIpi, setNovoIpi] = useState("");
+
+  // Estado para MULTIPLICADOR de preço (ex: catálogo x2 → preço final do cliente)
+  const [multiplicador, setMultiplicador] = useState("");
   
   // Estado para DESCONTO no IPI (percentual de redução)
   const [descontoIpi, setDescontoIpi] = useState("");
@@ -122,6 +125,22 @@ export default function DescontosCatalogos() {
       toast.success(`Desconto de ${descontoString}% salvo para ${ids.length} produto(s)!`);
     } catch (err) {
       toast.error("Erro ao salvar descontos no banco.");
+    }
+  };
+
+  // MULTIPLICADOR de preço
+  const multiplicadorNum = parseFloat(multiplicador.replace(',', '.'));
+  const multiplicadorValido = multiplicador !== "" && !isNaN(multiplicadorNum) && multiplicadorNum > 0;
+
+  const handleAplicarMultiplicador = async () => {
+    if (!multiplicadorValido) { toast.error("Informe um fator válido (ex: 2 para dobrar o preço)."); return; }
+    if (!produtosFiltrados.length) { toast.error("Selecione um fornecedor com produtos."); return; }
+    try {
+      const ids = produtosFiltrados.map(p => p.id);
+      await aplicarMultiplicadorPreco(ids, multiplicadorNum, fornNome);
+      toast.success(`Preço multiplicado por ${multiplicadorNum} em ${ids.length} produto(s)!`);
+    } catch (err) {
+      toast.error("Erro ao aplicar multiplicador de preço.");
     }
   };
 
@@ -646,6 +665,31 @@ export default function DescontosCatalogos() {
                     <span className="text-[10px] text-amber-600 ml-auto">Ex: R$100 + 10% = R$110</span>
                   )}
                 </div>
+              </div>
+
+              {/* Multiplicador de Preço */}
+              <div className="rounded-lg border border-indigo-200/50 bg-indigo-50/30 dark:bg-indigo-950/10 p-2.5 space-y-2">
+                <div className="flex items-center gap-2 text-indigo-700">
+                  <Tag className="h-3.5 w-3.5" />
+                  <span className="text-xs font-medium">Multiplicador de Preço</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  Alguns fornecedores mandam o preço pela metade do valor do cliente. Multiplica o <strong>preço base</strong> (o desconto continua sendo aplicado por cima).
+                </p>
+                <div className="flex items-end gap-2">
+                  <div className="flex-1 space-y-1">
+                    <label className="text-[10px] text-muted-foreground">Fator (ex: 2 = dobrar)</label>
+                    <Input type="number" min="0" step="0.01" value={multiplicador} onChange={e => setMultiplicador(e.target.value)} placeholder="Ex: 2" className={`h-7 text-xs ${multiplicador !== "" && !multiplicadorValido ? 'border-destructive' : ''}`} />
+                  </div>
+                  <div className="flex gap-1 pb-0.5">
+                    <button onClick={() => setMultiplicador("2")} className="text-[9px] px-1.5 py-1 bg-indigo-100 hover:bg-indigo-200 rounded text-indigo-700 transition-colors">x2</button>
+                    <button onClick={() => setMultiplicador("3")} className="text-[9px] px-1.5 py-1 bg-indigo-100 hover:bg-indigo-200 rounded text-indigo-700 transition-colors">x3</button>
+                    <button onClick={() => setMultiplicador("0.5")} className="text-[9px] px-1.5 py-1 bg-indigo-100 hover:bg-indigo-200 rounded text-indigo-700 transition-colors">÷2</button>
+                  </div>
+                </div>
+                <Button className="h-7 w-full text-xs bg-indigo-500 hover:bg-indigo-600 text-white" size="sm" disabled={!multiplicadorValido || !produtosFiltrados.length} onClick={handleAplicarMultiplicador}>
+                  <Save className="h-3 w-3 mr-1" /> Aplicar multiplicador
+                </Button>
               </div>
 
             </CardContent>
