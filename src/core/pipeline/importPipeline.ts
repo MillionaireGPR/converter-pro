@@ -582,12 +582,73 @@ const rowsToProdutosBrutos = (
   });
 };
 
+// ===================================================================
+// MULTI-ABA (reunião 22/07/2026): Dute, Petrin e Levivan (mesmo grupo,
+// mesmo modelo de planilha) mandam o catálogo em 3 abas -- "Itens ...
+// imediato/normal", "Itens promocionais", "Pré-venda" -- todas com o
+// MESMO cabeçalho de 6 colunas (Imagem/Referência/Descrição/Qtd Emb
+// (Físico)/Emb/Valor Venda). Sem isso, só a 1ª aba era lida
+// (workbook.SheetNames[0]) e pré-venda/promocionais eram ignoradas por
+// completo. Fica restrito a esses fornecedores (checado pelo nome do
+// adapter já resolvido) para não mudar comportamento de quem tem abas
+// extras não-relacionadas (ex: "Instruções", "Capa").
+const SUPPLIERS_MULTI_SHEET = ['dute', 'petrin', 'levivan'];
+
+const isMultiSheetSupplier = (supplierName?: string): boolean => {
+  const n = (supplierName || '').toLowerCase().trim();
+  return SUPPLIERS_MULTI_SHEET.some(s => n.includes(s));
+};
+
+/**
+ * Propaga o valor da célula superior-esquerda de cada intervalo mesclado
+ * para as demais células do intervalo, e remove a marcação de merge.
+ * Sem isso, sheet_to_json só preenche a célula-âncora; as demais viram
+ * `undefined`, deslocando a leitura posicional das colunas seguintes
+ * (reunião 22/07: "8 colunas com 3 do meio mescladas" em vez de 6).
+ */
+const unmergeWorksheet = (ws: XLSX.WorkSheet): void => {
+  const merges = ws['!merges'];
+  if (!merges || merges.length === 0) return;
+  for (const range of merges) {
+    const anchorAddr = XLSX.utils.encode_cell({ r: range.s.r, c: range.s.c });
+    const anchorCell = ws[anchorAddr];
+    if (!anchorCell) continue;
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        if (r === range.s.r && c === range.s.c) continue;
+        ws[XLSX.utils.encode_cell({ r, c })] = { ...anchorCell };
+      }
+    }
+  }
+  delete ws['!merges'];
+};
+
+/** Lê uma única aba (cabeçalho + linhas), já com merges desfeitos. */
+const readSheet = (worksheet: XLSX.WorkSheet) => {
+  unmergeWorksheet(worksheet);
+  const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+  const headerRowIndex = findHeaderRowIndex(rawRows);
+  const headerRow = rawRows[headerRowIndex] || [];
+  const headers = headerRow.map((h: any) => String(h || '').trim()).filter(Boolean);
+  const rows = XLSX.utils.sheet_to_json(worksheet, { range: headerRowIndex }) as Record<string, any>[];
+  const rows2D = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    range: headerRowIndex,
+    blankrows: false,
+  }) as any[][];
+  return { headers, rows, rows2D, headerRowIndex };
+};
+
 /**
  * Lê um arquivo Excel ou CSV e retorna dados estruturados.
  * Reutiliza a lógica de detecção de header que já existia.
  * NOVO: Usa ExcelJS para extrair cores de fonte (SheetJS não lê estilos corretamente)
  */
-const readSpreadsheet = async (data: ArrayBuffer, tipo: TipoArquivo): Promise<SpreadsheetReadResult> => {
+const readSpreadsheet = async (
+  data: ArrayBuffer,
+  tipo: TipoArquivo,
+  supplierHint?: string
+): Promise<SpreadsheetReadResult> => {
   // Opções de leitura do SheetJS (para dados)
   const readOptions: XLSX.ParsingOptions = {
     type: 'array',
@@ -596,8 +657,6 @@ const readSpreadsheet = async (data: ArrayBuffer, tipo: TipoArquivo): Promise<Sp
   };
 
   const workbook = XLSX.read(data, readOptions);
-  const sheetName = workbook.SheetNames[0];
-  const worksheet = workbook.Sheets[sheetName];
 
   // Extrair estilos de célula (cores de fonte) via parsing XML direto do .xlsx
   // JSZip + DOMParser: 100% confiável no browser
@@ -605,35 +664,32 @@ const readSpreadsheet = async (data: ArrayBuffer, tipo: TipoArquivo): Promise<Sp
   const cellStyles = await extractCellStylesFromXML(data);
   console.log(`[ReadSpreadsheet] Extraídos ${cellStyles.size} estilos via XML`);
 
-  // Lê como array 2D para detecção de header
-  const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
-  const headerRowIndex = findHeaderRowIndex(rawRows);
+  const first = readSheet(workbook.Sheets[workbook.SheetNames[0]]);
 
-  const headerRow = rawRows[headerRowIndex] || [];
-  const headers = headerRow
-    .map((h: any) => String(h || '').trim())
-    .filter(Boolean);
+  if (!isMultiSheetSupplier(supplierHint) || workbook.SheetNames.length <= 1) {
+    console.log(`[ReadSpreadsheet] Headers: ${first.headers.length}, Rows: ${first.rows.length}, Styles: ${cellStyles.size}`);
+    return { ...first, cellStyles };
+  }
 
-  // Lê como objetos a partir do header detectado.
-  // SEM `blankrows: false` para SheetJS injetar __rowNum__ correto em CADA row.
-  // O filtro de blank rows acontece depois em validateAndFixRows, preservando
-  // __rowNum__ → linhaOrigem real do Excel para matching de imagens.
-  const rows = XLSX.utils.sheet_to_json(worksheet, {
-    range: headerRowIndex,
-  }) as Record<string, any>[];
+  // Multi-aba: concatena toda aba cujo cabeçalho bata com a da primeira
+  // (mesma estrutura de produto) -- ignora abas irrelevantes em silêncio.
+  const allRows = [...first.rows];
+  const allRows2D = [...first.rows2D];
+  for (const sheetName of workbook.SheetNames.slice(1)) {
+    const sheet = readSheet(workbook.Sheets[sheetName]);
+    const sameHeader = sheet.headers.length > 0 &&
+      sheet.headers.every(h => first.headers.includes(h));
+    if (!sameHeader) {
+      console.log(`[ReadSpreadsheet] Aba "${sheetName}" ignorada (cabeçalho diferente)`);
+      continue;
+    }
+    console.log(`[ReadSpreadsheet] Aba "${sheetName}": +${sheet.rows.length} linha(s)`);
+    allRows.push(...sheet.rows);
+    allRows2D.push(...sheet.rows2D.slice(1)); // pula o header repetido
+  }
 
-  // Lê 2D estrutural para pareamento posicional (esse modo não suporta __rowNum__,
-  // mantém blankrows: false para evitar arrays vazios)
-  const rows2D = XLSX.utils.sheet_to_json(worksheet, {
-    header: 1,
-    range: headerRowIndex,
-    blankrows: false,
-  }) as any[][];
-
-  console.log(`[ReadSpreadsheet] Headers: ${headers.length}, Rows: ${rows.length}, Styles: ${cellStyles.size}`);
-
-  return { headers, rows, rows2D, headerRowIndex, cellStyles };
-
+  console.log(`[ReadSpreadsheet] Multi-aba (${supplierHint}): ${workbook.SheetNames.length} abas lidas, ${allRows.length} linha(s) no total`);
+  return { headers: first.headers, rows: allRows, rows2D: allRows2D, headerRowIndex: first.headerRowIndex, cellStyles };
 };
 
 // ===================================================================
@@ -973,7 +1029,7 @@ export const runImportPipeline = async (
   } else {
     // Excel / CSV
     parserUsado = 'xlsx-direto';
-    const spreadsheet = await readSpreadsheet(fileData, tipoArquivo);
+    const spreadsheet = await readSpreadsheet(fileData, tipoArquivo, adapter.nome || options.supplierName);
     headers = spreadsheet.headers;
 
     // NOVO: Valida e corrige linhas para evitar desalinhamento por imagens vazando
