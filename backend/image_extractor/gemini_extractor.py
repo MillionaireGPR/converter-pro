@@ -1389,7 +1389,49 @@ def extract_via_template(pdf_path: str, supplier: str = "") -> Optional[Dict[str
     }
 
 
+# Fornecedores cujo código tem prefixo fixo obrigatório que a IA às vezes
+# omite (normaliza pro número puro apesar do hint pedir pra manter). Reunião
+# 22/07/2026 (Josef): Goal Kids perdendo o "GK" na extração de catálogo PDF.
+# Fix determinístico pós-extração — mais confiável que só reforçar o prompt,
+# já que cobre qualquer caminho de extração (template/text-chunked/vision/pro).
+SUPPLIER_CODE_PREFIX = {
+    "GOAL KIDS": "GK",
+}
+
+
+def _fix_supplier_code_prefix(produtos: list, supplier: str) -> list:
+    """Reprefixa códigos que vieram puramente numéricos quando o fornecedor
+    tem prefixo fixo conhecido (ex: Goal Kids sempre usa GK####)."""
+    supplier_upper = (supplier or "").strip().upper()
+    prefix = next(
+        (pfx for name, pfx in SUPPLIER_CODE_PREFIX.items()
+         if name in supplier_upper or supplier_upper in name),
+        None,
+    )
+    if not prefix:
+        return produtos
+    fixed = 0
+    for p in produtos:
+        codigo = str(p.get("codigo") or "").strip()
+        if codigo and not codigo.upper().startswith(prefix) and codigo.replace("-", "").isdigit():
+            p["codigo"] = f"{prefix}{codigo}"
+            fixed += 1
+    if fixed:
+        print(f"[Gemini] Corrigido prefixo '{prefix}' ausente em {fixed} código(s) ({supplier})")
+    return produtos
+
+
 def extract_with_fallback(pdf_path: str, supplier: str = "") -> Dict[str, Any]:
+    """Wrapper único: chama a extração real e aplica correções pós-processamento
+    (ex: prefixo de código) independente de qual caminho interno foi usado
+    (template/text-chunked/vision/escalada Pro) — ver _fix_supplier_code_prefix."""
+    result = _extract_with_fallback_impl(pdf_path, supplier)
+    if result and result.get("produtos"):
+        result["produtos"] = _fix_supplier_code_prefix(result["produtos"], supplier)
+    return result
+
+
+def _extract_with_fallback_impl(pdf_path: str, supplier: str = "") -> Dict[str, Any]:
     """
     Extrai com cadeia de fallbacks (todos modelos atualmente ativos):
       1. gemini-2.5-flash    (padrão: rápido e barato)
