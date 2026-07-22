@@ -258,14 +258,14 @@ describe('🔒 regra de múltiplo por fornecedor no export', () => {
     expect(validos[1]['Múltiplo (opcional)']).toBe(30);
   });
 
-  it('com a regra: Moment mantém múltiplo, Dagia sai vazio', () => {
+  it('com a regra: TODOS os fornecedores saem vazios, sem exceção (decisão 22/07/2026)', () => {
     const produtos = [
       makeProduto({ fornecedor: 'Dagia', codigo: 'D1', quantidadeCaixa: 12 }),
       makeProduto({ fornecedor: 'Moment', codigo: 'M1', quantidadeCaixa: 30 }),
     ];
     const { validos } = batchNormalizeToMercos(produtos, { aplicarRegraMultiplo: true });
     expect(validos[0]['Múltiplo (opcional)']).toBe(''); // Dagia zerado
-    expect(validos[1]['Múltiplo (opcional)']).toBe(30); // Moment mantém
+    expect(validos[1]['Múltiplo (opcional)']).toBe(''); // Moment zerado (múltiplo removido de tudo)
   });
 
   it('com a regra: qtd por caixa continua no info adicional mesmo com múltiplo vazio', () => {
