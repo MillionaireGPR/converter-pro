@@ -432,6 +432,18 @@ export default function ConversaoProdutos() {
       setFinalElapsedSec(totalSec);
       setState('done');
       toast.success(`Sucesso! ${result.stats.total} itens em ${fmtTempo(totalSec)}.`);
+
+      // Extração de imagens pode falhar silenciosamente (ex: servidor reiniciou
+      // por OOM em catálogo grande) sem que o pipeline de texto/preço seja afetado.
+      // Antes disso não havia feedback visual — parecia "sucesso" mesmo sem imagens.
+      // Ver: reunião 22/07/2026 (Josef) — "não teve feedback visual, servidor derrubou".
+      const imgErros = result.imageResults?.errors;
+      if (imgErros && imgErros.length > 0) {
+        toast.warning(
+          `Itens e preços foram extraídos, mas a extração de IMAGENS falhou: ${imgErros[0]}`,
+          { duration: 10000 }
+        );
+      }
     } catch (error: any) {
       console.error(error);
       setState('error');
@@ -647,43 +659,60 @@ export default function ConversaoProdutos() {
               </Card>
 
               {/* Métricas de Imagens (se houver) */}
-              {/* ✅ CORREÇÃO: Mostrar tanto para ZIP (PDF/backend) quanto para imagens individuais (Excel) */}
-              {imageResult && (imageResult.zipUrl || imageResult.totalImagesFound > 0) && (
-                <Card className="shadow-card overflow-hidden border-l-4 border-l-primary">
+              {/* Mostra tanto para ZIP (PDF/backend) quanto para imagens individuais (Excel).
+                  Também mostra quando houve ERRO (0 imagens + falha real) — antes essa condição
+                  escondia o card inteiro, mascarando falhas de servidor como se fosse sucesso. */}
+              {imageResult && (imageResult.zipUrl || imageResult.totalImagesFound > 0 || (imageResult.errors && imageResult.errors.length > 0)) && (
+                <Card className={`shadow-card overflow-hidden border-l-4 ${imageResult.errors?.length ? 'border-l-destructive' : 'border-l-primary'}`}>
                   <CardHeader className="py-2 px-3">
                     <CardTitle className="text-xs font-semibold flex items-center gap-2">
-                      <ImageIcon className="h-3.5 w-3.5 text-primary" /> 
-                      {imageResult.zipUrl ? 'Imagens (Backend)' : 'Imagens Extraídas'}
-                      <Badge variant="outline" className="ml-auto text-[10px] bg-primary/10">
-                        {imageResult.totalImagesMatched || 0} associadas
-                      </Badge>
+                      <ImageIcon className="h-3.5 w-3.5 text-primary" />
+                      {imageResult.errors?.length ? 'Imagens — Falhou' : (imageResult.zipUrl ? 'Imagens (Backend)' : 'Imagens Extraídas')}
+                      {!imageResult.errors?.length && (
+                        <Badge variant="outline" className="ml-auto text-[10px] bg-primary/10">
+                          {imageResult.totalImagesMatched || 0} associadas
+                        </Badge>
+                      )}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="px-3 pb-3 space-y-1.5">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-muted-foreground">Total extraído:</span>
-                      <span className="font-medium">{imageResult.totalImagesFound || 0}</span>
-                    </div>
-                    {imageResult.totalImagesUnmatched > 0 && (
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground">Não associadas:</span>
-                        <span className="font-medium text-warning">{imageResult.totalImagesUnmatched}</span>
-                      </div>
-                    )}
-                    {/* Mostrar avisos se houver */}
-                    {imageResult.warnings && imageResult.warnings.length > 0 && (
-                      <div className="text-xs text-muted-foreground mt-1">
-                        {imageResult.warnings.map((w, i) => (
-                          <div key={i} className="truncate" title={w}>• {w}</div>
+                    {imageResult.errors && imageResult.errors.length > 0 ? (
+                      <div className="text-xs text-destructive space-y-1">
+                        {imageResult.errors.map((e, i) => (
+                          <div key={i}>• {e}</div>
                         ))}
+                        <div className="text-muted-foreground pt-1">
+                          Preços e itens foram extraídos normalmente — só a captura de fotos falhou. Tente reenviar, ou use o "Cortar PDF" pra reduzir o catálogo antes.
+                        </div>
                       </div>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-muted-foreground">Total extraído:</span>
+                          <span className="font-medium">{imageResult.totalImagesFound || 0}</span>
+                        </div>
+                        {imageResult.totalImagesUnmatched > 0 && (
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">Não associadas:</span>
+                            <span className="font-medium text-warning">{imageResult.totalImagesUnmatched}</span>
+                          </div>
+                        )}
+                        {/* Mostrar avisos se houver */}
+                        {imageResult.warnings && imageResult.warnings.length > 0 && (
+                          <div className="text-xs text-muted-foreground mt-1">
+                            {imageResult.warnings.map((w, i) => (
+                              <div key={i} className="truncate" title={w}>• {w}</div>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-muted-foreground">Formato:</span>
+                          <span className="font-medium text-success">
+                            {imageResult.zipUrl ? 'ZIP pronto' : `${imageResult.totalImagesFound} imagens individuais`}
+                          </span>
+                        </div>
+                      </>
                     )}
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-muted-foreground">Formato:</span>
-                      <span className="font-medium text-success">
-                        {imageResult.zipUrl ? 'ZIP pronto' : `${imageResult.totalImagesFound} imagens individuais`}
-                      </span>
-                    </div>
                   </CardContent>
                 </Card>
               )}

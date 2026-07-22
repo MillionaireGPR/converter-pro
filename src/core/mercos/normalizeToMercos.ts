@@ -13,14 +13,17 @@ import {
 import { sanitizeForExport, normalizeSpaces } from '../normalizers/cleaners';
 
 // ===================================================================
-// REGRA DE MÚLTIPLO (reunião 06/07/2026)
-// A importação do Mercos trava quando a coluna "Múltiplo" vem preenchida
-// para fornecedores que NÃO trabalham abrindo caixa. Por isso, no export,
-// o múltiplo só é mantido para os fornecedores que realmente vendem por
-// múltiplo (abrem caixa inner) — os demais saem com a coluna vazia.
+// REGRA DE MÚLTIPLO (reunião 06/07/2026; DECISÃO FINAL reunião 22/07/2026)
+// A importação do Mercos trava quando a coluna "Múltiplo" vem preenchida,
+// e o campo trava a edição manual de pedidos no Mercos (retrabalho pra
+// equipe comercial ter que remover/recolocar item pra corrigir quantidade).
+// Reunião 22/07: decisão final é remover de TODOS os fornecedores, SEM
+// exceção — inclusive Moment, que antes era a única exceção mantida.
 // A qtd por caixa continua indo em "Informações adicionais" como referência.
+// Lista mantida vazia de propósito (não apagada) caso uma exceção pontual
+// precise voltar no futuro — checkbox "manter todos" no export cobre casos manuais.
 // ===================================================================
-export const FORNECEDORES_COM_MULTIPLO = ['MOMENT'];
+export const FORNECEDORES_COM_MULTIPLO: string[] = [];
 
 /** True se o fornecedor usa múltiplo de venda (abre caixa) e deve manter a coluna. */
 export const fornecedorUsaMultiplo = (fornecedor: string | undefined): boolean => {
