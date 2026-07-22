@@ -579,36 +579,73 @@ def _match_via_embedded(
     output_folder: str,
     page_num: int
 ) -> Tuple[List[Dict], List[Dict]]:
+    """
+    Casamento SKU↔imagem por proximidade espacial (para páginas sem grade
+    detectável, ex: Lila Home, BM36).
+
+    v55 (reunião 22/07/2026): reescrito após dois relatos reais —
+    Lila pegando o LOGO do fornecedor em vez da foto do produto, BM36
+    pegando a imagem "de baixo"/"do lado" errada. Causa raiz: o algoritmo
+    antigo era guloso SKU-a-SKU em ordem de Y, sempre pegando a imagem mais
+    PRÓXIMA AINDA DISPONÍVEL, sem limite de distância e sem olhar o conjunto
+    todo — isso causa efeito cascata (um SKU rouba a imagem certa de outro,
+    que sobra com o que estiver disponível, às vezes um logo distante).
+
+    Fix: (1) casamento guloso GLOBAL — todos os pares SKU×imagem ordenados
+    por distância, evita a cascata; (2) limite de distância máxima — rejeita
+    (unmatched) em vez de forçar um match implausível.
+    """
     height, width = raster.shape[:2]
 
     if not page_imgs:
         return [], [{"sku": s.get("sku"), "page": page_num, "reason": "no_embedded_imgs"} for s in page_skus]
 
     matches, unmatched = [], []
-    used_xrefs: set = set()
 
-    sorted_skus = sorted(page_skus, key=lambda s: s.get("spatialContext", {}).get("y", 0))
+    valid_skus = []
+    for s in page_skus:
+        sc = s.get("spatialContext", {})
+        if sc.get("x") is not None and sc.get("y") is not None:
+            valid_skus.append(s)
+        else:
+            unmatched.append({"sku": s.get("sku"), "page": page_num, "reason": "no_coords"})
 
-    for sku in sorted_skus:
-        sc = sku.get("spatialContext", {})
-        sku_x, sku_y = sc.get("x"), sc.get("y")
-        if sku_x is None or sku_y is None:
-            unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "no_coords"})
+    if not valid_skus:
+        return matches, unmatched
+
+    # raster está em pixels (escala `scale`); página em pontos PDF = height/scale.
+    # Teto generoso o bastante pra não regredir catálogos que já funcionam,
+    # mas rejeita o caso clássico (logo de cabeçalho longe do bloco do SKU).
+    page_h_pt = height / max(scale, 0.01)
+    max_score = max(300.0, page_h_pt * 0.6)
+
+    # Score: distância Y (peso 2) + distância X (peso 1) — mesma métrica de antes.
+    pairs = []  # (score, sku_idx, img_idx)
+    for si, sku in enumerate(valid_skus):
+        sc = sku["spatialContext"]
+        sku_x, sku_y = sc["x"], sc["y"]
+        for pi, img in enumerate(page_imgs):
+            s = abs(img["cy"] - sku_y) * 2 + abs(img["cx"] - sku_x)
+            pairs.append((s, si, pi))
+    pairs.sort(key=lambda t: t[0])
+
+    chosen_by_sku: Dict[int, Dict] = {}
+    used_sku_idx: set = set()
+    used_img_idx: set = set()
+    for s, si, pi in pairs:
+        if si in used_sku_idx or pi in used_img_idx:
+            continue
+        used_sku_idx.add(si)
+        used_img_idx.add(pi)
+        chosen_by_sku[si] = {"img": page_imgs[pi], "score": s}
+
+    for si, sku in enumerate(valid_skus):
+        chosen = chosen_by_sku.get(si)
+        if not chosen or chosen["score"] > max_score:
+            unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "no_plausible_match"})
             continue
 
-        candidates = [p for p in page_imgs if p["xref"] not in used_xrefs]
-        if not candidates:
-            unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "no_img_left"})
-            continue
-
-        # Score: distância Y (peso 2) + distância X (peso 1)
-        def score(p):
-            return abs(p["cy"] - sku_y) * 2 + abs(p["cx"] - sku_x)
-
-        best = min(candidates, key=score)
-        used_xrefs.add(best["xref"])
-
-        img_arr = _extract_perfect_image(doc, best, raster, width, height, scale)
+        img_arr = _extract_perfect_image(doc, chosen["img"], raster, width, height, scale)
         if img_arr is None or img_arr.size == 0:
             unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "extract_failed"})
             continue
