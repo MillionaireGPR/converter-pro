@@ -335,7 +335,15 @@ def _detect_lines(raster: np.ndarray, width: int, height: int) -> Tuple[list, li
     if lines is None:
         return h_lines, v_lines
     for line in lines:
-        x1, y1, x2, y2 = line[0]
+        # cv2.HoughLinesP retorna (N,1,4) na maioria das builds, mas ALGUMAS
+        # versoes do opencv (ex: a instalada no Render via opencv-python-headless
+        # >=4.10) retornam (N,4) — nesse caso `line` ja e' (4,) e `line[0]` seria
+        # um escalar int32, quebrando o unpack (crash real 22/07/2026, catalogo
+        # GIRA cortado). Achatar torna o codigo robusto as duas formas.
+        coords = np.asarray(line).reshape(-1)
+        if coords.size < 4:
+            continue
+        x1, y1, x2, y2 = int(coords[0]), int(coords[1]), int(coords[2]), int(coords[3])
         dx, dy = x2 - x1, y2 - y1
         angle = np.arctan2(dy, dx) * 180 / np.pi
         if angle < 0:
