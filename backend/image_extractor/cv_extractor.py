@@ -420,6 +420,26 @@ def _match_via_grid(
         return [], unmatched
 
     # ═══════════════════════════════════════════════════════
+    # FASE 1.5: Descartar imagens-selo (badges "KIT"/"JOGO"/"3 CORES")
+    # Reunião 22/07/2026 (Josef, catálogo GIRA): esses selos ficam no CANTO
+    # da foto real (não distantes dela), então o match por "menor distância
+    # Y ao texto do SKU" às vezes pegava o selinho — seu centro Y fica mais
+    # perto do preço/código (que vem logo abaixo da foto) que o centro da
+    # foto grande. Validado com dados reais: fotos de produto ~34.000px²,
+    # selo ~1.300px² (≈4%) — descartar tudo abaixo de 15% da maior imagem
+    # da página elimina o selo com folga, sem risco de rejeitar foto real.
+    # ═══════════════════════════════════════════════════════
+    if page_imgs:
+        max_area = max(img.get("area", 0) for img in page_imgs)
+        if max_area > 0:
+            BADGE_AREA_RATIO = 0.15
+            filtered = [img for img in page_imgs if img.get("area", 0) >= max_area * BADGE_AREA_RATIO]
+            n_removed = len(page_imgs) - len(filtered)
+            if n_removed > 0:
+                print(f"  [ColMatch] {n_removed} imagem(ns) pequena(s) descartada(s) (selo/logo, < {BADGE_AREA_RATIO:.0%} da maior)")
+            page_imgs = filtered
+
+    # ═══════════════════════════════════════════════════════
     # FASE 2: Descobrir colunas via clustering de X (SKUs + Imagens)
     # ═══════════════════════════════════════════════════════
     all_xs = [s["spatialContext"]["x"] for s in valid_skus] + [img["cx"] for img in page_imgs]
