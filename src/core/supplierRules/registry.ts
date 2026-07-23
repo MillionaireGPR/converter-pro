@@ -46,11 +46,34 @@ const ADAPTERS: SupplierAdapter[] = [
 export const getAdapterById = (idOrName: string): SupplierAdapter | undefined => {
   if (!idOrName) return undefined;
   const search = idOrName.toLowerCase().trim();
-  return ADAPTERS.find(a =>
+
+  // 1. Match EXATO (id, nome ou alias) — comportamento original, prioridade máxima.
+  const exact = ADAPTERS.find(a =>
     a.id === search ||
     a.nome.toLowerCase() === search ||
     a.aliases.some(alias => alias.toLowerCase() === search)
   );
+  if (exact) return exact;
+
+  // 2. Fallback por PREFIXO de marca (reunião 22/07/2026): fornecedores que
+  // segmentam catálogos por área ("GIRA DECORAÇÃO", "GIRA PAPELARIA") são
+  // cadastrados como fornecedores novos, mas seguem a MESMA regra da marca
+  // base. Casa quando o nome buscado COMEÇA com o nome/alias do adapter
+  // seguido de separador (espaço/hífen). Conservador: exige alias >= 3 chars
+  // e prefere o alias mais LONGO (evita colisão entre marcas curtas).
+  let best: SupplierAdapter | undefined;
+  let bestLen = 0;
+  for (const a of ADAPTERS) {
+    const candidatos = [a.nome.toLowerCase(), ...a.aliases.map(x => x.toLowerCase())];
+    for (const c of candidatos) {
+      if (c.length >= 3 && c.length > bestLen &&
+          (search.startsWith(c + ' ') || search.startsWith(c + '-'))) {
+        best = a;
+        bestLen = c.length;
+      }
+    }
+  }
+  return best;
 };
 
 /** Retorna o adapter genérico (fallback) */

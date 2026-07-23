@@ -30,6 +30,28 @@ describe('getAdapterById', () => {
   it('retorna undefined para string vazia', () => {
     expect(getAdapterById('')).toBeUndefined();
   });
+
+  // Segmentação de catálogo por área (reunião 22/07/2026): fornecedores que
+  // criam sub-catálogos ("GIRA DECORAÇÃO") devem cair na regra da marca base.
+  it('casa nome segmentado pelo prefixo da marca (GIRA DECORAÇÃO → Gira)', () => {
+    const adapter = getAdapterById('GIRA DECORAÇÃO');
+    expect(adapter?.nome).toBe('GIRA');
+  });
+
+  it('casa outros segmentos GIRA (papelaria/utilidades)', () => {
+    expect(getAdapterById('Gira Papelaria')?.nome).toBe('GIRA');
+    expect(getAdapterById('gira utilidades 2026')?.nome).toBe('GIRA');
+  });
+
+  it('NÃO casa nome sem prefixo de marca conhecida (segue undefined)', () => {
+    expect(getAdapterById('Fornecedor Totalmente Novo')).toBeUndefined();
+    expect(getAdapterById('decoração gira')).toBeUndefined(); // marca não está no início
+  });
+
+  it('match exato tem prioridade sobre prefixo', () => {
+    // "gira" exato deve retornar Gira, não outro adapter cujo alias seja prefixo
+    expect(getAdapterById('gira')?.nome).toBe('GIRA');
+  });
 });
 
 describe('getGenericAdapter', () => {
