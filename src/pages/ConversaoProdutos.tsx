@@ -22,6 +22,7 @@ import { ImportMetadata } from "@/core/types/productPipeline";
 import { Image as ImageIcon } from "lucide-react";
 import { buildAndDownloadZip } from "@/core/images/imageZipBuilder";
 import { ResultadoExtracaoImagens } from "@/core/images/imageTypes";
+import { classifyImageError } from "@/core/images/imageErrorClassifier";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 
@@ -439,10 +440,10 @@ export default function ConversaoProdutos() {
       // Ver: reunião 22/07/2026 (Josef) — "não teve feedback visual, servidor derrubou".
       const imgErros = result.imageResults?.errors;
       if (imgErros && imgErros.length > 0) {
-        toast.warning(
-          `Itens e preços foram extraídos, mas a extração de IMAGENS falhou: ${imgErros[0]}`,
-          { duration: 10000 }
-        );
+        const info = classifyImageError(imgErros[0]);
+        // Detalhe técnico só no console (pra suporte), com o mesmo código:
+        console.error(`[${info.code}] Falha na extração de imagens:`, info.technical);
+        toast.warning(`${info.friendly} (código ${info.code})`, { duration: 10000 });
       }
     } catch (error: any) {
       console.error(error);
@@ -677,14 +678,18 @@ export default function ConversaoProdutos() {
                   </CardHeader>
                   <CardContent className="px-3 pb-3 space-y-1.5">
                     {imageResult.errors && imageResult.errors.length > 0 ? (
-                      <div className="text-xs text-destructive space-y-1">
-                        {imageResult.errors.map((e, i) => (
-                          <div key={i}>• {e}</div>
-                        ))}
-                        <div className="text-muted-foreground pt-1">
-                          Preços e itens foram extraídos normalmente — só a captura de fotos falhou. Tente reenviar, ou use o "Cortar PDF" pra reduzir o catálogo antes.
-                        </div>
-                      </div>
+                      (() => {
+                        const info = classifyImageError(imageResult.errors[0]);
+                        return (
+                          <div className="text-xs space-y-1.5">
+                            <div className="text-foreground">{info.friendly}</div>
+                            <div className="flex items-center gap-1.5 text-muted-foreground">
+                              <span>Se precisar de suporte, informe o código:</span>
+                              <code className="px-1.5 py-0.5 rounded bg-muted font-mono text-[11px] font-semibold text-foreground">{info.code}</code>
+                            </div>
+                          </div>
+                        );
+                      })()
                     ) : (
                       <>
                         <div className="flex items-center justify-between text-xs">
