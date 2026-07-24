@@ -65,7 +65,7 @@ def extract_cells_via_cv(
     matches: List[Dict] = []
     unmatched: List[Dict] = []
 
-    logo_xrefs = _detect_logo_xrefs(doc)
+    logo_xrefs, logo_positions = _detect_logo_xrefs(doc)
 
     # Deduplica SKUs por (sku, page)
     seen_keys: set = set()
@@ -86,7 +86,7 @@ def extract_cells_via_cv(
         skus_by_page.setdefault(sc.get("page", 1), []).append(sku)
 
     total_pages = len(skus_by_page)
-    print(f"[CV] {total_pages} páginas | {len(skus_list)} SKUs | logos filtrados: {len(logo_xrefs)}")
+    print(f"[CV] {total_pages} páginas | {len(skus_list)} SKUs | logos filtrados: {len(logo_xrefs)} xref + {len(logo_positions)} posição")
 
     # Hard limit: catálogos com >300 páginas com SKUs estouram 512MB do Render
     # mesmo com gc agressivo. Falha rápido com erro claro em vez de OOM
@@ -118,7 +118,7 @@ def extract_cells_via_cv(
                                     boundary_lo=0.0, boundary_hi=float(width))
         n_interior_v = len(v_coords) - 2
 
-        page_imgs = _get_page_embedded_images(page, logo_xrefs)
+        page_imgs = _get_page_embedded_images(page, logo_xrefs, logo_positions)
 
         pct = int((page_idx + 1) / total_pages * 100)
         print(f"[CV] [{page_idx+1}/{total_pages} {pct}%] Pág {page_num}: {n_interior_v} V-int | {len(page_imgs)} imgs", end="")
@@ -147,7 +147,7 @@ def extract_cells_via_cv(
                 # Candidatas para o AI Picker: lista PERMISSIVA (allow_fullpage)
                 # — inclui a foto principal quando ela cobre quase a página
                 # inteira (caso DAGIA pg 14, copos). Logos seguem filtrados.
-                ai_page_imgs = _get_page_embedded_images(page, logo_xrefs, allow_fullpage=True)
+                ai_page_imgs = _get_page_embedded_images(page, logo_xrefs, logo_positions, allow_fullpage=True)
 
                 # Candidatas = rects (NÃO arrays). Filtra fragmentos minúsculos
                 # por área do rect (sem extrair pixels ainda).
@@ -839,6 +839,7 @@ def _is_barcode_like(img_bgr: np.ndarray) -> bool:
 
 
 def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set,
+                              logo_positions: set = frozenset(),
                               allow_fullpage: bool = False) -> List[Dict]:
     """Retorna imagens válidas da página com posição (PDF-points) e xref.
 
@@ -864,6 +865,8 @@ def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set,
         if not rects:
             continue
         rect = rects[0]
+        if _position_signature(rect) in logo_positions:
+            continue
         iw, ih = rect.width, rect.height
         if iw < 20 or ih < 20:
             continue
@@ -914,10 +917,25 @@ def _find_image_above_sku(page_imgs: List[Dict],
     return min(candidates, key=lambda p: sku_y - p["cy"])
 
 
-def _detect_logo_xrefs(doc: fitz.Document) -> set:
+def _position_signature(rect: fitz.Rect) -> tuple:
+    """Assinatura posicional arredondada (5pt) p/ detectar imagem repetida
+    entre páginas mesmo quando o xref muda a cada página (ver _detect_logo_xrefs)."""
+    return (round(rect.x0 / 5) * 5, round(rect.y0 / 5) * 5,
+            round(rect.x1 / 5) * 5, round(rect.y1 / 5) * 5)
+
+
+def _detect_logo_xrefs(doc: fitz.Document) -> tuple:
     """
-    Xrefs em ≥3 páginas amostradas = logos/cabeçalhos.
+    Detecta imagens de logo/cabeçalho repetidas em ≥3 páginas amostradas,
+    por DOIS sinais:
+      1. Mesmo xref reaproveitado entre páginas (PDF eficiente, 1 cópia só).
+      2. Mesma posição/tamanho (bbox arredondado) repetindo entre páginas,
+         MESMO com xref diferente a cada página -- achado real: catálogo
+         Lila Home reinsere uma cópia nova do logo (xref distinto) no topo
+         de cada página; o sinal 1 sozinho não detectava, e o logo entrava
+         como candidato válido de imagem de produto (LH635 puxava o logo).
     Amostra até 40 páginas distribuídas para evitar timeout em PDFs grandes.
+    Retorna (logo_xrefs, logo_positions).
     """
     n = len(doc)
     if n <= 40:
@@ -930,10 +948,18 @@ def _detect_logo_xrefs(doc: fitz.Document) -> set:
             list(range(max(0, n - 5), n))
         ))
     xref_pages: Dict[int, set] = {}
+    pos_pages: Dict[tuple, set] = {}
     for i in sample:
-        for img in doc.load_page(i).get_images(full=True):
-            xref_pages.setdefault(img[0], set()).add(i)
-    return {x for x, pgs in xref_pages.items() if len(pgs) >= 3}
+        page = doc.load_page(i)
+        for img in page.get_images(full=True):
+            xref = img[0]
+            xref_pages.setdefault(xref, set()).add(i)
+            rects = page.get_image_rects(xref)
+            if rects:
+                pos_pages.setdefault(_position_signature(rects[0]), set()).add(i)
+    logo_xrefs = {x for x, pgs in xref_pages.items() if len(pgs) >= 3}
+    logo_positions = {sig for sig, pgs in pos_pages.items() if len(pgs) >= 3}
+    return logo_xrefs, logo_positions
 
 
 def _create_kit_collage(images_rgb: List[np.ndarray], max_dim: int = 800) -> Optional[np.ndarray]:

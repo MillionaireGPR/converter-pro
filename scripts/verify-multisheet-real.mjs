@@ -71,6 +71,25 @@ console.log('='.repeat(70));
 }
 
 console.log('\n' + '='.repeat(70));
+console.log('PETRIN 21-07 — aba "Pré-venda" SEM linha de cabeçalho própria');
+console.log('(achado real 24/07/2026: export do cliente mudou e a aba de');
+console.log('pré-venda passou a começar direto com dado -- sem isso, a aba');
+console.log('inteira era descartada em silêncio: "não aparece no relatório")');
+console.log('='.repeat(70));
+{
+  const path = 'C:\\Users\\Gabriel Pantoni\\Downloads\\Lista de produtos Petrin  21-07.xlsx';
+  const r = await runImportPipeline(toFile(path), { supplierName: 'Petrin' });
+  const codigos = r.produtosNormalizados.map(p => p.codigoOriginal || p.codigo);
+  check('RD1519 (Itens de faturamento imediato) presente', codigos.includes('RD1519'));
+  check('RD1422 (promoção) presente', codigos.includes('RD1422'));
+  check('RD1802 (Pré-venda SEM cabeçalho) presente', codigos.includes('RD1802'));
+  check('RD.1094 (aba "Planilha1", layout diferente) AUSENTE — segue ignorada', !codigos.includes('RD.1094'));
+  const p = r.produtosNormalizados.find(x => (x.codigoOriginal || x.codigo) === 'RD1802');
+  check('RD1802 preço correto (5, não a qtd 198)', !!p && Math.abs(p.precoBase - 5) < 0.01, `preco=${p?.precoBase}`);
+  check('RD1802 quantidadeCaixa correta (96, do CX/96)', p?.quantidadeCaixa === 96, `qtd=${p?.quantidadeCaixa}`);
+}
+
+console.log('\n' + '='.repeat(70));
 console.log(falhas === 0 ? '✅ TODOS OS CHECKS PASSARAM' : `❌ ${falhas} FALHA(S)`);
 console.log('='.repeat(70));
 process.exit(falhas === 0 ? 0 : 1);

@@ -636,7 +636,53 @@ const readSheet = (worksheet: XLSX.WorkSheet) => {
     range: headerRowIndex,
     blankrows: false,
   }) as any[][];
-  return { headers, rows, rows2D, headerRowIndex };
+  return { headers, rows, rows2D, headerRowIndex, headerRowRaw: headerRow };
+};
+
+// Pistas de que um header textual representa um campo NUMÉRICO (qtd/valor/preço).
+// Usado só para detectar abas SEM linha de cabeçalho (ver tryReadHeaderlessSheet).
+const NUMERIC_HEADER_HINTS = ['qtd', 'valor', 'preco', 'preço', 'estoque'];
+
+/**
+ * Fallback para abas multi-aba (Dute/Petrin/Levivan) sem linha de cabeçalho
+ * própria -- os dados começam direto na linha 1 (achado real: Petrin 21-07,
+ * aba "Pré-venda" perdeu o cabeçalho no export do cliente). Sem isso,
+ * findHeaderRowIndex confunde a 1ª linha de DADO com cabeçalho (nenhum
+ * header bate com a 1ª aba) e a aba inteira era descartada em silêncio.
+ *
+ * Sinal de detecção: nas posições onde a 1ª aba tem um header textual
+ * numérico ("Qtd Emb (Físico)", "Valor Venda"), esta aba já traz um NÚMERO
+ * na linha 0 -- ou seja, não há texto de cabeçalho ali, é dado. Como as
+ * abas de um mesmo fornecedor sempre têm o mesmo layout de colunas (com ou
+ * sem cabeçalho), reaproveita o cabeçalho posicional da 1ª aba.
+ */
+const tryReadHeaderlessSheet = (
+  worksheet: XLSX.WorkSheet,
+  firstHeaderRowRaw: any[]
+): { rows: Record<string, any>[]; rows2D: any[][] } | null => {
+  unmergeWorksheet(worksheet);
+  const raw2D = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false }) as any[][];
+  if (raw2D.length === 0) return null;
+
+  const row0 = raw2D[0];
+  if (row0.length !== firstHeaderRowRaw.length) return null; // layout incompatível, não arrisca
+
+  const looksHeaderless = firstHeaderRowRaw.some((h, i) => {
+    const hNorm = String(h || '').toLowerCase();
+    if (!NUMERIC_HEADER_HINTS.some(hint => hNorm.includes(hint))) return false;
+    return typeof row0[i] === 'number';
+  });
+  if (!looksHeaderless) return null;
+
+  const rows = raw2D.map(r => {
+    const obj: Record<string, any> = {};
+    firstHeaderRowRaw.forEach((h, i) => {
+      const key = String(h || '').trim();
+      if (key) obj[key] = r[i];
+    });
+    return obj;
+  });
+  return { rows, rows2D: raw2D };
 };
 
 /**
@@ -679,13 +725,22 @@ const readSpreadsheet = async (
     const sheet = readSheet(workbook.Sheets[sheetName]);
     const sameHeader = sheet.headers.length > 0 &&
       sheet.headers.every(h => first.headers.includes(h));
-    if (!sameHeader) {
-      console.log(`[ReadSpreadsheet] Aba "${sheetName}" ignorada (cabeçalho diferente)`);
+    if (sameHeader) {
+      console.log(`[ReadSpreadsheet] Aba "${sheetName}": +${sheet.rows.length} linha(s)`);
+      allRows.push(...sheet.rows);
+      allRows2D.push(...sheet.rows2D.slice(1)); // pula o header repetido
       continue;
     }
-    console.log(`[ReadSpreadsheet] Aba "${sheetName}": +${sheet.rows.length} linha(s)`);
-    allRows.push(...sheet.rows);
-    allRows2D.push(...sheet.rows2D.slice(1)); // pula o header repetido
+
+    const headerless = tryReadHeaderlessSheet(workbook.Sheets[sheetName], first.headerRowRaw);
+    if (headerless) {
+      console.log(`[ReadSpreadsheet] Aba "${sheetName}" sem cabeçalho próprio -- aplicando layout da 1ª aba (+${headerless.rows.length} linha(s))`);
+      allRows.push(...headerless.rows);
+      allRows2D.push(...headerless.rows2D);
+      continue;
+    }
+
+    console.log(`[ReadSpreadsheet] Aba "${sheetName}" ignorada (cabeçalho diferente)`);
   }
 
   console.log(`[ReadSpreadsheet] Multi-aba (${supplierHint}): ${workbook.SheetNames.length} abas lidas, ${allRows.length} linha(s) no total`);
