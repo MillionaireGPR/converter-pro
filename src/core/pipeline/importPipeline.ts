@@ -599,6 +599,15 @@ const isMultiSheetSupplier = (supplierName?: string): boolean => {
   return SUPPLIERS_MULTI_SHEET.some(s => n.includes(s));
 };
 
+/** Detecta o papel de uma aba (Dute/Petrin/Levivan) pelo NOME, para marcar
+ * as linhas com a tag visual correspondente (ver taggedRows em readSpreadsheet). */
+const _sheetRoleTag = (sheetName: string): '__preVenda' | '__promo' | undefined => {
+  const n = sheetName.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (n.includes('pre-venda') || n.includes('pre venda') || n.includes('prevenda')) return '__preVenda';
+  if (n.includes('promo')) return '__promo';
+  return undefined;
+};
+
 /**
  * Propaga o valor da célula superior-esquerda de cada intervalo mesclado
  * para as demais células do intervalo, e remove a marcação de merge.
@@ -719,23 +728,33 @@ const readSpreadsheet = async (
 
   // Multi-aba: concatena toda aba cujo cabeçalho bata com a da primeira
   // (mesma estrutura de produto) -- ignora abas irrelevantes em silêncio.
+  // Marca cada linha com __preVenda/__promo conforme o NOME da aba de
+  // origem -- reunião 24/07/2026: Petrin/Dute/Levivan pediram a mesma tag
+  // visual (***PRE VENDA***/***PROMOCAO***) que a família CLINK já usa.
+  // __promo é a MESMA chave que extractProducts já lê (extractor.ts) --
+  // basta marcar aqui para o produto ganhar visualCategory='promocional'
+  // automaticamente, sem duplicar lógica.
+  const taggedRows = (rows: Record<string, any>[], tag?: '__preVenda' | '__promo') =>
+    tag ? rows.map(r => ({ ...r, [tag]: true })) : rows;
+
   const allRows = [...first.rows];
   const allRows2D = [...first.rows2D];
   for (const sheetName of workbook.SheetNames.slice(1)) {
+    const tag = _sheetRoleTag(sheetName);
     const sheet = readSheet(workbook.Sheets[sheetName]);
     const sameHeader = sheet.headers.length > 0 &&
       sheet.headers.every(h => first.headers.includes(h));
     if (sameHeader) {
-      console.log(`[ReadSpreadsheet] Aba "${sheetName}": +${sheet.rows.length} linha(s)`);
-      allRows.push(...sheet.rows);
+      console.log(`[ReadSpreadsheet] Aba "${sheetName}": +${sheet.rows.length} linha(s)${tag ? ` (${tag})` : ''}`);
+      allRows.push(...taggedRows(sheet.rows, tag));
       allRows2D.push(...sheet.rows2D.slice(1)); // pula o header repetido
       continue;
     }
 
     const headerless = tryReadHeaderlessSheet(workbook.Sheets[sheetName], first.headerRowRaw);
     if (headerless) {
-      console.log(`[ReadSpreadsheet] Aba "${sheetName}" sem cabeçalho próprio -- aplicando layout da 1ª aba (+${headerless.rows.length} linha(s))`);
-      allRows.push(...headerless.rows);
+      console.log(`[ReadSpreadsheet] Aba "${sheetName}" sem cabeçalho próprio -- aplicando layout da 1ª aba (+${headerless.rows.length} linha(s))${tag ? ` (${tag})` : ''}`);
+      allRows.push(...taggedRows(headerless.rows, tag));
       allRows2D.push(...headerless.rows2D);
       continue;
     }
@@ -743,8 +762,19 @@ const readSpreadsheet = async (
     console.log(`[ReadSpreadsheet] Aba "${sheetName}" ignorada (cabeçalho diferente)`);
   }
 
+  // Prioriza linhas marcadas (__promo/__preVenda) na deduplicação por código
+  // que roda mais adiante (deduplicateByCodigo mantém a 1ª ocorrência).
+  // Achado real: Petrin RD1422 aparece TANTO em "Itens de faturamento
+  // imediato" QUANTO em "promoção" (mesmo produto, qtd de estoque diferente)
+  // -- sem isso, a versão sem tag (aba principal) vinha primeiro no array e
+  // vencia a dedupe, perdendo a marcação ***PROMOCAO***/***PRE VENDA*** em
+  // silêncio mesmo com a aba especial lida corretamente.
+  const marcadas = allRows.filter(r => r['__promo'] || r['__preVenda']);
+  const semMarcacao = allRows.filter(r => !r['__promo'] && !r['__preVenda']);
+  const rowsOrdenadas = [...marcadas, ...semMarcacao];
+
   console.log(`[ReadSpreadsheet] Multi-aba (${supplierHint}): ${workbook.SheetNames.length} abas lidas, ${allRows.length} linha(s) no total`);
-  return { headers: first.headers, rows: allRows, rows2D: allRows2D, headerRowIndex: first.headerRowIndex, cellStyles };
+  return { headers: first.headers, rows: rowsOrdenadas, rows2D: allRows2D, headerRowIndex: first.headerRowIndex, cellStyles };
 };
 
 // ===================================================================
@@ -887,6 +917,10 @@ const normalizeExtracted = (
     // nomeComercial (que já traria o sufixo) e ainda não estiver marcado.
     if (visualCategory === 'promocional' && nome && !/\*\*\*PROMOCAO\*\*\*/i.test(nome) && !/promo[çc][ãa]o/i.test(nome)) {
       nome = `${nome} ***PROMOCAO***`;
+    }
+    // PRÉ-VENDA (Petrin/Dute/Levivan): mesmo padrão visual da tag de promoção.
+    if (visualCategory === 'pre-venda' && nome && !/\*\*\*PRE\s*VENDA\*\*\*/i.test(nome) && !/pr[eé]\s*-?\s*venda/i.test(nome)) {
+      nome = `${nome} ***PRE VENDA***`;
     }
 
     const precoBase = e.preco || 0;
@@ -1142,6 +1176,7 @@ export const runImportPipeline = async (
     promocional: extraidos.filter(e => (e as any).visualCategory === 'promocional').length,
     precoFixo: extraidos.filter(e => (e as any).visualCategory === 'preco-fixo').length,
     novidadeReposicao: extraidos.filter(e => (e as any).visualCategory === 'novidade-reposicao').length,
+    preVenda: extraidos.filter(e => (e as any).visualCategory === 'pre-venda').length,
     padrao: extraidos.filter(e => !(e as any).visualCategory || (e as any).visualCategory === 'padrao').length,
   };
   console.log(`[Pipeline] Categorias visuais detectadas:`, visualCategories);

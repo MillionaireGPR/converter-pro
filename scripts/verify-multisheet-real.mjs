@@ -92,4 +92,34 @@ console.log('='.repeat(70));
 console.log('\n' + '='.repeat(70));
 console.log(falhas === 0 ? '✅ TODOS OS CHECKS PASSARAM' : `❌ ${falhas} FALHA(S)`);
 console.log('='.repeat(70));
+console.log('\n' + '='.repeat(70));
+console.log('TAG ***PRE VENDA*** / ***PROMOCAO*** (reunião 24/07/2026)');
+console.log('='.repeat(70));
+{
+  const petrinPath = 'C:/Users/Gabriel Pantoni/Downloads/Lista de produtos Petrin  21-07.xlsx';
+  const r = await runImportPipeline(toFile(petrinPath), { supplierName: 'Petrin' });
+  const preVenda = r.produtosNormalizados.find(x => (x.codigoOriginal || x.codigo) === 'RD1802');
+  check('RD1802 (Pré-venda) tem ***PRE VENDA*** no nome', /\*\*\*PRE VENDA\*\*\*/i.test(preVenda?.nome || ''), `nome=${preVenda?.nome}`);
+  check('RD1802 bloqueiaDesconto=true', preVenda?.bloqueiaDesconto === true);
+  const promo = r.produtosNormalizados.find(x => (x.codigoOriginal || x.codigo) === 'RD1422');
+  check('RD1422 (promoção) tem ***PROMOCAO*** no nome', /\*\*\*PROMOCAO\*\*\*/i.test(promo?.nome || ''), `nome=${promo?.nome}`);
+  const principal = r.produtosNormalizados.find(x => (x.codigoOriginal || x.codigo) === 'RD1519');
+  check('RD1519 (aba principal) SEM tag nenhuma', !/\*\*\*/.test(principal?.nome || ''), `nome=${principal?.nome}`);
+}
+{
+  const dutePath = 'C:/Users/Gabriel Pantoni/Downloads/Lista de produtos Dute 21-07.xlsx';
+  const r = await runImportPipeline(toFile(dutePath), { supplierName: 'Dute Toys' });
+  const preVenda = r.produtosNormalizados.find(x => (x.codigoOriginal || x.codigo) === 'DT10247');
+  check('DT10247 (Dute Pré-venda) tem ***PRE VENDA*** no nome', /\*\*\*PRE VENDA\*\*\*/i.test(preVenda?.nome || ''), `nome=${preVenda?.nome}`);
+}
+{
+  const levivanPath = 'C:/Users/Gabriel Pantoni/Downloads/Lista de produtos Levivan 21-06.xlsx';
+  const r = await runImportPipeline(toFile(levivanPath), { supplierName: 'Levivan' });
+  const preVenda = r.produtosNormalizados.find(x => (x.codigoOriginal || x.codigo) === 'LV1083');
+  check('LV1083 (Levivan Pré-venda) tem ***PRE VENDA*** no nome', /\*\*\*PRE VENDA\*\*\*/i.test(preVenda?.nome || ''), `nome=${preVenda?.nome}`);
+}
+
+console.log('\n' + '='.repeat(70));
+console.log(falhas === 0 ? '✅ TODOS OS CHECKS PASSARAM' : `❌ ${falhas} FALHA(S)`);
+console.log('='.repeat(70));
 process.exit(falhas === 0 ? 0 : 1);

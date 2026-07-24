@@ -80,6 +80,8 @@ export const buildInformacoesAdicionais = (p: ProdutoNormalizadoV2): string => {
     pushUnique('PREÇO FIXO (desconto bloqueado)');
   } else if (p.visualCategory === 'novidade-reposicao') {
     pushUnique('Novidade/Reposição');
+  } else if (p.visualCategory === 'pre-venda') {
+    pushUnique('PRÉ-VENDA (desconto bloqueado)');
   }
 
   // NOTAS DE MÚLTIPLO/CAIXA por fornecedor (regras de negócio da reunião 18/06):
@@ -143,7 +145,7 @@ export const normalizeToMercos = (
   const finalName = sanitizeForExport(normalizeSpaces(p.nome || '')).toUpperCase();
   
   // REGRA: Se bloqueiaDesconto, usar preço base (sem desconto aplicado)
-  const isBloqueado = p.bloqueiaDesconto || p.visualCategory === 'promocional' || p.visualCategory === 'preco-fixo';
+  const isBloqueado = p.bloqueiaDesconto || p.visualCategory === 'promocional' || p.visualCategory === 'preco-fixo' || p.visualCategory === 'pre-venda';
   const finalPrice = formatDecimal(
     isBloqueado 
       ? (p.precoBase > 0 ? p.precoBase : 0)
