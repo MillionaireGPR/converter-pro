@@ -65,7 +65,7 @@ def extract_cells_via_cv(
     matches: List[Dict] = []
     unmatched: List[Dict] = []
 
-    logo_xrefs, logo_positions = _detect_logo_xrefs(doc)
+    logo_xrefs, logo_digests = _detect_logo_xrefs(doc)
 
     # Deduplica SKUs por (sku, page)
     seen_keys: set = set()
@@ -86,7 +86,7 @@ def extract_cells_via_cv(
         skus_by_page.setdefault(sc.get("page", 1), []).append(sku)
 
     total_pages = len(skus_by_page)
-    print(f"[CV] {total_pages} páginas | {len(skus_list)} SKUs | logos filtrados: {len(logo_xrefs)} xref + {len(logo_positions)} posição")
+    print(f"[CV] {total_pages} páginas | {len(skus_list)} SKUs | logos filtrados: {len(logo_xrefs)} xref + {len(logo_digests)} conteúdo")
 
     # Hard limit: catálogos com >300 páginas com SKUs estouram 512MB do Render
     # mesmo com gc agressivo. Falha rápido com erro claro em vez de OOM
@@ -118,7 +118,7 @@ def extract_cells_via_cv(
                                     boundary_lo=0.0, boundary_hi=float(width))
         n_interior_v = len(v_coords) - 2
 
-        page_imgs = _get_page_embedded_images(page, logo_xrefs, logo_positions)
+        page_imgs = _get_page_embedded_images(page, logo_xrefs, logo_digests)
 
         pct = int((page_idx + 1) / total_pages * 100)
         print(f"[CV] [{page_idx+1}/{total_pages} {pct}%] Pág {page_num}: {n_interior_v} V-int | {len(page_imgs)} imgs", end="")
@@ -147,7 +147,7 @@ def extract_cells_via_cv(
                 # Candidatas para o AI Picker: lista PERMISSIVA (allow_fullpage)
                 # — inclui a foto principal quando ela cobre quase a página
                 # inteira (caso DAGIA pg 14, copos). Logos seguem filtrados.
-                ai_page_imgs = _get_page_embedded_images(page, logo_xrefs, logo_positions, allow_fullpage=True)
+                ai_page_imgs = _get_page_embedded_images(page, logo_xrefs, logo_digests, allow_fullpage=True)
 
                 # Candidatas = rects (NÃO arrays). Filtra fragmentos minúsculos
                 # por área do rect (sem extrair pixels ainda).
@@ -839,7 +839,7 @@ def _is_barcode_like(img_bgr: np.ndarray) -> bool:
 
 
 def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set,
-                              logo_positions: set = frozenset(),
+                              logo_digests: set = frozenset(),
                               allow_fullpage: bool = False) -> List[Dict]:
     """Retorna imagens válidas da página com posição (PDF-points) e xref.
 
@@ -852,21 +852,38 @@ def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set,
     Com allow_fullpage=True mantemos a imagem grande; logos (que repetem em
     várias páginas) seguem filtrados por logo_xrefs, então fundos decorativos
     recorrentes continuam fora.
+
+    PERFORMANCE + CORRETUDE (achado real: catálogo Fortal, 24/07/2026): usa
+    page.get_image_info(xrefs=True) em vez de page.get_images(full=True) +
+    page.get_image_rects(xref) por imagem. O catálogo real do Fortal tem
+    900+ objetos de imagem "fantasma" referenciados nos recursos de CADA
+    página (nunca desenhados -- artefato do export), mas só ~10-12
+    realmente aparecem. O loop antigo: (1) chamava get_image_rects() uma
+    vez por FANTASMA (900+ x ~30ms = travava a página inteira), e (2) como
+    quase todo fantasma se repete em várias páginas, _detect_logo_xrefs
+    classificava TODOS como "logo" e a página inteira ficava com 0 imagens
+    válidas -- exatamente o "as imagens não vieram" relatado. get_image_info
+    retorna só as imagens de fato desenhadas, com bbox já calculado, em 1
+    chamada -- resolve as duas coisas de uma vez. Bônus: também corrige um
+    dedup incorreto por xref (a mesma imagem reaproveitada em 2+ posições
+    na mesma página só contava a 1ª posição).
+
+    logo_digests filtra por CONTEÚDO (não posição -- ver nota em
+    _detect_logo_xrefs sobre catálogos com grid template perfeito).
     """
     page_w, page_h = page.rect.width, page.rect.height
     result = []
-    seen = set()
-    for img_info in page.get_images(full=True):
-        xref = img_info[0]
-        if xref in seen or xref in logo_xrefs:
+    for info in page.get_image_info(xrefs=True):
+        xref = info.get("xref") or 0
+        if not xref or xref in logo_xrefs:
             continue
-        seen.add(xref)
-        rects = page.get_image_rects(xref)
-        if not rects:
+        digest = info.get("digest")
+        if digest and digest in logo_digests:
             continue
-        rect = rects[0]
-        if _position_signature(rect) in logo_positions:
+        bbox = info.get("bbox")
+        if not bbox:
             continue
+        rect = fitz.Rect(bbox)
         iw, ih = rect.width, rect.height
         if iw < 20 or ih < 20:
             continue
@@ -917,49 +934,62 @@ def _find_image_above_sku(page_imgs: List[Dict],
     return min(candidates, key=lambda p: sku_y - p["cy"])
 
 
-def _position_signature(rect: fitz.Rect) -> tuple:
-    """Assinatura posicional arredondada (5pt) p/ detectar imagem repetida
-    entre páginas mesmo quando o xref muda a cada página (ver _detect_logo_xrefs)."""
-    return (round(rect.x0 / 5) * 5, round(rect.y0 / 5) * 5,
-            round(rect.x1 / 5) * 5, round(rect.y1 / 5) * 5)
-
-
 def _detect_logo_xrefs(doc: fitz.Document) -> tuple:
     """
     Detecta imagens de logo/cabeçalho repetidas em ≥3 páginas amostradas,
     por DOIS sinais:
       1. Mesmo xref reaproveitado entre páginas (PDF eficiente, 1 cópia só).
-      2. Mesma posição/tamanho (bbox arredondado) repetindo entre páginas,
-         MESMO com xref diferente a cada página -- achado real: catálogo
-         Lila Home reinsere uma cópia nova do logo (xref distinto) no topo
-         de cada página; o sinal 1 sozinho não detectava, e o logo entrava
-         como candidato válido de imagem de produto (LH635 puxava o logo).
-    Amostra até 40 páginas distribuídas para evitar timeout em PDFs grandes.
-    Retorna (logo_xrefs, logo_positions).
+      2. Mesmo CONTEÚDO (digest -- hash da imagem decodificada, já calculado
+         pelo próprio MuPDF em get_image_info) repetindo entre páginas, MESMO
+         com xref diferente a cada página -- achado real: catálogo Lila Home
+         reinsere uma cópia nova do logo (xref distinto) no topo de cada
+         página; o sinal 1 sozinho não detectava, e o logo entrava como
+         candidato válido de imagem de produto (LH635 puxava o logo).
+
+      IMPORTANTE: NÃO usar posição (bbox) como sinal de repetição -- tentado
+      e revertido (achado real: catálogo Fortal). Catálogos com grid
+      template perfeito (mesmas N células, mesmo tamanho, em TODA página de
+      produto) fazem toda posição de foto real "repetir" entre páginas
+      tanto quanto um logo de verdade repetiria -- um logo genuíno repete
+      MESMO CONTEÚDO em posição fixa; fotos de produtos diferentes na mesma
+      célula têm conteúdo diferente. Digest resolve isso corretamente.
+
+    Amostra até 15 páginas distribuídas -- reduzido de 40 (achado real: Fortal
+    tem 900+ imagens "fantasma" por página e get_image_info leva ~12-20s
+    nelas; 40 páginas amostradas custava minutos só nesta etapa). 15 páginas
+    já são de sobra pro limiar de detecção (≥3 ocorrências).
+    Retorna (logo_xrefs, logo_digests).
     """
     n = len(doc)
-    if n <= 40:
+    if n <= 15:
         sample = list(range(n))
     else:
-        step = max(1, n // 30)
+        step = max(1, n // 12)
         sample = sorted(set(
-            list(range(0, min(n, 10))) +
-            list(range(0, n, step))[:25] +
-            list(range(max(0, n - 5), n))
+            list(range(0, min(n, 5))) +
+            list(range(0, n, step))[:8] +
+            list(range(max(0, n - 2), n))
         ))
     xref_pages: Dict[int, set] = {}
-    pos_pages: Dict[tuple, set] = {}
+    digest_pages: Dict[bytes, set] = {}
     for i in sample:
         page = doc.load_page(i)
-        for img in page.get_images(full=True):
-            xref = img[0]
+        # get_image_info (não get_images + get_image_rects por imagem): ver
+        # nota de performance em _get_page_embedded_images. Essencial aqui
+        # também -- catálogos como o Fortal têm 900+ imagens "fantasma" por
+        # página, e o loop antigo fazia 1 get_image_rects() POR imagem em
+        # até 40 páginas amostradas (minutos de trava só nesta etapa).
+        for info in page.get_image_info(xrefs=True):
+            xref = info.get("xref") or 0
+            if not xref:
+                continue
             xref_pages.setdefault(xref, set()).add(i)
-            rects = page.get_image_rects(xref)
-            if rects:
-                pos_pages.setdefault(_position_signature(rects[0]), set()).add(i)
+            digest = info.get("digest")
+            if digest:
+                digest_pages.setdefault(digest, set()).add(i)
     logo_xrefs = {x for x, pgs in xref_pages.items() if len(pgs) >= 3}
-    logo_positions = {sig for sig, pgs in pos_pages.items() if len(pgs) >= 3}
-    return logo_xrefs, logo_positions
+    logo_digests = {d for d, pgs in digest_pages.items() if len(pgs) >= 3}
+    return logo_xrefs, logo_digests
 
 
 def _create_kit_collage(images_rgb: List[np.ndarray], max_dim: int = 800) -> Optional[np.ndarray]:
