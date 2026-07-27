@@ -267,6 +267,13 @@ export const extractProducts = (
     // (risco financeiro citado pelo cliente). Reusa o padrão da família CLINK.
     const isPromo = !!campos['__promo'];
 
+    // PRÉ-VENDA: item da aba "Pré-venda" (Petrin/Dute/Levivan -- reunião
+    // 24/07/2026, mesmo padrão visual de PROMOÇÃO). Preço já vem correto da
+    // planilha (ao contrário de EM BREVE); só ganha a tag ***PRE VENDA***
+    // no nome + bloqueio de desconto em massa (produto ainda não está em
+    // estoque físico, evita desconto automático sobre preço de pré-venda).
+    const isPreVenda = !!campos['__preVenda'];
+
     // informacoesAdicionais setado por post-processamento específico do supplier
     const informacoesAdicionais = campos['informacoesAdicionais']
       ? toStr(campos['informacoesAdicionais'])
@@ -329,6 +336,8 @@ export const extractProducts = (
       ...(isEmBreve ? { visualCategory: 'em-breve' as const } : {}),
       // PROMOÇÃO: bloqueia desconto em massa + marca ***PROMOCAO*** no nome.
       ...(isPromo ? { visualCategory: 'promocional' as const, isPromotional: true, bloqueiaDesconto: true } : {}),
+      // PRÉ-VENDA: bloqueia desconto em massa + marca ***PRE VENDA*** no nome.
+      ...(isPreVenda ? { visualCategory: 'pre-venda' as const, bloqueiaDesconto: true } : {}),
     } as any);
   }
 
