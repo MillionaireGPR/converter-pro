@@ -464,59 +464,109 @@ class _job_slot:
         return False
 
 
+class _ResourceMonitor:
+    """Amostra CPU/memória do processo periodicamente enquanto um job roda,
+    guardando o PICO -- dá uma noção real de custo/consumo por conversão
+    individual (equivalente ao gráfico de métricas do Render, mas por job),
+    útil pra precificar o cliente com base em uso real.
+    """
+
+    def __init__(self, interval: float = 1.0):
+        self.interval = interval
+        self._peak_cpu = 0.0
+        self._peak_mem_mb = 0.0
+        self._stop = threading.Event()
+        self._thread = None
+
+    def _loop(self):
+        import psutil
+        proc = psutil.Process(os.getpid())
+        proc.cpu_percent()  # 1ª leitura sempre 0.0 (precisa de intervalo de referência) -- descarta
+        while not self._stop.is_set():
+            try:
+                cpu = proc.cpu_percent()
+                mem_mb = proc.memory_info().rss / (1024 * 1024)
+                self._peak_cpu = max(self._peak_cpu, cpu)
+                self._peak_mem_mb = max(self._peak_mem_mb, mem_mb)
+            except Exception:
+                pass
+            self._stop.wait(self.interval)
+
+    def __enter__(self):
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+        return False
+
+    def peaks(self) -> dict:
+        return {
+            "peakCpuPercent": round(self._peak_cpu, 1),
+            "peakMemoryMb": round(self._peak_mem_mb, 1),
+        }
+
+
 def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, output_folder: str, page_heights: dict, total_pages: int, supplier: str = "", use_ai_picker: bool = False):
-    try:
-      with _job_slot(jobId, "image_extraction"):
-        # 4. Converter Y dos SKUs com spatialContext (PDF.js Y-up -> PyMuPDF Y-down)
-        skus_list = _convert_sku_y_coords(skus_list, page_heights)
+    _monitor = _ResourceMonitor()
+    with _monitor:
+      try:
+        with _job_slot(jobId, "image_extraction"):
+            # 4. Converter Y dos SKUs com spatialContext (PDF.js Y-up -> PyMuPDF Y-down)
+            skus_list = _convert_sku_y_coords(skus_list, page_heights)
 
-        # 4b. Inferir spatialContext via busca textual no PDF (para SKUs sem coords).
-        # Isso resgata o flow quando o frontend não conseguiu extrair posição
-        # via PDF.js (caso comum em NIX/FOLIA com texto fragmentado).
-        skus_list = _infer_spatial_context(pdf_local_path, skus_list)
+            # 4b. Inferir spatialContext via busca textual no PDF (para SKUs sem coords).
+            # Isso resgata o flow quando o frontend não conseguiu extrair posição
+            # via PDF.js (caso comum em NIX/FOLIA com texto fragmentado).
+            skus_list = _infer_spatial_context(pdf_local_path, skus_list)
 
-        # 5. Extração via OpenCV: nova estratégia Column-First
-        # v21: se use_ai_picker=True, Gemini Vision decide qual imagem é a do produto
-        # (resolve casos heurística não cobre — DAGIA tag de preço, kit xícara, etc).
-        print(f"[Main] Extração de imagens (supplier={supplier}, ai_picker={use_ai_picker})")
-        matches, unmatched = extract_cells_via_cv(
-            pdf_local_path, skus_list, output_folder,
-            supplier_id=supplier, use_ai_picker=use_ai_picker,
-        )
-        total_images = len(matches)
+            # 5. Extração via OpenCV: nova estratégia Column-First
+            # v21: se use_ai_picker=True, Gemini Vision decide qual imagem é a do produto
+            # (resolve casos heurística não cobre — DAGIA tag de preço, kit xícara, etc).
+            print(f"[Main] Extração de imagens (supplier={supplier}, ai_picker={use_ai_picker})")
+            matches, unmatched = extract_cells_via_cv(
+                pdf_local_path, skus_list, output_folder,
+                supplier_id=supplier, use_ai_picker=use_ai_picker,
+            )
+            total_images = len(matches)
 
-        if not matches:
+            if not matches:
+                _save_status(jobId, {
+                    "status": "success",
+                    "message": "Nenhuma imagem de produto extraída do PDF",
+                    "zipUrl": None,
+                    "matchesCount": 0,
+                    "totalPages": total_pages,
+                    "totalImages": 0,
+                    **_monitor.peaks(),
+                })
+                return
+
+            # 6. Montar ZIP com imagens extraídas
+            zip_path = _build_zip_from_matches(output_folder, matches)
+
+            # 7. Upload do ZIP para Supabase
+            zip_remote_path = f"{jobId}/imagens_extraidas.zip"
+            print(f"Fazendo upload do ZIP -> {zip_remote_path}")
+            zip_url = upload_file_to_supabase(zip_path, zip_remote_path)
+            print(f"ZIP disponivel em: {zip_url}")
+
+            print(f"Job {jobId} concluido com sucesso!")
             _save_status(jobId, {
                 "status": "success",
-                "message": "Nenhuma imagem de produto extraída do PDF",
-                "zipUrl": None,
-                "matchesCount": 0,
+                "zipUrl": zip_url,
+                "matchesCount": len(matches),
+                "unmatchedCount": len(unmatched),
                 "totalPages": total_pages,
-                "totalImages": 0,
+                "totalImages": total_images,
+                "unmatchedSkus": unmatched,
+                **_monitor.peaks(),
             })
-            return
 
-        # 6. Montar ZIP com imagens extraídas
-        zip_path = _build_zip_from_matches(output_folder, matches)
-
-        # 7. Upload do ZIP para Supabase
-        zip_remote_path = f"{jobId}/imagens_extraidas.zip"
-        print(f"Fazendo upload do ZIP -> {zip_remote_path}")
-        zip_url = upload_file_to_supabase(zip_path, zip_remote_path)
-        print(f"ZIP disponivel em: {zip_url}")
-
-        print(f"Job {jobId} concluido com sucesso!")
-        _save_status(jobId, {
-            "status": "success",
-            "zipUrl": zip_url,
-            "matchesCount": len(matches),
-            "unmatchedCount": len(unmatched),
-            "totalPages": total_pages,
-            "totalImages": total_images,
-            "unmatchedSkus": unmatched,
-        })
-
-    except Exception as e:
+      except Exception as e:
         import traceback
         print(f"Erro no Job {jobId}: {e}")
         print(traceback.format_exc())
@@ -524,6 +574,7 @@ def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, outpu
             "status": "error",
             "message": str(e),
             "details": traceback.format_exc(),
+            **_monitor.peaks(),
         })
 
 # ─────────────────────────────────────────────────────────────
@@ -650,26 +701,29 @@ def _run_ai_extraction_task(ai_job_id: str, pdf_path: str, supplier: str):
     )
     heartbeat.start()
 
-    try:
-      with _job_slot(ai_job_id, "ai_extraction"):
-        # LAZY IMPORT: só importa aqui, mantém startup leve
-        from gemini_extractor import extract_with_fallback as gemini_extract
+    _monitor = _ResourceMonitor()
+    with _monitor:
+      try:
+        with _job_slot(ai_job_id, "ai_extraction"):
+            # LAZY IMPORT: só importa aqui, mantém startup leve
+            from gemini_extractor import extract_with_fallback as gemini_extract
 
-        print(f"[AI BG] Iniciando job {ai_job_id} (supplier={supplier})...")
-        # v23: passa supplier para ativar hints específicos no prompt
-        result = gemini_extract(pdf_path, supplier=supplier)
+            print(f"[AI BG] Iniciando job {ai_job_id} (supplier={supplier})...")
+            # v23: passa supplier para ativar hints específicos no prompt
+            result = gemini_extract(pdf_path, supplier=supplier)
 
-        if result.get("success"):
-            print(f"[AI BG] {ai_job_id} OK: {len(result['produtos'])} produtos | confiança={result.get('confianca', 0):.0%}")
-        else:
-            print(f"[AI BG] {ai_job_id} FALHA: {result.get('error')}")
+            if result.get("success"):
+                print(f"[AI BG] {ai_job_id} OK: {len(result['produtos'])} produtos | confiança={result.get('confianca', 0):.0%}")
+            else:
+                print(f"[AI BG] {ai_job_id} FALHA: {result.get('error')}")
 
-        _save_status(ai_job_id, {
-            "status": "success" if result.get("success") else "error",
-            "ai_result": result,  # contém produtos, model, confianca, etc.
-        })
+            _save_status(ai_job_id, {
+                "status": "success" if result.get("success") else "error",
+                "ai_result": result,  # contém produtos, model, confianca, etc.
+                **_monitor.peaks(),
+            })
 
-    except Exception as e:
+      except Exception as e:
         import traceback
         print(f"[AI BG] {ai_job_id} EXCEÇÃO: {e}")
         print(traceback.format_exc())
@@ -680,8 +734,9 @@ def _run_ai_extraction_task(ai_job_id: str, pdf_path: str, supplier: str):
                 "produtos": [],
                 "error": str(e),
             },
+            **_monitor.peaks(),
         })
-    finally:
+      finally:
         # Para o heartbeat
         stop_heartbeat.set()
         # Limpa o arquivo temporário do PDF
