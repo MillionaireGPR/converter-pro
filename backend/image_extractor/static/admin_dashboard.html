@@ -261,15 +261,19 @@ async function refreshJobs() {
     const extra = j.matchesCount !== undefined
       ? `${j.matchesCount} imagens casadas, ${j.unmatchedCount || 0} sem match`
       : (j.ai_result ? `${(j.ai_result.produtos || []).length} produtos` : (j.message || '-'));
+    const peak = (j.peakCpuPercent !== undefined || j.peakMemoryMb !== undefined)
+      ? `${(j.peakCpuPercent ?? 0).toFixed(1)}% CPU · ${(j.peakMemoryMb ?? 0).toFixed(0)} MB`
+      : '-';
     return `<tr>
       <td><code>${j.jobId}</code></td>
       <td><span class="badge ${badgeFor(j.status)}">${j.status || '-'}</span></td>
       <td>${extra}</td>
+      <td>${peak}</td>
       <td>${date}</td>
     </tr>`;
   }).join('');
   wrap.innerHTML = `<table>
-    <thead><tr><th>Job</th><th>Status</th><th>Resultado</th><th>Atualizado</th></tr></thead>
+    <thead><tr><th>Job</th><th>Status</th><th>Resultado</th><th>Pico CPU/RAM</th><th>Atualizado</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
 }
