@@ -18,6 +18,7 @@ import uvicorn
 import fitz
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from cv_extractor import extract_cells_via_cv
 from storage import upload_file_to_supabase
@@ -178,6 +179,15 @@ async def admin_jobs(token: str = "", limit: int = 50):
         pass
     results.sort(key=lambda x: x.get("updatedAt", 0), reverse=True)
     return {"jobs": results[:limit], "total": len(results)}
+
+
+@app.get("/admin/dashboard")
+async def admin_dashboard():
+    """Página HTML do painel (static/admin_dashboard.html). Sem token na
+    rota em si -- a página pede o token no navegador e o usa nas chamadas
+    a /admin/logs, /admin/metrics e /admin/jobs, que são as protegidas."""
+    path = os.path.join(os.path.dirname(__file__), "static", "admin_dashboard.html")
+    return FileResponse(path, media_type="text/html")
 
 
 # ─────────────────────────────────────────────────────────────
