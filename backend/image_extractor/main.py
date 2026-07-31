@@ -8,16 +8,53 @@ if hasattr(sys.stderr, "reconfigure"):
 
 import os
 import json
+import time
+import collections
+from datetime import datetime, timezone
 import zipfile
 import shutil
 import threading
 import uvicorn
 import fitz
-from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from cv_extractor import extract_cells_via_cv
 from storage import upload_file_to_supabase
+
+# ─────────────────────────────────────────────────────────────
+# PAINEL DE MONITORAMENTO (25/07/2026): captura os últimos N prints
+# (stdout/stderr) em memória para o endpoint /admin/logs -- servidor próprio
+# (fora do Render) não tem painel de log embutido. "Tee": grava no
+# stdout/stderr REAL normalmente (nada muda pra quem já lê o console/journal)
+# e também guarda uma cópia num buffer circular em memória.
+# ─────────────────────────────────────────────────────────────
+_SERVER_START_TIME = time.time()
+_LOG_BUFFER: collections.deque = collections.deque(maxlen=1000)
+
+
+class _TeeStream:
+    def __init__(self, original):
+        self._original = original
+
+    def write(self, data):
+        self._original.write(data)
+        if data and data.strip():
+            ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            for line in data.splitlines():
+                if line.strip():
+                    _LOG_BUFFER.append(f"{ts} {line}")
+
+    def flush(self):
+        self._original.flush()
+
+    def isatty(self):
+        return False
+
+
+sys.stdout = _TeeStream(sys.stdout)
+sys.stderr = _TeeStream(sys.stderr)
 
 # IMPORTANTE: gemini_extractor é importado LAZY no endpoint /extract_products_ai
 # (não no startup), porque google-generativeai é uma lib pesada que pode
@@ -54,6 +91,103 @@ async def health_check():
         "service": "image-extractor",
         "version": SERVICE_VERSION,
     }
+
+
+# ─────────────────────────────────────────────────────────────
+# PAINEL DE MONITORAMENTO (25/07/2026) -- logs, métricas e histórico de
+# jobs, protegidos por token simples (ADMIN_TOKEN no .env). Sem o Render,
+# não existe outro lugar pra ver isso, então expomos aqui. NÃO expõe dados
+# de clientes (produtos/preços) -- só operação do servidor.
+# ─────────────────────────────────────────────────────────────
+
+def _check_admin_token(token: str):
+    expected = os.environ.get("ADMIN_TOKEN", "")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+
+
+@app.get("/admin/logs")
+async def admin_logs(token: str = "", lines: int = 200):
+    """Últimas N linhas de log (stdout/stderr) capturadas em memória.
+    Reseta a cada restart do processo (idle/deploy/OOM) -- é o "agora",
+    não histórico permanente."""
+    _check_admin_token(token)
+    lines = max(1, min(lines, 1000))
+    return {"lines": list(_LOG_BUFFER)[-lines:], "bufferSize": len(_LOG_BUFFER)}
+
+
+@app.get("/admin/metrics")
+async def admin_metrics(token: str = ""):
+    """CPU, memória, disco e contagem de jobs -- snapshot atual do servidor."""
+    _check_admin_token(token)
+    import psutil
+
+    process = psutil.Process(os.getpid())
+    vm = psutil.virtual_memory()
+    disk = psutil.disk_usage("/")
+
+    active_jobs = 0
+    try:
+        if os.path.isdir(_STATUS_DIR):
+            active_jobs = sum(
+                1 for d in os.listdir(_STATUS_DIR)
+                if os.path.isdir(os.path.join(_STATUS_DIR, d))
+            )
+    except Exception:
+        pass
+
+    return {
+        "service": "image-extractor",
+        "version": SERVICE_VERSION,
+        "uptimeSeconds": round(time.time() - _SERVER_START_TIME),
+        "cpuPercent": psutil.cpu_percent(interval=0.3),
+        "memory": {
+            "totalMb": round(vm.total / (1024 * 1024)),
+            "usedMb": round(vm.used / (1024 * 1024)),
+            "percent": vm.percent,
+            "processMb": round(process.memory_info().rss / (1024 * 1024)),
+        },
+        "disk": {
+            "totalGb": round(disk.total / (1024 ** 3), 1),
+            "usedGb": round(disk.used / (1024 ** 3), 1),
+            "percent": disk.percent,
+        },
+        "jobFoldersOnDisk": active_jobs,
+        "maxConcurrentJobs": MAX_CONCURRENT_JOBS,
+    }
+
+
+@app.get("/admin/jobs")
+async def admin_jobs(token: str = "", limit: int = 50):
+    """Últimos jobs processados (status, timing) lidos de temp/<jobId>/status.json."""
+    _check_admin_token(token)
+    limit = max(1, min(limit, 200))
+    results = []
+    try:
+        if os.path.isdir(_STATUS_DIR):
+            for d in os.listdir(_STATUS_DIR):
+                path = os.path.join(_STATUS_DIR, d, "status.json")
+                if os.path.isfile(path):
+                    try:
+                        with open(path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        data["jobId"] = d
+                        results.append(data)
+                    except Exception:
+                        continue
+    except Exception:
+        pass
+    results.sort(key=lambda x: x.get("updatedAt", 0), reverse=True)
+    return {"jobs": results[:limit], "total": len(results)}
+
+
+@app.get("/admin/dashboard")
+async def admin_dashboard():
+    """Página HTML do painel (static/admin_dashboard.html). Sem token na
+    rota em si -- a página pede o token no navegador e o usa nas chamadas
+    a /admin/logs, /admin/metrics e /admin/jobs, que são as protegidas."""
+    path = os.path.join(os.path.dirname(__file__), "static", "admin_dashboard.html")
+    return FileResponse(path, media_type="text/html")
 
 
 # ─────────────────────────────────────────────────────────────

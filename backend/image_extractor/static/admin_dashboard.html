@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Converter-Pro — Painel do Servidor</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --blue: #58a6ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 24px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  h1 {
+    font-size: 20px;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--muted);
+    display: inline-block;
+  }
+  .dot.ok { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .dot.bad { background: var(--red); box-shadow: 0 0 8px var(--red); }
+  .meta { color: var(--muted); font-size: 13px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+  .card .value { font-size: 24px; font-weight: 600; }
+  .card .sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .bar-bg { background: #21262d; border-radius: 4px; height: 6px; margin-top: 8px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s; }
+  .bar-fill.ok { background: var(--green); }
+  .bar-fill.warn { background: var(--yellow); }
+  .bar-fill.crit { background: var(--red); }
+
+  section { margin-bottom: 24px; }
+  h2 {
+    font-size: 14px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 0 0 10px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+  tr:last-child td { border-bottom: none; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  }
+  .badge.success { background: rgba(63,185,80,0.15); color: var(--green); }
+  .badge.error { background: rgba(248,81,73,0.15); color: var(--red); }
+  .badge.processing { background: rgba(88,166,255,0.15); color: var(--blue); }
+  .badge.other { background: rgba(139,148,158,0.15); color: var(--muted); }
+
+  #logs {
+    background: #010409;
+    padding: 14px;
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    max-height: 420px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .log-line { color: #c9d1d9; }
+  .log-ts { color: var(--muted); margin-right: 8px; }
+  .empty { color: var(--muted); padding: 20px; text-align: center; font-size: 13px; }
+  .token-gate {
+    max-width: 420px; margin: 80px auto; text-align: center;
+  }
+  .token-gate input {
+    width: 100%; padding: 10px 12px; margin-top: 12px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text); font-size: 14px;
+  }
+  .token-gate button {
+    margin-top: 12px; padding: 10px 20px; border-radius: 6px; border: none;
+    background: var(--blue); color: #fff; font-weight: 600; cursor: pointer; font-size: 14px;
+  }
+  .refresh-note { color: var(--muted); font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div id="gate" class="token-gate" style="display:none">
+  <h1>🔒 Painel Converter-Pro</h1>
+  <p class="meta">Informe o token de acesso.</p>
+  <input id="tokenInput" type="password" placeholder="Token de admin" />
+  <br>
+  <button onclick="saveToken()">Entrar</button>
+  <p id="gateError" style="color: var(--red); font-size: 13px; margin-top: 10px;"></p>
+</div>
+
+<div id="app" style="display:none">
+  <header>
+    <h1><span class="dot" id="statusDot"></span> Converter-Pro — Painel do Servidor</h1>
+    <span class="meta" id="lastUpdate">carregando...</span>
+  </header>
+
+  <div class="grid" id="metricsGrid"></div>
+
+  <section>
+    <h2>Jobs recentes</h2>
+    <div class="panel">
+      <div id="jobsTableWrap"><div class="empty">Carregando...</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Logs ao vivo <span class="refresh-note">atualiza a cada 5s</span></h2>
+    <div class="panel">
+      <div id="logs"><div class="empty">Carregando...</div></div>
+    </div>
+  </section>
+</div>
+
+<script>
+let TOKEN = new URLSearchParams(window.location.search).get('token') || sessionStorage.getItem('adminToken') || '';
+if (TOKEN) sessionStorage.setItem('adminToken', TOKEN);
+
+function saveToken() {
+  const v = document.getElementById('tokenInput').value.trim();
+  if (!v) return;
+  TOKEN = v;
+  sessionStorage.setItem('adminToken', v);
+  document.getElementById('gate').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  refreshAll();
+  startLoop();
+}
+
+function showGate(msg) {
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('gate').style.display = 'block';
+  document.getElementById('gateError').textContent = msg || '';
+}
+
+async function apiGet(path) {
+  const res = await fetch(`${path}?token=${encodeURIComponent(TOKEN)}`);
+  if (res.status === 403) throw new Error('forbidden');
+  if (!res.ok) throw new Error('http ' + res.status);
+  return res.json();
+}
+
+function fmtBytesBar(percent) {
+  const cls = percent > 90 ? 'crit' : percent > 70 ? 'warn' : 'ok';
+  return `<div class="bar-bg"><div class="bar-fill ${cls}" style="width:${Math.min(percent,100)}%"></div></div>`;
+}
+
+function fmtUptime(sec) {
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+async function refreshMetrics() {
+  const m = await apiGet('/admin/metrics');
+  document.getElementById('statusDot').className = 'dot ok';
+  const grid = document.getElementById('metricsGrid');
+  grid.innerHTML = `
+    <div class="card">
+      <div class="label">CPU</div>
+      <div class="value">${m.cpuPercent.toFixed(1)}%</div>
+      ${fmtBytesBar(m.cpuPercent)}
+    </div>
+    <div class="card">
+      <div class="label">Memória (servidor)</div>
+      <div class="value">${m.memory.percent.toFixed(0)}%</div>
+      <div class="sub">${m.memory.usedMb} MB / ${m.memory.totalMb} MB</div>
+      ${fmtBytesBar(m.memory.percent)}
+    </div>
+    <div class="card">
+      <div class="label">Memória (processo)</div>
+      <div class="value">${m.memory.processMb} MB</div>
+      <div class="sub">usada pelo conversor</div>
+    </div>
+    <div class="card">
+      <div class="label">Disco</div>
+      <div class="value">${m.disk.percent.toFixed(0)}%</div>
+      <div class="sub">${m.disk.usedGb} GB / ${m.disk.totalGb} GB</div>
+      ${fmtBytesBar(m.disk.percent)}
+    </div>
+    <div class="card">
+      <div class="label">Uptime</div>
+      <div class="value">${fmtUptime(m.uptimeSeconds)}</div>
+      <div class="sub">versão ${m.version}</div>
+    </div>
+    <div class="card">
+      <div class="label">Jobs em disco</div>
+      <div class="value">${m.jobFoldersOnDisk}</div>
+      <div class="sub">limite simultâneo: ${m.maxConcurrentJobs}</div>
+    </div>
+  `;
+}
+
+function badgeFor(status) {
+  const s = (status || '').toLowerCase();
+  if (s === 'success' || s === 'done' || s === 'completed') return 'success';
+  if (s === 'error') return 'error';
+  if (s === 'processing') return 'processing';
+  return 'other';
+}
+
+async function refreshJobs() {
+  const r = await apiGet('/admin/jobs');
+  const wrap = document.getElementById('jobsTableWrap');
+  if (!r.jobs.length) {
+    wrap.innerHTML = '<div class="empty">Nenhum job registrado ainda.</div>';
+    return;
+  }
+  const rows = r.jobs.map(j => {
+    const date = j.updatedAt ? new Date(j.updatedAt * 1000).toLocaleString('pt-BR') : '-';
+    const extra = j.matchesCount !== undefined
+      ? `${j.matchesCount} imagens casadas, ${j.unmatchedCount || 0} sem match`
+      : (j.ai_result ? `${(j.ai_result.produtos || []).length} produtos` : (j.message || '-'));
+    return `<tr>
+      <td><code>${j.jobId}</code></td>
+      <td><span class="badge ${badgeFor(j.status)}">${j.status || '-'}</span></td>
+      <td>${extra}</td>
+      <td>${date}</td>
+    </tr>`;
+  }).join('');
+  wrap.innerHTML = `<table>
+    <thead><tr><th>Job</th><th>Status</th><th>Resultado</th><th>Atualizado</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+async function refreshLogsProper() {
+  const res = await fetch(`/admin/logs?token=${encodeURIComponent(TOKEN)}&lines=300`);
+  if (res.status === 403) throw new Error('forbidden');
+  const r = await res.json();
+  const box = document.getElementById('logs');
+  if (!r.lines.length) {
+    box.innerHTML = '<div class="empty">Sem atividade recente (buffer reseta a cada reinício do serviço).</div>';
+    return;
+  }
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+  box.innerHTML = r.lines.map(l => {
+    const idx = l.indexOf(' ');
+    const ts = l.slice(0, idx);
+    const rest = l.slice(idx + 1);
+    return `<div class="log-line"><span class="log-ts">${ts}</span>${escapeHtml(rest)}</div>`;
+  }).join('');
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function refreshAll() {
+  try {
+    await Promise.all([refreshMetrics(), refreshJobs(), refreshLogsProper()]);
+    document.getElementById('lastUpdate').textContent = 'atualizado às ' + new Date().toLocaleTimeString('pt-BR');
+  } catch (e) {
+    document.getElementById('statusDot').className = 'dot bad';
+    if (e.message === 'forbidden') {
+      sessionStorage.removeItem('adminToken');
+      showGate('Token inválido.');
+    } else {
+      document.getElementById('lastUpdate').textContent = 'erro ao atualizar: ' + e.message;
+    }
+  }
+}
+
+let loopHandle = null;
+function startLoop() {
+  if (loopHandle) clearInterval(loopHandle);
+  loopHandle = setInterval(refreshAll, 5000);
+}
+
+// boot
+if (!TOKEN) {
+  showGate();
+} else {
+  document.getElementById('app').style.display = 'block';
+  refreshAll();
+  startLoop();
+}
+</script>
+</body>
+</html>

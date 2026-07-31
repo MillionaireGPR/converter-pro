@@ -14,3 +14,5 @@ python-multipart>=0.0.9
 google-generativeai>=0.8.0
 google-genai>=1.0.0
 pydantic>=2.5.0
+# Painel de monitoramento (/admin/metrics) -- CPU/RAM/disco do processo e do servidor
+psutil>=6.0.0
