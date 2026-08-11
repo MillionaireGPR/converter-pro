@@ -146,7 +146,14 @@ export const extractImagesViaBackend = async (
     // Polling com TIMEOUT TOTAL e tolerância a falhas transitórias.
     // Antes era while(true) infinito + not_found ignorado → user via 20min sem progresso.
     const POLL_INTERVAL_MS = 5000;
-    const MAX_WAIT_MS = 6 * 60 * 1000; // 6 minutos (NIX 51 pgs costuma levar 2-4min)
+    // 25 min. Era 6 min — calibrado na época do Render, onde catálogo grande
+    // sequer terminava (OOM). Com o servidor próprio o backend CONCLUI jobs
+    // longos, mas o frontend desistia antes e mostrava IMG-TIMEOUT mesmo com
+    // as imagens prontas no servidor (incidente real DAGIA 36MB/106 produtos,
+    // 11/08/2026: backend terminou em ~9min, site abortou aos 6min).
+    // Teto = 25min fica logo abaixo do ZOMBIE_PROCESSING_THRESHOLD_SEC (30min)
+    // do backend, então um timeout aqui significa problema real, não impaciência.
+    const MAX_WAIT_MS = 25 * 60 * 1000;
     const MAX_CONSECUTIVE_ERRORS = 6; // 6×5s = 30s tolerado de servidor down
     const MAX_NOT_FOUND_CHECKS = 3; // 3 confirmações de not_found = job perdido
     const t0 = Date.now();
