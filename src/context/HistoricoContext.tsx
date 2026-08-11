@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect } from "react";
 import { supabase } from "../integrations/supabase/client";
 import { toast } from "sonner";
+import { useAuth } from "./AuthContext";
 import { OperacaoHistorico, ConversaoSalva, ArquivoProcessado } from "./types"; // I'll create a types.ts
 
 const CONVERSOES_STORAGE_KEY = 'converter-pro-conversoes-salvas';
@@ -36,6 +37,13 @@ export function HistoricoProvider({ children }: { children: ReactNode }) {
   const [historico, setHistorico] = useState<OperacaoHistorico[]>([]);
   const [conversoesSalvas, setConversoesSalvas] = useState<ConversaoSalva[]>([]);
   const [arquivos, setArquivos] = useState<ArquivoProcessado[]>([]);
+  // Usuário logado (AuthProvider envolve o AppProvider — ver App.tsx).
+  // Fonte ÚNICA de verdade do autor da operação: as ~12 telas que chamam
+  // registrarHistorico passavam usuario:'Admin' hardcoded, então o histórico
+  // no banco não permitia auditar QUEM fez cada conversão (11/08/2026).
+  // Resolver aqui (e não em cada tela) garante que nenhuma chamada nova
+  // volte a gravar autor errado por esquecimento.
+  const { usuario: usuarioLogado } = useAuth();
 
   useEffect(() => {
     async function load() {
@@ -46,7 +54,9 @@ export function HistoricoProvider({ children }: { children: ReactNode }) {
             id: h.id,
             arquivo: h.filename,
             fornecedor: h.supplier_name || '-',
-            usuario: h.user_name || 'Admin',
+            // Sem inventar 'Admin' na leitura: registros antigos (anteriores ao
+            // fix de autoria de 11/08/2026) podem não ter autor confiável.
+            usuario: h.user_name || '-',
             data: h.date,
             tipoConversao: h.conversion_type || '',
             qtdItens: h.item_count || 0,
@@ -69,10 +79,14 @@ export function HistoricoProvider({ children }: { children: ReactNode }) {
 
   const registrarHistorico = useCallback(async (op: Omit<OperacaoHistorico, 'id'>) => {
     try {
+      // O autor SEMPRE vem da sessão logada. O op.usuario das telas é ignorado
+      // de propósito (era 'Admin' fixo em todas elas) — só serve de fallback
+      // se por algum motivo não houver sessão.
+      const autor = usuarioLogado || op.usuario || 'Desconhecido';
       const { data, error } = await (supabase.from('export_history') as any).insert({
         filename: op.arquivo,
         supplier_name: op.fornecedor,
-        user_name: op.usuario,
+        user_name: autor,
         conversion_type: op.tipoConversao,
         item_count: op.qtdItens,
         status: op.status
@@ -82,7 +96,7 @@ export function HistoricoProvider({ children }: { children: ReactNode }) {
       if (data) {
         setHistorico(prev => [{
           id: data.id, arquivo: data.filename, fornecedor: data.supplier_name || '-',
-          usuario: data.user_name || 'Admin', data: data.date || now(),
+          usuario: data.user_name || autor, data: data.date || now(),
           tipoConversao: data.conversion_type || '', qtdItens: data.item_count || 0, status: data.status as any
         }, ...prev]);
       }
@@ -90,7 +104,7 @@ export function HistoricoProvider({ children }: { children: ReactNode }) {
       console.error(e);
       toast.error("Erro ao salvar histórico.");
     }
-  }, []);
+  }, [usuarioLogado]);
 
   const salvarConversao = useCallback(async (dados: Omit<ConversaoSalva, 'id' | 'data'>) => {
     try {
