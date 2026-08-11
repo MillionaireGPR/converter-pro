@@ -143,7 +143,10 @@ export const repairPricesViaGemini = async (
   // Backend pode cair (OOM) durante processamento → toleramos N erros consecutivos
   // mas se persistir, abortamos com erro claro em vez de poll infinito.
   const POLL_INTERVAL_MS = 3000;
-  const MAX_WAIT_MS = 5 * 60 * 1000; // 5 min
+  // 12 min (era 5). Mesmo motivo do fix em imageExtractionApi (11/08/2026):
+  // com fila de 1 job por vez, o resgate de preços pode ficar aguardando vaga
+  // enquanto outro catálogo processa — desistir cedo descarta trabalho já feito.
+  const MAX_WAIT_MS = 12 * 60 * 1000;
   const MAX_CONSECUTIVE_ERRORS = 10; // 10×3s = 30s tolerado de servidor down
   const MAX_NOT_FOUND_CHECKS = 3;
   const t0 = Date.now();
