@@ -20,6 +20,7 @@ import Usuarios from "./pages/Usuarios";
 import RegrasMapeamento from "./pages/RegrasMapeamento";
 import Historico from "./pages/Historico";
 import Configuracoes from "./pages/Configuracoes";
+import PainelServidor from "./pages/PainelServidor";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -54,6 +55,7 @@ const App = () => (
                 <Route path="/regras" element={<RegrasMapeamento />} />
                 <Route path="/historico" element={<Historico />} />
                 <Route path="/configuracoes" element={<Configuracoes />} />
+                <Route path="/servidor" element={<PainelServidor />} />
               </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>
