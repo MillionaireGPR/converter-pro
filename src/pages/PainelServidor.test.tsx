@@ -1,6 +1,10 @@
 /**
  * Trava o redirect fixo pro painel do servidor (incidente 12/08/2026: link
  * salvo do painel quebrava a cada troca de URL do Cloudflare Tunnel).
+ *
+ * NÃO testa/usa token de admin aqui de propósito -- ver comentário em
+ * PainelServidor.tsx sobre por que ele não pode vir de VITE_ADMIN_TOKEN
+ * (variáveis VITE_ ficam expostas em texto puro no bundle público).
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -26,37 +30,39 @@ describe('PainelServidor (redirect fixo)', () => {
     window.location = originalLocation;
   });
 
-  it('redireciona para {backendUrl}/admin/dashboard?token={adminToken}', async () => {
-    render(<PainelServidor backendUrl="https://qualquer-url-do-tunel.trycloudflare.com" adminToken="cv-painel-9k3xz71qm" />);
+  it('redireciona para {backendUrl}/admin/dashboard', async () => {
+    render(<PainelServidor backendUrl="https://qualquer-url-do-tunel.trycloudflare.com" />);
 
     await waitFor(() =>
       expect(replaceMock).toHaveBeenCalledWith(
-        'https://qualquer-url-do-tunel.trycloudflare.com/admin/dashboard?token=cv-painel-9k3xz71qm'
+        'https://qualquer-url-do-tunel.trycloudflare.com/admin/dashboard'
       )
     );
   });
 
   it('acompanha o backend atual mesmo que a URL do túnel mude', async () => {
-    render(<PainelServidor backendUrl="https://outra-url-diferente.trycloudflare.com" adminToken="cv-painel-9k3xz71qm" />);
+    render(<PainelServidor backendUrl="https://outra-url-diferente.trycloudflare.com" />);
 
     await waitFor(() =>
       expect(replaceMock).toHaveBeenCalledWith(
-        'https://outra-url-diferente.trycloudflare.com/admin/dashboard?token=cv-painel-9k3xz71qm'
+        'https://outra-url-diferente.trycloudflare.com/admin/dashboard'
       )
     );
   });
 
   it('não tenta redirecionar sem backendUrl configurado', async () => {
-    render(<PainelServidor backendUrl="" adminToken="cv-painel-9k3xz71qm" />);
+    render(<PainelServidor backendUrl="" />);
 
     await new Promise((r) => setTimeout(r, 10));
     expect(replaceMock).not.toHaveBeenCalled();
   });
 
-  it('não tenta redirecionar sem adminToken configurado', async () => {
-    render(<PainelServidor backendUrl="https://qualquer-url.trycloudflare.com" adminToken="" />);
+  it('nunca inclui token na URL de redirecionamento (VITE_ é público no bundle)', async () => {
+    render(<PainelServidor backendUrl="https://qualquer-url.trycloudflare.com" />);
 
-    await new Promise((r) => setTimeout(r, 10));
-    expect(replaceMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(replaceMock).toHaveBeenCalled());
+    const urlChamada = replaceMock.mock.calls[0][0] as string;
+    expect(urlChamada).not.toContain('token');
+    expect(urlChamada).not.toContain('?');
   });
 });
