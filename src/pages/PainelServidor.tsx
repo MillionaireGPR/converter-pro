@@ -9,34 +9,28 @@ import { useEffect, useState } from "react";
  * link salvo do painel fica velho e quebra sem aviso). Esta página lê o
  * mesmo VITE_BACKEND_URL (sempre atualizado) e redireciona pro painel
  * certo -- então o bookmark de verdade é SÓ este endereço, que nunca muda.
+ *
+ * NÃO passa o token de admin na URL de propósito: qualquer variável com
+ * prefixo VITE_ fica embutida em texto puro no bundle público do site --
+ * visível a QUALQUER visitante (não só usuários logados no app), já que é
+ * um arquivo estático servido sem autenticação. Descoberto ao tentar fazer
+ * isso mesmo (o próprio `vercel env add` avisou). O painel do servidor já
+ * tem seu próprio portão (pede o token, lembra em sessionStorage do
+ * domínio dele) -- deixamos ele cuidar disso.
  */
-interface PainelServidorProps {
-  // Props existem só pra o teste conseguir injetar valores sem depender de
-  // vi.stubEnv em chaves de ambiente novas (import.meta.env não deixa
-  // stubar uma chave que nunca existiu antes). Uso real (rota /servidor)
-  // nunca passa props -- cai no valor real do ambiente.
-  backendUrl?: string;
-  adminToken?: string;
-}
-
-export default function PainelServidor({ backendUrl, adminToken }: PainelServidorProps = {}) {
+export default function PainelServidor({ backendUrl }: { backendUrl?: string } = {}) {
   const [erro, setErro] = useState<string | null>(null);
 
   useEffect(() => {
     const backend = backendUrl ?? ((import.meta as any).env?.VITE_BACKEND_URL as string | undefined);
-    const token = adminToken ?? ((import.meta as any).env?.VITE_ADMIN_TOKEN as string | undefined);
 
     if (!backend) {
       setErro("VITE_BACKEND_URL não configurado neste ambiente.");
       return;
     }
-    if (!token) {
-      setErro("VITE_ADMIN_TOKEN não configurado neste ambiente (peça pro Gabriel adicionar no Vercel).");
-      return;
-    }
 
-    window.location.replace(`${backend}/admin/dashboard?token=${encodeURIComponent(token)}`);
-  }, []);
+    window.location.replace(`${backend}/admin/dashboard`);
+  }, [backendUrl]);
 
   return (
     <div style={{ padding: 32, fontFamily: "sans-serif" }}>
