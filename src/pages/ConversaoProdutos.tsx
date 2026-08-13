@@ -23,6 +23,7 @@ import { Image as ImageIcon } from "lucide-react";
 import { buildAndDownloadZip } from "@/core/images/imageZipBuilder";
 import { ResultadoExtracaoImagens } from "@/core/images/imageTypes";
 import { classifyImageError } from "@/core/images/imageErrorClassifier";
+import { getBackendUrl, backendLabel } from "@/core/backendResolver";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 
@@ -400,14 +401,23 @@ export default function ConversaoProdutos() {
       // tempos/erros conforme o cliente usa a ferramenta).
       const totalSec = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
 
-      // Registra histórico no banco (tempo embutido no tipoConversao — sem
-      // migração de schema: "Importação (parser) · 4:54").
+      // Registra histórico no banco. Tudo embutido no tipoConversao (sem
+      // migração de schema), no formato:
+      //   "Importação (pdf-ai-first · IA) · 4:54 · proprio"
+      // Os 3 dados servem pra diagnosticar um problema relatado pelo cliente
+      // SEM precisar pedir print (14/08/2026): se usou IA ou só o parser
+      // Python, quanto demorou, e em QUAL servidor rodou (pra correlacionar
+      // com quedas do servidor próprio vs fallback no Render).
+      const usouIA = /ai-first|gemini/i.test(result.metadata.parserUsado || '');
+      const servidor = backendLabel(await getBackendUrl());
       await registrarHistorico({
         arquivo: selectedFile.name,
         fornecedor: supplier.nome,
         usuario: 'Admin',
         data: new Date().toISOString().replace('T', ' ').substring(0, 16),
-        tipoConversao: `Importação (${result.metadata.parserUsado}) · ${fmtTempo(totalSec)}`,
+        tipoConversao:
+          `Importação (${result.metadata.parserUsado} · ${usouIA ? 'IA' : 'sem IA'})` +
+          ` · ${fmtTempo(totalSec)} · ${servidor}`,
         qtdItens: result.produtos.length,
         status: 'concluído',
       });
