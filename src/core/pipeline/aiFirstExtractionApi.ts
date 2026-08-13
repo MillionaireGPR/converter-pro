@@ -25,8 +25,7 @@
  */
 
 import { ProdutoBruto } from '../types/productPipeline';
-
-const BACKEND_URL = (import.meta as any).env?.VITE_BACKEND_URL || 'http://localhost:8000';
+import { getBackendUrl, invalidateBackend } from '../backendResolver';
 
 /** Produto cru retornado pelo Gemini (schema do EXTRACTION_PROMPT) */
 export interface AiProduto {
@@ -75,6 +74,10 @@ export const extractProductsViaAI = async (
   console.log(`[AiFirst] Extração AI-first iniciada: ${file.name} (${fileSizeMB}MB, supplier=${supplier})`);
 
   const jobId = `aifirst_${crypto.randomUUID()}`;
+
+  // Resolve o backend UMA vez: o job só existe no servidor onde foi criado,
+  // então o polling da FASE 2 precisa falar com esse mesmo servidor.
+  const BACKEND_URL = await getBackendUrl();
 
   // ─── FASE 1: POST cria o job (retry agressivo IV-07) ───
   let jobCreated = false;
@@ -137,6 +140,9 @@ export const extractProductsViaAI = async (
         continue;
       }
       console.error(`[AiFirst] Erro definitivo após ${attempt} tentativa(s):`, err);
+      // Backend pode ter caído no meio da sessão — descarta a memoização
+      // pra próxima operação refazer o health check e cair na reserva.
+      invalidateBackend();
       return null;
     }
   }

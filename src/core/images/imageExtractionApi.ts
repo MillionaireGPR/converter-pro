@@ -1,7 +1,6 @@
 import { ResultadoExtracaoImagens } from './imageTypes';
 import { ProdutoNormalizadoV2 } from '../types/productPipeline';
-
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+import { getBackendUrl, invalidateBackend } from '../backendResolver';
 
 /**
  * Extrai imagens de PDF usando o backend Python (PyMuPDF)
@@ -55,6 +54,9 @@ export const extractImagesViaBackend = async (
     }
 
     // 3. Chamar backend Python (com retry agressivo p/ ERR_HTTP2_PROTOCOL_ERROR)
+    // Resolve o backend UMA vez e usa a mesma URL até o fim: o job só existe
+    // no servidor onde foi criado, então o polling PRECISA falar com ele.
+    const BACKEND_URL = await getBackendUrl();
     console.log(`[ImageExtractionApi] Chamando backend: ${BACKEND_URL}/process`);
 
     const MAX_ATTEMPTS = 5;
@@ -235,6 +237,10 @@ export const extractImagesViaBackend = async (
 
   } catch (error: any) {
     console.error('[ImageExtractionApi] Erro:', error);
+    // O backend escolhido pode ter caído no meio da sessão — descarta a
+    // memoização pra que a PRÓXIMA tentativa refaça o health check e possa
+    // cair na reserva (sem isso, ficaria preso no servidor morto).
+    invalidateBackend();
     return {
       totalImagesFound: 0,
       totalImagesMatched: 0,

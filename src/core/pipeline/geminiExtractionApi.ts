@@ -14,7 +14,7 @@
  *   6. Merge dos preços de volta no resultado
  */
 
-const BACKEND_URL = (import.meta as any).env?.VITE_BACKEND_URL || 'http://localhost:8000';
+import { getBackendUrl, invalidateBackend } from '../backendResolver';
 
 export interface ResultadoRepair {
   success: boolean;
@@ -55,6 +55,10 @@ export const repairPricesViaGemini = async (
 
   const fileSizeMB = (file.size / 1024 / 1024).toFixed(1);
   console.log(`[GeminiRepair] Resgatando ${totalSkus} preços em ${Object.keys(skusByPage).length} páginas (PDF ${fileSizeMB}MB, async)...`);
+
+  // Resolve o backend UMA vez: o job só existe no servidor onde foi criado,
+  // então o polling da FASE 2 precisa falar com esse mesmo servidor.
+  const BACKEND_URL = await getBackendUrl();
 
   // ─── FASE 1: POST cria o job (com retry agressivo para HTTP/2 reset) ───
   let jobId: string | null = null;
@@ -132,6 +136,9 @@ export const repairPricesViaGemini = async (
         continue;
       }
       console.error(`[GeminiRepair] Erro definitivo após ${attempt} tentativa(s):`, err);
+      // Backend pode ter caído no meio da sessão — descarta a memoização
+      // pra próxima operação refazer o health check e cair na reserva.
+      invalidateBackend();
       return null;
     }
   }
