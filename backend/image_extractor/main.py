@@ -412,8 +412,29 @@ def _load_status(job_id: str) -> dict:
 # morrem EM SILÊNCIO (foi o que aconteceu no teste de 6 catálogos simultâneos:
 # 3 sem imagem + 1 travado). Solução: 1 semáforo GLOBAL compartilhado pelos dois
 # tipos de job → processa N por vez (default 1) e o resto fica "na fila".
-# Configurável por env MAX_CONCURRENT_JOBS (subir p/ 2 só se aumentar a RAM).
-MAX_CONCURRENT_JOBS = max(1, int(os.getenv("MAX_CONCURRENT_JOBS", "1")))
+#
+# AUTODETECÇÃO POR RAM (13/08/2026): em vez de depender de configurar
+# MAX_CONCURRENT_JOBS manualmente em cada ambiente (e esquecer de trocar de
+# volta se o Render entrar como fallback), o limite se AUTOAJUSTA pela
+# memória REAL disponível no momento do boot. >= 2GB (ex: servidor próprio,
+# 7.7GB) libera até 3 jobs em paralelo; pouca RAM (Render Starter, 512MB)
+# força 1 sozinho -- mesmo sem ninguém trocar variável nenhuma. Resolve o
+# cenário real: o MESMO código rodando no Render detecta a própria RAM baixa
+# e volta a serializar, sem coordenação manual entre os dois servidores.
+# MAX_CONCURRENT_JOBS continua existindo como env var, mas agora é só um
+# OVERRIDE explícito -- se não setado, o valor vem da autodetecção.
+def _auto_max_concurrent_jobs() -> int:
+    try:
+        import psutil
+        total_mb = psutil.virtual_memory().total / (1024 * 1024)
+    except Exception:
+        return 1  # sem psutil ou erro ao medir: mantém o comportamento seguro original
+    return 3 if total_mb >= 2048 else 1
+
+
+_env_override = os.getenv("MAX_CONCURRENT_JOBS")
+MAX_CONCURRENT_JOBS = max(1, int(_env_override)) if _env_override else _auto_max_concurrent_jobs()
+print(f"[Fila] MAX_CONCURRENT_JOBS={MAX_CONCURRENT_JOBS} ({'override manual' if _env_override else 'autodetectado pela RAM'})")
 _HEAVY_SLOT = threading.BoundedSemaphore(MAX_CONCURRENT_JOBS)
 
 
