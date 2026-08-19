@@ -14,6 +14,7 @@ interface FornecedoresContextType {
   addRegra: (regra: Omit<RegraMapeamento, 'id'>) => void;
   updateRegra: (id: string, regra: Omit<RegraMapeamento, 'id'>) => void;
   removeRegra: (id: string) => void;
+  salvarMapeamentoColuna: (nomeFornecedor: string, campo: string, coluna: string) => Promise<void>;
   getFornecedorByName: (nome: string) => Fornecedor | undefined;
   seedSuppliers: () => Promise<void>;
 }
@@ -147,6 +148,50 @@ export function FornecedoresProvider({ children }: { children: ReactNode }) {
     }
   }, [fornecedores]);
 
+  /**
+   * Salva o mapeamento de UM campo direto do painel de conferência da tela
+   * de conversão (19/08/2026). Atalho pra corrigir na hora do upload, sem
+   * obrigar o usuário a ir até a tela de Regras de Colunas.
+   * coluna vazia = remove o mapeamento (volta pra detecção automática).
+   */
+  const salvarMapeamentoColuna = useCallback(async (
+    nomeFornecedor: string,
+    campo: string,
+    coluna: string
+  ) => {
+    const forn = fornecedores.find(f => f.nome === nomeFornecedor);
+    if (!forn) {
+      toast.error(`Fornecedor "${nomeFornecedor}" não encontrado.`);
+      return;
+    }
+    const mappings = { ...(forn.columnMappings || {}) };
+    if (coluna) mappings[campo] = coluna;
+    else delete mappings[campo];
+
+    try {
+      const { error } = await (supabase.from('suppliers') as any)
+        .update({ column_mappings: mappings })
+        .eq('id', forn.id);
+      if (error) throw error;
+
+      setFornecedores(prev => prev.map(f =>
+        f.id === forn.id ? { ...f, columnMappings: mappings } : f
+      ));
+      // Mantém a tela de Regras de Colunas em sincronia com o que foi
+      // ajustado aqui (as duas telas editam a MESMA configuração).
+      setRegrasMapeamento(prev => {
+        const outros = prev.filter(r => !(r.fornecedor === nomeFornecedor && r.colunaDestino === campo));
+        return coluna
+          ? [...outros, { id: `${forn.id}:${campo}`, fornecedor: nomeFornecedor, colunaOrigem: coluna, colunaDestino: campo, tipo: 'direto' as const }]
+          : outros;
+      });
+      toast.success(coluna ? `Coluna salva para este fornecedor.` : 'Mapeamento removido.');
+    } catch (e) {
+      console.error('[Fornecedores] Falha ao salvar coluna', e);
+      toast.error('Erro ao salvar a coluna.');
+    }
+  }, [fornecedores]);
+
   const addRegra = useCallback((regra: Omit<RegraMapeamento, 'id'>) => {
     setRegrasMapeamento(prev => {
       // Um campo de destino só pode vir de UMA coluna — se já existe regra
@@ -216,6 +261,7 @@ export function FornecedoresProvider({ children }: { children: ReactNode }) {
     <FornecedoresContext.Provider value={{
       fornecedores, regrasMapeamento, isLoading, refreshFornecedores,
       updateFornecedor, removeFornecedor, addRegra, updateRegra, removeRegra,
+      salvarMapeamentoColuna,
       getFornecedorByName, seedSuppliers
     }}>
       {children}
