@@ -318,8 +318,15 @@ export default function ConversaoProdutos() {
         });
       }, 2000); // Avança 1% a cada 2 segundos
 
-      // Pipeline V2: aceita File diretamente (Excel, CSV ou PDF)
-      const result = await processarArquivoV2(selectedFile, supplierId, supplier.nome);
+      // Pipeline V2: aceita File diretamente (Excel, CSV ou PDF).
+      // columnMappings = colunas que o CLIENTE configurou pra este fornecedor
+      // na tela de Regras; vencem a detecção automática (só afeta planilhas).
+      const result = await processarArquivoV2(
+        selectedFile,
+        supplierId,
+        supplier.nome,
+        supplier.columnMappings
+      );
       clearInterval(imgProgressInterval);
 
       setProgress(92);

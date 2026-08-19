@@ -42,8 +42,29 @@ export function FornecedoresProvider({ children }: { children: ReactNode }) {
         setFornecedores(fornData.map((f: any) => ({
           id: f.id, nome: f.name, tipoArquivo: f.file_type || 'Excel', frequencia: f.frequency || 'Semanal',
           descontoPadrao: f.default_discount || 0, ipiPadrao: f.default_ipi || 0,
-          ultimoProcessamento: f.last_processed || '', totalProdutos: f.total_products || 0, status: f.status as any
+          ultimoProcessamento: f.last_processed || '', totalProdutos: f.total_products || 0, status: f.status as any,
+          columnMappings: f.column_mappings || undefined,
+          regrasExtracao: f.extraction_rules || undefined,
         })));
+
+        // Reconstrói as regras de mapeamento a partir do banco. Antes elas
+        // viviam SÓ em memória (sumiam no reload e nunca chegavam ao
+        // conversor) — a tela existia mas não tinha efeito nenhum.
+        const regras: RegraMapeamento[] = [];
+        for (const f of fornData) {
+          const mapp = (f.column_mappings || {}) as Record<string, string>;
+          for (const [campo, coluna] of Object.entries(mapp)) {
+            if (!coluna) continue;
+            regras.push({
+              id: `${f.id}:${campo}`,
+              fornecedor: f.name,
+              colunaOrigem: coluna,
+              colunaDestino: campo,
+              tipo: 'direto',
+            });
+          }
+        }
+        setRegrasMapeamento(regras);
       }
     } catch (e) {
       console.warn("Erro ao buscar fornecedores", e);
@@ -94,17 +115,69 @@ export function FornecedoresProvider({ children }: { children: ReactNode }) {
     }
   }, [fornecedores]);
 
+  /**
+   * Persiste as regras de UM fornecedor como suppliers.column_mappings.
+   * Fonte da verdade é sempre a lista completa de regras daquele fornecedor
+   * (mais simples e sem risco de divergir do que aplicar deltas).
+   */
+  const persistirMapeamentos = useCallback(async (
+    nomeFornecedor: string,
+    regrasDoFornecedor: RegraMapeamento[]
+  ) => {
+    const forn = fornecedores.find(f => f.nome === nomeFornecedor);
+    if (!forn) {
+      toast.error(`Fornecedor "${nomeFornecedor}" não encontrado — regra não salva.`);
+      return;
+    }
+    const mappings: Record<string, string> = {};
+    for (const r of regrasDoFornecedor) {
+      if (r.colunaDestino && r.colunaOrigem) mappings[r.colunaDestino] = r.colunaOrigem;
+    }
+    try {
+      const { error } = await (supabase.from('suppliers') as any)
+        .update({ column_mappings: mappings })
+        .eq('id', forn.id);
+      if (error) throw error;
+      setFornecedores(prev => prev.map(f =>
+        f.id === forn.id ? { ...f, columnMappings: mappings } : f
+      ));
+    } catch (e) {
+      console.error('[Fornecedores] Falha ao salvar mapeamento', e);
+      toast.error('Erro ao salvar a regra no banco.');
+    }
+  }, [fornecedores]);
+
   const addRegra = useCallback((regra: Omit<RegraMapeamento, 'id'>) => {
-    setRegrasMapeamento(prev => [...prev, { ...regra, id: genId() }]);
-  }, []);
+    setRegrasMapeamento(prev => {
+      // Um campo de destino só pode vir de UMA coluna — se já existe regra
+      // pra esse destino, ela é substituída (senão o mapeamento ficaria
+      // ambíguo e o resultado dependeria da ordem da lista).
+      const semDuplicata = prev.filter(
+        r => !(r.fornecedor === regra.fornecedor && r.colunaDestino === regra.colunaDestino)
+      );
+      const atualizado = [...semDuplicata, { ...regra, id: genId() }];
+      void persistirMapeamentos(regra.fornecedor, atualizado.filter(r => r.fornecedor === regra.fornecedor));
+      return atualizado;
+    });
+  }, [persistirMapeamentos]);
 
   const updateRegra = useCallback((id: string, updates: Partial<RegraMapeamento>) => {
-    setRegrasMapeamento(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r));
-  }, []);
+    setRegrasMapeamento(prev => {
+      const atualizado = prev.map(r => r.id === id ? { ...r, ...updates } : r);
+      const alvo = atualizado.find(r => r.id === id);
+      if (alvo) void persistirMapeamentos(alvo.fornecedor, atualizado.filter(r => r.fornecedor === alvo.fornecedor));
+      return atualizado;
+    });
+  }, [persistirMapeamentos]);
 
   const removeRegra = useCallback((id: string) => {
-    setRegrasMapeamento(prev => prev.filter(r => r.id !== id));
-  }, []);
+    setRegrasMapeamento(prev => {
+      const removida = prev.find(r => r.id === id);
+      const atualizado = prev.filter(r => r.id !== id);
+      if (removida) void persistirMapeamentos(removida.fornecedor, atualizado.filter(r => r.fornecedor === removida.fornecedor));
+      return atualizado;
+    });
+  }, [persistirMapeamentos]);
 
   const getFornecedorByName = useCallback((nome: string) => {
     return fornecedores.find(f => f.nome === nome);

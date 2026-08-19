@@ -41,12 +41,16 @@ export interface ConversionResultV2 {
 export const processarArquivoV2 = async (
   file: File,
   supplierId?: string,
-  supplierName?: string
+  supplierName?: string,
+  /** Mapeamento campo→coluna configurado pelo cliente na tela de Regras.
+   *  Vence a detecção automática de colunas (só afeta planilhas). */
+  columnMappings?: Record<string, string>
 ): Promise<ConversionResultV2> => {
   const options: PipelineOptions = {
     supplierId,
     supplierName,
     deduplicate: true,
+    columnMappings,
   };
 
   // Tenta resolver o adapter pelo ID ou nome do fornecedor
