@@ -74,11 +74,11 @@ export function FornecedoresProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     async function init() {
       setIsLoading(true);
+      // refreshFornecedores já reconstrói as regras a partir de
+      // suppliers.column_mappings. Antes havia um setRegrasMapeamento([])
+      // logo aqui (de quando as regras eram mocadas), que APAGAVA o que
+      // acabara de vir do banco — a tela abria sempre vazia.
       await refreshFornecedores();
-
-      // Regras mocadas removidas. A página "Regras de Mapeamento" inicia vazia
-      // até o user popular OU até o engine ser conectado ao supplierRules real.
-      setRegrasMapeamento([]);
       setIsLoading(false);
     }
     init();
