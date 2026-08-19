@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useFornecedores } from "@/context/FornecedoresContext";
 import { Building2, Edit, Package, Calendar, Trash2 } from "lucide-react";
@@ -15,18 +16,20 @@ export default function Fornecedores() {
   const [deleteData, setDeleteData] = useState(false);
   const [editDesconto, setEditDesconto] = useState("");
   const [editIpi, setEditIpi] = useState("");
+  const [editRegras, setEditRegras] = useState("");
   const [isSeeding, setIsSeeding] = useState(false);
 
   const openEdit = (f: typeof fornecedores[0]) => {
     setEditId(f.id);
     setEditDesconto(String(f.descontoPadrao));
     setEditIpi(String(f.ipiPadrao));
+    setEditRegras(f.regrasExtracao || "");
   };
 
   const saveEdit = async () => {
     if (!editId) return;
     try {
-      await updateFornecedor(editId, { descontoPadrao: parseFloat(editDesconto) || 0, ipiPadrao: parseFloat(editIpi) || 0 });
+      await updateFornecedor(editId, { descontoPadrao: parseFloat(editDesconto) || 0, ipiPadrao: parseFloat(editIpi) || 0, regrasExtracao: editRegras.trim() });
       toast.success("Fornecedor atualizado!");
       setEditId(null);
     } catch (err) {
@@ -148,6 +151,26 @@ export default function Fornecedores() {
             <div className="space-y-1.5">
               <label className="text-sm font-medium">IPI Padrão (%)</label>
               <Input type="number" value={editIpi} onChange={e => setEditIpi(e.target.value)} />
+            </div>
+            {/* Regras em texto livre p/ orientar a IA na leitura do catálogo
+                PDF deste fornecedor (19/08/2026). O sistema traduz o texto em
+                regras objetivas antes de usar — o cliente escreve do jeito
+                dele. Só vale pra PDF; planilha usa Regras de Colunas. */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">
+                Particularidades do catálogo (PDF)
+              </label>
+              <p className="text-xs text-muted-foreground">
+                Escreva com suas palavras o que esse fornecedor tem de diferente.
+                Ex.: “o preço aparece uma vez só no topo e vale pra todas as cores
+                da página”. Usado só em catálogo PDF.
+              </p>
+              <Textarea
+                rows={5}
+                value={editRegras}
+                onChange={e => setEditRegras(e.target.value)}
+                placeholder="Ex.: a quantidade da caixa vem escrita como CAIXA MASTER no topo da página e vale para todos os itens dela."
+              />
             </div>
           </div>
           <DialogFooter>

@@ -89,3 +89,55 @@ def list_profiles() -> list:
         except Exception:
             pass
     return result
+
+
+# ===================================================================
+# REGRAS ESCRITAS PELO CLIENTE (19/08/2026)
+# ===================================================================
+# O cliente descreve, em texto livre, as particularidades do fornecedor
+# ("o preço aparece uma vez só e vale pra todas as cores da página").
+# Esse texto NÃO vai cru pro prompt: passa antes por uma compilação que
+# o transforma em regras objetivas (ver compile_client_rules em
+# gemini_extractor.py). Texto solto de usuário — com divagação, contexto
+# desnecessário ou ambiguidade — desfoca o prompt e piora a extração.
+#
+# A compilação custa uma chamada de IA, então é CACHEADA aqui e refeita
+# só quando o texto muda (comparação por hash). Sem isso, cada conversão
+# pagaria de novo pela mesma tradução.
+
+def _rules_path(supplier: str) -> str:
+    os.makedirs(PROFILES_DIR, exist_ok=True)
+    return os.path.join(PROFILES_DIR, _key(supplier) + "__regras.json")
+
+
+def rules_hash(raw_text: str) -> str:
+    import hashlib
+    return hashlib.sha256((raw_text or "").strip().encode("utf-8")).hexdigest()[:16]
+
+
+def get_cached_client_rules(supplier: str, raw_text: str) -> Optional[str]:
+    """Versão compilada das regras, se já compilamos ESTE texto antes."""
+    p = _rules_path(supplier)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("hash") == rules_hash(raw_text):
+            return data.get("compiled") or None
+    except Exception:
+        pass
+    return None
+
+
+def save_client_rules(supplier: str, raw_text: str, compiled: str) -> None:
+    try:
+        with open(_rules_path(supplier), "w", encoding="utf-8") as f:
+            json.dump({
+                "_supplier": supplier,
+                "hash": rules_hash(raw_text),
+                "raw": raw_text,
+                "compiled": compiled,
+            }, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[Regras] Erro ao salvar regras de '{supplier}': {e}")

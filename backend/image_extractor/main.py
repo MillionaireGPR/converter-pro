@@ -708,7 +708,7 @@ def _heartbeat_loop(ai_job_id: str, stop_event):
             print(f"[AI BG Heartbeat] Falha (não-crítico): {e}")
 
 
-def _run_ai_extraction_task(ai_job_id: str, pdf_path: str, supplier: str):
+def _run_ai_extraction_task(ai_job_id: str, pdf_path: str, supplier: str, client_rules: str = ""):
     """BackgroundTask: roda Gemini sem bloquear a request HTTP do cliente.
 
     Heartbeat thread mantém `updatedAt` atualizado a cada 90s, evitando
@@ -731,7 +731,7 @@ def _run_ai_extraction_task(ai_job_id: str, pdf_path: str, supplier: str):
 
             print(f"[AI BG] Iniciando job {ai_job_id} (supplier={supplier})...")
             # v23: passa supplier para ativar hints específicos no prompt
-            result = gemini_extract(pdf_path, supplier=supplier)
+            result = gemini_extract(pdf_path, supplier=supplier, client_rules=client_rules)
 
             if result.get("success"):
                 print(f"[AI BG] {ai_job_id} OK: {len(result['produtos'])} produtos | confiança={result.get('confianca', 0):.0%}")
@@ -774,6 +774,10 @@ async def extract_products_ai(
     file: UploadFile = File(...),
     supplier: str = Form(""),
     jobId: str = Form(""),
+    # Regras em texto livre escritas pelo CLIENTE na tela do fornecedor
+    # (19/08/2026). Vão para compile_client_rules, que as traduz em regras
+    # objetivas antes de entrar no prompt.
+    supplierRules: str = Form(""),
 ):
     """
     Inicia extração de produtos via Gemini Vision em BACKGROUND.
@@ -808,7 +812,7 @@ async def extract_products_ai(
         _save_status(ai_job_id, {"status": "processing", "stage": "ai_extraction"})
 
         # Dispara BackgroundTask - retorna agora, processa em paralelo
-        background_tasks.add_task(_run_ai_extraction_task, ai_job_id, pdf_path, supplier)
+        background_tasks.add_task(_run_ai_extraction_task, ai_job_id, pdf_path, supplier, supplierRules)
 
         return {"status": "processing", "jobId": ai_job_id}
 
