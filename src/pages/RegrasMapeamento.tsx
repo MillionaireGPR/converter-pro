@@ -108,17 +108,17 @@ export default function RegrasMapeamento() {
   const gerarSugestoesInteligentes = (headers: string[]) => {
     const targets = [
       { 
-        key: 'codigoOriginal', 
+        key: 'codigo', 
         words: ['código', 'referência', 'cod', 'ref', 'modelo', 'part', 'sku', 'item', 'produto', 'codigo', 'cod'],
         pesos: { exato: 1.0, inicio: 0.8, contem: 0.5 }
       },
       { 
-        key: 'nome', 
+        key: 'descricao', 
         words: ['descrição', 'nome', 'produto', 'item', 'desc', 'descriçao', 'descr', 'denominacao', 'denominação'],
         pesos: { exato: 1.0, inicio: 0.8, contem: 0.5 }
       },
       { 
-        key: 'precoBase', 
+        key: 'preco', 
         words: ['preço', 'preco', 'valor', 'venda', 'vlr', 'tabela', 'pvp', 'pvpr', 'price', 'unitario', 'unitário'],
         pesos: { exato: 1.0, inicio: 0.8, contem: 0.5 }
       },
@@ -387,7 +387,7 @@ export default function RegrasMapeamento() {
                         <Badge variant="outline" className="text-xs truncate max-w-[140px]">{s.colunaOrigem}</Badge>
                         <ArrowRight className="h-3 w-3 text-muted-foreground" />
                         <Badge className="text-xs bg-primary/10 text-primary border-0">
-                          {s.colunaDestino === 'codigoOriginal' && 'Código Original'}
+                          {s.colunaDestino === 'codigo' && 'Código do produto'}
                           {s.colunaDestino === 'nome' && 'Nome/Produto'}
                           {s.colunaDestino === 'precoBase' && 'Preço de Tabela'}
                           {s.colunaDestino === 'quantidadeCaixa' && 'Quantidade Caixa'}
@@ -486,13 +486,20 @@ export default function RegrasMapeamento() {
               <Select value={form.colunaDestino} onValueChange={v => setForm(f => ({ ...f, colunaDestino: v }))}>
                 <SelectTrigger><SelectValue placeholder="Selecionar destino" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="codigoOriginal">Código Original</SelectItem>
-                  <SelectItem value="nome">Nome/Produto</SelectItem>
+                  <SelectItem value="codigo">Código do produto</SelectItem>
+                  <SelectItem value="descricao">Nome / Descrição</SelectItem>
                   <SelectItem value="descricaoComplementar">Descrição Completa</SelectItem>
-                  <SelectItem value="precoBase">Preço de Tabela</SelectItem>
+                  <SelectItem value="preco">Preço de Tabela (principal)</SelectItem>
                   <SelectItem value="quantidadeCaixa">Quantidade Caixa</SelectItem>
                   <SelectItem value="ipi">IPI (%)</SelectItem>
                   <SelectItem value="categoria">Categoria</SelectItem>
+                  <SelectItem value="codigoBarras">Código de barras</SelectItem>
+                  <SelectItem value="ncm">NCM</SelectItem>
+                  <SelectItem value="unidade">Unidade</SelectItem>
+                  <SelectItem value="precoPromocional">Preço promocional</SelectItem>
+                  <SelectItem value="precoTabela1">Tabela de preço extra #1</SelectItem>
+                  <SelectItem value="precoTabela2">Tabela de preço extra #2</SelectItem>
+                  <SelectItem value="precoTabela3">Tabela de preço extra #3</SelectItem>
                 </SelectContent>
               </Select>
             </div>

@@ -10,6 +10,11 @@ export interface Fornecedor {
   ultimoProcessamento: string;
   totalProdutos: number;
   status: 'ativo' | 'inativo';
+  /** Mapeamento campo→coluna configurado pelo cliente (planilhas).
+   *  Vence a detecção automática. Ver applyColumnMappings.ts. */
+  columnMappings?: Record<string, string>;
+  /** Regras em texto livre pra orientar a IA na leitura de catálogos PDF. */
+  regrasExtracao?: string;
 }
 
 export interface ArquivoProcessado {
