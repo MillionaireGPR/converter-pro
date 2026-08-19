@@ -28,7 +28,11 @@ export const genericAdapter: SupplierAdapter = {
       'cx', 'multiplo', 'emb', 'embalagem', 'moq',
       'packingunit', 'pccx', 'pccaixa', 'pcscx',
       'itenscx', 'itenscaixa', 'itenscaix', 'qtitens',
-      'masterbox', 'embmaster', 'unidadescaixa', 'unidcaixa',
+      // 'caixamaster': VAESO (19/08/2026). O match é exato ou por prefixo —
+      // 'caixa' sozinho não alcança 'caixamaster' (5/11 = 45% de tamanho,
+      // abaixo do corte de 60%) e 'masterbox'/'embmaster' não compartilham
+      // prefixo. Sem isso, quantidadeCaixa caía no default 1.
+      'masterbox', 'embmaster', 'caixamaster', 'unidadescaixa', 'unidcaixa',
       'pacote', 'pcs', 'unidadespacote'
     ],
     embalagem: ['embalagem', 'emb', 'pack', 'packing'],

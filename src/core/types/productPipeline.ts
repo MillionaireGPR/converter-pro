@@ -89,6 +89,11 @@ export interface ProdutoExtraido {
   categoria?: string;
   preco?: number;
   precoPromocional?: number;
+  /** Tabelas de preço EXTRA do fornecedor (além do preço principal).
+   *  Ex. VAESO: V50 (tabela 50%), V250 (25%), V.R. (retira no depósito).
+   *  Índice 0 → "Preço de Tabela #1 (opcional)" no export Mercos, e assim
+   *  por diante. Preenchido via mapeamento de colunas do fornecedor. */
+  precosTabela?: (number | null)[];
   unidade?: string;
   quantidadeCaixa?: number;
   embalagem?: string;
@@ -126,6 +131,8 @@ export interface ProdutoNormalizadoV2 {
   categoria?: string;
   precoBase: number;
   precoPromocional?: number;
+  /** Tabelas de preço extra — ver ProdutoExtraido.precosTabela. */
+  precosTabela?: (number | null)[];
   descontoPercentual?: number;
   descontoString?: string;
   precoFinal: number;
@@ -223,6 +230,23 @@ export const MERCOS_ALLOWED_FILLED_COLUMNS = [
   // (reunião 11/06/2026) usa essa quantidade como referência; produtos em
   // unidade devem vir com 1 (nunca vazio/0).
   'Múltiplo (opcional)',
+  // Tabelas de preço extra (19/08/2026): fornecedores que trabalham com
+  // várias tabelas conforme a situação do cliente (VAESO: V50 = tabela 50%,
+  // V250 = 25%, V.R. = retira no depósito). Só são preenchidas quando o
+  // cliente mapeia essas colunas na tela do fornecedor; caso contrário
+  // seguem vazias como antes.
+  'Preço de Tabela #1 (opcional)',
+  'Preço de Tabela #2 (opcional)',
+  'Preço de Tabela #3 (opcional)',
+  'Preço de Tabela #4 (opcional)',
+  'Preço de Tabela #5 (opcional)',
+  'Preço de Tabela #6 (opcional)',
+  'Preço de Tabela #7 (opcional)',
+  'Preço de Tabela #8 (opcional)',
+  'Preço de Tabela #9 (opcional)',
+  'Preço de Tabela #10 (opcional)',
+  'Preço de Tabela #11 (opcional)',
+  'Preço de Tabela #12 (opcional)',
 ] as const;
 
 /** Schema de validação da exportação Mercos */

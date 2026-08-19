@@ -175,6 +175,17 @@ export const normalizeToMercos = (
   row['Múltiplo (opcional)'] = finalMultiplo;
   row['Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)'] = finalAddInfo;
 
+  // Tabelas de preço EXTRA (VAESO: V50/V250/V.R. → #1/#2/#3). O Mercos
+  // permite vincular cada uma a uma tabela criada lá na importação.
+  // Posição é significativa: um valor ausente fica VAZIO e não desloca os
+  // seguintes (senão #2 viraria #1 e o cliente veria preço errado).
+  (p.precosTabela || []).forEach((valor, i) => {
+    const coluna = `Preço de Tabela #${i + 1} (opcional)`;
+    if (coluna in row) {
+      row[coluna] = valor !== null && valor !== undefined ? formatDecimal(valor, 2) : '';
+    }
+  });
+
   console.log(`[Mercos Export] sku=${finalCode} nomeFinal="${finalName}" preco=${finalPrice} ipi=${finalIpi || 0} bloqueado=${isBloqueado}`);
 
   return row;
