@@ -21,16 +21,28 @@ const norm = (s: string): string => {
  * Nível 2: near-prefix match — detecta quando o fornecedor abreviou o header.
  *   Critérios: comprimento relativo min/max >= 60% E prefixo comum >= 80% do menor.
  */
-const findValue = (campos: Record<string, any>, aliases: string[]): any => {
-  const keys = Object.keys(campos);
-
+/**
+ * Qual coluna (dentre `keys`) alimenta um campo, dados seus aliases.
+ *
+ * Exportada para que a PRÉVIA mostrada ao usuário na hora do upload use
+ * exatamente esta lógica (19/08/2026). Se a prévia reimplementasse o match,
+ * ela poderia divergir do que acontece de verdade — e uma tela que mente
+ * sobre o mapeamento é pior que não ter tela.
+ *
+ * `aceita` permite ignorar colunas vazias (comportamento do findValue, que
+ * só aceita a coluna se aquela linha tiver valor) ou aceitar qualquer uma
+ * (prévia, que olha só os cabeçalhos).
+ */
+export const findMatchingKey = (
+  keys: string[],
+  aliases: string[],
+  aceita: (k: string) => boolean = () => true
+): string | undefined => {
   // Nível 1: match exato (maior confiança)
   for (const alias of aliases) {
     const na = norm(alias);
-    const foundKey = keys.find(k => norm(k) === na);
-    if (foundKey !== undefined && campos[foundKey] !== undefined && campos[foundKey] !== '') {
-      return campos[foundKey];
-    }
+    const foundKey = keys.find(k => norm(k) === na && aceita(k));
+    if (foundKey !== undefined) return foundKey;
   }
 
   // Nível 2: near-prefix match (fornecedor abreviou o nome da coluna)
@@ -45,14 +57,20 @@ const findValue = (campos: Record<string, any>, aliases: string[]): any => {
       if (shorter / longer < 0.6) return false;
       let i = 0;
       while (i < na.length && i < nk.length && na[i] === nk[i]) i++;
-      return i / shorter >= 0.8;
+      return i / shorter >= 0.8 && aceita(k);
     });
-    if (foundKey !== undefined && campos[foundKey] !== undefined && campos[foundKey] !== '') {
-      return campos[foundKey];
-    }
+    if (foundKey !== undefined) return foundKey;
   }
 
   return undefined;
+};
+
+const findValue = (campos: Record<string, any>, aliases: string[]): any => {
+  const keys = Object.keys(campos);
+  const temValor = (k: string) => campos[k] !== undefined && campos[k] !== '';
+
+  const found = findMatchingKey(keys, aliases, temValor);
+  return found !== undefined ? campos[found] : undefined;
 };
 
 /**
