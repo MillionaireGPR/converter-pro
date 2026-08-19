@@ -326,7 +326,8 @@ export default function ConversaoProdutos() {
         selectedFile,
         supplierId,
         supplier.nome,
-        supplier.columnMappings
+        supplier.columnMappings,
+        supplier.regrasExtracao
       );
       clearInterval(imgProgressInterval);
 

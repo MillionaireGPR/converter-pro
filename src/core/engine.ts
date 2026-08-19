@@ -44,7 +44,9 @@ export const processarArquivoV2 = async (
   supplierName?: string,
   /** Mapeamento campo→coluna configurado pelo cliente na tela de Regras.
    *  Vence a detecção automática de colunas (só afeta planilhas). */
-  columnMappings?: Record<string, string>
+  columnMappings?: Record<string, string>,
+  /** Regras em texto livre do cliente p/ orientar a IA na leitura do PDF. */
+  supplierRules?: string
 ): Promise<ConversionResultV2> => {
   const options: PipelineOptions = {
     supplierId,
@@ -87,7 +89,7 @@ export const processarArquivoV2 = async (
   if (isPdfFile && !isBlocked) {
     try {
       const { extractProductsViaAI, mapAiProductsToBrutos } = await import('./pipeline/aiFirstExtractionApi');
-      const aiResult = await extractProductsViaAI(file, supplierName || supplierId || '');
+      const aiResult = await extractProductsViaAI(file, supplierName || supplierId || '', 5, supplierRules || '');
       if (aiResult && aiResult.success && aiResult.produtos.length > 0) {
         const aiBrutos = mapAiProductsToBrutos(aiResult.produtos);
         if (aiBrutos.length > 0) {

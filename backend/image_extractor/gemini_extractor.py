@@ -363,12 +363,120 @@ SUPPLIER_HINTS: Dict[str, str] = {
 }
 
 
-def get_supplier_hints(supplier: str) -> str:
+# ===================================================================
+# REGRAS ESCRITAS PELO CLIENTE — COMPILAÇÃO (19/08/2026)
+# ===================================================================
+# Motivação (Gabriel): cada fornecedor novo com layout próprio exigia o
+# desenvolvedor editar SUPPLIER_HINTS + PR + deploy. Agora o CLIENTE
+# descreve a particularidade em português, na tela do fornecedor.
+#
+# Mas o texto NÃO vai cru pro prompt. Pedido explícito do Gabriel: "seria
+# importante otimizar isso pra chegar já em estrutura de prompt melhorado
+# e não entrar em devaneios". Texto de usuário costuma vir com contexto
+# desnecessário, história ("o fornecedor mudou o layout ano passado") e
+# ambiguidade — jogado direto no prompt, isso rouba atenção do modelo e
+# piora a extração.
+#
+# Então uma chamada barata traduz o texto em regras imperativas, curtas e
+# verificáveis, no MESMO formato do SUPPLIER_HINTS. O resultado é cacheado
+# por hash do texto: só recompila quando o cliente edita.
+
+_COMPILE_RULES_PROMPT = """Você converte observações de um usuário sobre um catálogo de produtos em REGRAS DE EXTRAÇÃO objetivas.
+
+O texto abaixo foi escrito por um vendedor (não técnico) descrevendo particularidades do catálogo deste fornecedor.
+
+Converta em regras imperativas, curtas e VERIFICÁVEIS, referindo-se aos campos: codigo, nome, preco, precoPromocional, quantidadeCaixa, ipi, ncm, categoria, emBreve, promocional.
+
+REGRAS DA CONVERSÃO:
+- Uma instrução por linha, começando com "- ".
+- Só inclua o que estiver AFIRMADO no texto. NÃO invente, NÃO complete, NÃO generalize.
+- Descarte conversa, história e justificativa; mantenha só o que muda a extração.
+- Se o texto não disser nada aproveitável, responda exatamente: (sem regras)
+- Máximo 10 linhas. Sem preâmbulo, sem comentário final.
+
+TEXTO DO USUÁRIO:
+---
+{texto}
+---
+
+REGRAS DE EXTRAÇÃO:"""
+
+
+def compile_client_rules(supplier: str, raw_text: str) -> str:
+    """
+    Traduz o texto livre do cliente em regras objetivas p/ o prompt.
+    Cacheado por hash — só chama a IA quando o texto muda.
+    Falha é SILENCIOSA: sem regras é melhor que quebrar a conversão.
+    """
+    raw = (raw_text or "").strip()
+    if not raw:
+        return ""
+
+    try:
+        from supplier_profile import get_cached_client_rules, save_client_rules
+        cached = get_cached_client_rules(supplier, raw)
+        if cached is not None:
+            return cached
+    except Exception:
+        pass
+
+    try:
+        # Usa o helper do projeto: SDK nova + thinking DESLIGADO. Com o SDK
+        # legado e max_output_tokens baixo, o 2.5 Flash gasta o orçamento
+        # "pensando" e devolve a resposta CORTADA no meio — comprovado aqui
+        # (a compilação truncou em "quantidadeCaixa deve ser extraído do topo"
+        # e perdeu a última regra). Mesmo problema já visto na Phase 0.
+        # json_out=False porque a saída é texto em linhas, não JSON.
+        resp = _gen_text_json(
+            "gemini-2.5-flash",
+            _COMPILE_RULES_PROMPT.format(texto=raw[:4000]),
+            max_output_tokens=4096,
+            temperature=0.0,
+            json_out=False,
+        )
+        compiled = (getattr(resp, "text", "") or "").strip()
+
+        if not compiled or compiled.lower().startswith("(sem regras"):
+            compiled = ""
+        else:
+            compiled = (
+                f"REGRAS INFORMADAS PELO CLIENTE PARA {supplier.upper()} "
+                f"(prevalecem sobre suposições genéricas):\n{compiled}"
+            )
+
+        try:
+            from supplier_profile import save_client_rules
+            save_client_rules(supplier, raw, compiled)
+        except Exception:
+            pass
+        print(f"[Regras] Regras do cliente compiladas para '{supplier}' "
+              f"({len(compiled)} chars)")
+        return compiled
+    except Exception as e:
+        # Nunca derruba a conversão por causa disso — segue sem as regras.
+        print(f"[Regras] Falha ao compilar regras de '{supplier}': {e}")
+        return ""
+
+
+def get_supplier_hints(supplier: str, client_rules: str = "") -> str:
     """
     Retorna hints do fornecedor.
     Prioridade: 1) SUPPLIER_HINTS hardcoded  2) perfil auto-gerado (Phase 0).
     IV-23: hardcoded sempre vence o cache.
+
+    As regras escritas pelo CLIENTE (client_rules) são ADICIONADAS ao final,
+    não substituem — os hints hardcoded carregam correções de bugs reais
+    (ex.: gate de preço-vindo-do-código da DAGIA) que não podem ser perdidas
+    caso o cliente escreva algo conflitante.
     """
+    base = _get_supplier_hints_base(supplier)
+    extra = compile_client_rules(supplier, client_rules) if client_rules else ""
+    if extra:
+        return f"{base}\n\n{extra}" if base else extra
+    return base
+
+
+def _get_supplier_hints_base(supplier: str) -> str:
     if not supplier:
         return ""
     norm = supplier.strip().upper()
@@ -935,7 +1043,7 @@ def _extract_text_chunk(
     return [], False
 
 
-def extract_with_fallback_text_chunked(pdf_path: str, supplier: str = "") -> Dict[str, Any]:
+def extract_with_fallback_text_chunked(pdf_path: str, supplier: str = "", client_rules: str = "") -> Dict[str, Any]:
     """
     Extração por TEXTO em chunks paralelos — para catálogos grandes/pesados.
     Retorna o mesmo shape de extract_with_fallback.
@@ -944,7 +1052,7 @@ def extract_with_fallback_text_chunked(pdf_path: str, supplier: str = "") -> Dic
     if not _ensure_initialized():
         return {"success": False, "produtos": [], "error": f"Gemini não configurado: {_init_error}", "model": MODEL_FLASH}
 
-    supplier_hints = get_supplier_hints(supplier)
+    supplier_hints = get_supplier_hints(supplier, client_rules)
     start = time.time()
 
     # Extrai texto por página (rápido, baixa RAM — 1 fitz.open)
@@ -1263,7 +1371,7 @@ def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str
     return produtos
 
 
-def extract_via_template(pdf_path: str, supplier: str = "") -> Optional[Dict[str, Any]]:
+def extract_via_template(pdf_path: str, supplier: str = "", client_rules: str = "") -> Optional[Dict[str, Any]]:
     """
     Caminho RÁPIDO: IA infere template de amostra, código aplica em todas as
     páginas. Retorna o resultado se a cobertura for boa; senão None (o caller
@@ -1285,7 +1393,7 @@ def extract_via_template(pdf_path: str, supplier: str = "") -> Optional[Dict[str
     if len(samples) < 1:
         return None
 
-    supplier_hints = get_supplier_hints(supplier)
+    supplier_hints = get_supplier_hints(supplier, client_rules)
     # Síntese ROBUSTA avaliada na amostra (com auto-correção). Barato/rápido.
     tpl, sample_cov = _synthesize_template_robust(samples, supplier_hints, MODEL_FLASH)
     if not tpl:
@@ -1445,17 +1553,17 @@ def _fix_supplier_code_prefix(produtos: list, supplier: str) -> list:
     return produtos
 
 
-def extract_with_fallback(pdf_path: str, supplier: str = "") -> Dict[str, Any]:
+def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str = "") -> Dict[str, Any]:
     """Wrapper único: chama a extração real e aplica correções pós-processamento
     (ex: prefixo de código) independente de qual caminho interno foi usado
     (template/text-chunked/vision/escalada Pro) — ver _fix_supplier_code_prefix."""
-    result = _extract_with_fallback_impl(pdf_path, supplier)
+    result = _extract_with_fallback_impl(pdf_path, supplier, client_rules)
     if result and result.get("produtos"):
         result["produtos"] = _fix_supplier_code_prefix(result["produtos"], supplier)
     return result
 
 
-def _extract_with_fallback_impl(pdf_path: str, supplier: str = "") -> Dict[str, Any]:
+def _extract_with_fallback_impl(pdf_path: str, supplier: str = "", client_rules: str = "") -> Dict[str, Any]:
     """
     Extrai com cadeia de fallbacks (todos modelos atualmente ativos):
       1. gemini-2.5-flash    (padrão: rápido e barato)
@@ -1483,18 +1591,18 @@ def _extract_with_fallback_impl(pdf_path: str, supplier: str = "") -> Dict[str, 
         doc.close()
         if size_mb > LARGE_CATALOG_MB or n_pages > LARGE_CATALOG_PAGES:
             print(f"[Gemini] Catálogo grande ({size_mb:.0f}MB, {n_pages} págs) → v33 TEMPLATE-synth (fallback text-chunked)")
-            tpl_result = extract_via_template(pdf_path, supplier)
+            tpl_result = extract_via_template(pdf_path, supplier, client_rules)
             if tpl_result and tpl_result.get("success"):
                 return tpl_result
             print("[Gemini] template não atingiu cobertura → AI-first text-chunked")
-            return extract_with_fallback_text_chunked(pdf_path, supplier)
+            return extract_with_fallback_text_chunked(pdf_path, supplier, client_rules)
     except Exception as e:
         print(f"[Gemini] Falha ao medir catálogo (segue vision): {e}")
 
     # Cadeia de fallback de modelos (todos ATIVOS em 2026)
     fallback_chain = [MODEL_FLASH, MODEL_FLASH_STABLE, MODEL_FLASH_LATEST, MODEL_PRO]
 
-    supplier_hints = get_supplier_hints(supplier)
+    supplier_hints = get_supplier_hints(supplier, client_rules)
     if supplier_hints:
         print(f"[Gemini] Hints ativos para fornecedor: {supplier}")
 

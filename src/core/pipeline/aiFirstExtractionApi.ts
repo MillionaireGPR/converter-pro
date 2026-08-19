@@ -68,7 +68,10 @@ export const AI_FIRST_MAX_PAGES = 200;
 export const extractProductsViaAI = async (
   file: File,
   supplier: string,
-  maxAttempts: number = 5
+  maxAttempts: number = 5,
+  /** Regras em texto livre escritas pelo cliente na tela do fornecedor.
+   *  O backend as compila em regras objetivas antes de usar no prompt. */
+  supplierRules: string = ''
 ): Promise<ResultadoAiExtraction | null> => {
   const fileSizeMB = (file.size / 1024 / 1024).toFixed(1);
   console.log(`[AiFirst] Extração AI-first iniciada: ${file.name} (${fileSizeMB}MB, supplier=${supplier})`);
@@ -87,6 +90,7 @@ export const extractProductsViaAI = async (
       fd.append('file', file);
       fd.append('supplier', supplier || '');
       fd.append('jobId', jobId);
+      if (supplierRules) fd.append('supplierRules', supplierRules);
 
       const ctrl = new AbortController();
       const tid = setTimeout(() => ctrl.abort(), 180_000); // IV-07: timeout >= 120s

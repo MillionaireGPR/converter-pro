@@ -89,7 +89,11 @@ export function FornecedoresProvider({ children }: { children: ReactNode }) {
     try {
       const { error } = await (supabase.from('suppliers') as any).update({
         name: updates.nome, file_type: updates.tipoArquivo, frequency: updates.frequencia,
-        default_discount: updates.descontoPadrao, default_ipi: updates.ipiPadrao, status: updates.status
+        default_discount: updates.descontoPadrao, default_ipi: updates.ipiPadrao, status: updates.status,
+        // Regras de leitura do catálogo PDF escritas pelo cliente. Enviado
+        // só quando veio no update, pra não apagar o que já existe quando a
+        // tela salvar apenas desconto/IPI.
+        ...(updates.regrasExtracao !== undefined ? { extraction_rules: updates.regrasExtracao } : {}),
       }).eq('id', id);
       if (error) throw error;
       setFornecedores(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
