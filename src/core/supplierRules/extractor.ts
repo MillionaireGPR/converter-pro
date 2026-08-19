@@ -96,7 +96,11 @@ const shouldExclude = (campos: Record<string, any>, adapter: SupplierAdapter): b
 export const extractProducts = (
   brutos: ProdutoBruto[],
   adapter: SupplierAdapter,
-  nomeArquivo: string
+  nomeArquivo: string,
+  /** Colunas mapeadas pelo cliente para tabelas de preço EXTRA, na ordem
+   *  (#1, #2, ...). Ex. VAESO: ['V50', 'V250', 'V.R.']. Ver
+   *  applyColumnMappings.tabelaPrecoColumns. */
+  colunasTabelaPreco: string[] = []
 ): ProdutoExtraido[] => {
   // Se o adapter tem extração customizada, delega
   if (adapter.extract) {
@@ -311,6 +315,17 @@ export const extractProducts = (
       categoria,
       preco,
       precoPromocional: precoPromocional && precoPromocional > 0 ? precoPromocional : undefined,
+      // Tabelas de preço extra (VAESO: V50/V250/V.R.). Posição preservada:
+      // um buraco vira null pra não deslocar #2 para o lugar de #1.
+      ...(colunasTabelaPreco.length > 0
+        ? {
+            precosTabela: colunasTabelaPreco.map(col => {
+              if (!col) return null;
+              const v = toNum(findValue(campos, [col]));
+              return v && v > 0 ? v : null;
+            }),
+          }
+        : {}),
       unidade,
       quantidadeCaixa,
       embalagem,

@@ -23,6 +23,11 @@ import { SupplierAdapter } from '../supplierRules/types';
 import { getAdapterById, getGenericAdapter, detectSupplier } from '../supplierRules/registry';
 import { extractProducts } from '../supplierRules/extractor';
 import {
+  applyColumnMappings,
+  tabelaPrecoColumns,
+  type ColumnMappings,
+} from '../supplierRules/applyColumnMappings';
+import {
   deduplicateByCodigo,
   extractPrice,
   cleanDescription,
@@ -950,6 +955,7 @@ const normalizeExtracted = (
       categoria: e.categoria,
       precoBase,
       precoPromocional: e.precoPromocional,
+      precosTabela: e.precosTabela,
       precoFinal: precoBase, // Será recalculado ao aplicar desconto
       ipi: e.ipi,
       ncm: e.ncm,
@@ -1045,6 +1051,12 @@ export interface PipelineOptions {
    * usa estes registros — normalização/validação/dedup continuam idênticos.
    */
   aiBrutos?: ProdutoBruto[];
+  /**
+   * Mapeamento explícito campo→coluna configurado pelo CLIENTE para este
+   * fornecedor (tela de Fornecedores). Vence a detecção automática de
+   * colunas. Ver src/core/supplierRules/applyColumnMappings.ts.
+   */
+  columnMappings?: ColumnMappings;
 }
 
 /**
@@ -1166,9 +1178,15 @@ export const runImportPipeline = async (
 
   console.log(`[Pipeline] ${brutos.length} registros brutos extraídos. Adapter: ${adapter.nome}`);
 
+  // Colunas definidas pelo CLIENTE vencem a detecção automática (elas entram
+  // na frente dos aliases do adapter). Só afeta planilhas — catálogo PDF não
+  // tem "coluna". Sem mapeamento configurado, nada muda.
+  adapter = applyColumnMappings(adapter, options.columnMappings);
+  const colunasTabelaPreco = tabelaPrecoColumns(options.columnMappings);
+
   // 4. Extração usando o adapter
   // NOVO: Passar informações de estilo de célula para adapters da família CLINK
-  const extraidos = extractProducts(brutos, adapter, file.name);
+  const extraidos = extractProducts(brutos, adapter, file.name, colunasTabelaPreco);
   console.log(`[Pipeline] ${extraidos.length} produtos extraídos pelo adapter "${adapter.nome}"`);
 
   // NOVO: Contagem de categorias visuais para métricas
