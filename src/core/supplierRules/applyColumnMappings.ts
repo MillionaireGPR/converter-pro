@@ -18,6 +18,7 @@
 // ===================================================================
 
 import { SupplierAdapter } from './types';
+import { findMatchingKey } from './extractor';
 
 /** campo do sistema → nome exato da coluna na planilha do fornecedor. */
 export type ColumnMappings = Record<string, string>;
@@ -78,4 +79,85 @@ export function applyColumnMappings(
   if (aplicados === 0) return adapter;
   console.log(`[ColumnMappings] ${aplicados} coluna(s) definidas pelo cliente para "${adapter.nome}"`);
   return { ...adapter, fieldAliases: fieldAliases as any };
+}
+
+// ===================================================================
+// PRÉVIA DO MAPEAMENTO (19/08/2026)
+// ===================================================================
+// Mostrada ao usuário logo após escolher o arquivo, ANTES de converter:
+// "de qual coluna virá cada informação". Assim o erro aparece na hora,
+// e não depois de exportar pro Mercos com dado errado (foi o que houve
+// com a VAESO: quantidade saiu 1 em silêncio e só o cliente percebeu).
+//
+// Usa findMatchingKey — a MESMA função do extractor — de propósito: se a
+// prévia reimplementasse o match, ela poderia divergir do que acontece de
+// verdade, e uma tela que mente sobre o mapeamento é pior que tela nenhuma.
+
+/** Campos que valem a pena conferir na hora do upload. Não é a lista
+ *  completa de campos do adapter — é o que quebra na prática. */
+export const CAMPOS_CONFERIVEIS: { campo: string; rotulo: string }[] = [
+  { campo: 'codigo', rotulo: 'Código do produto' },
+  { campo: 'descricao', rotulo: 'Nome / Descrição' },
+  { campo: 'preco', rotulo: 'Preço de tabela' },
+  { campo: 'quantidadeCaixa', rotulo: 'Quantidade na caixa' },
+  { campo: 'precoPromocional', rotulo: 'Preço promocional' },
+  { campo: 'ncm', rotulo: 'NCM' },
+  { campo: 'ipi', rotulo: 'IPI' },
+  { campo: 'codigoBarras', rotulo: 'Código de barras' },
+  { campo: 'unidade', rotulo: 'Unidade' },
+  { campo: 'categoria', rotulo: 'Categoria' },
+];
+
+export type OrigemMapeamento = 'cliente' | 'auto' | 'nenhuma';
+
+export interface LinhaPrevia {
+  campo: string;
+  rotulo: string;
+  /** Coluna da planilha que vai alimentar este campo ('' = nenhuma). */
+  coluna: string;
+  /** cliente = configurado na tela; auto = o sistema deduziu;
+   *  nenhuma = ninguém achou, o campo virá vazio/default. */
+  origem: OrigemMapeamento;
+}
+
+/**
+ * Para cada campo conferível, diz de qual coluna ele virá e por quê.
+ * `headers` são os cabeçalhos reais lidos da planilha escolhida.
+ */
+export function previewColumnMapping(
+  headers: string[],
+  adapter: SupplierAdapter,
+  mappings?: ColumnMappings | null
+): LinhaPrevia[] {
+  const linhas: LinhaPrevia[] = [];
+
+  for (const { campo, rotulo } of CAMPOS_CONFERIVEIS) {
+    const escolhaCliente = (mappings?.[campo] || '').trim();
+    if (escolhaCliente) {
+      linhas.push({ campo, rotulo, coluna: escolhaCliente, origem: 'cliente' });
+      continue;
+    }
+    const aliases = (adapter.fieldAliases as any)?.[campo] as string[] | undefined;
+    const auto = aliases ? findMatchingKey(headers, aliases) : undefined;
+    linhas.push({
+      campo,
+      rotulo,
+      coluna: auto || '',
+      origem: auto ? 'auto' : 'nenhuma',
+    });
+  }
+
+  // Tabelas de preço extra só aparecem se o cliente configurou — não há
+  // como deduzir "V50 = tabela 50%" sozinho.
+  tabelaPrecoColumns(mappings).forEach((col, i) => {
+    if (!col) return;
+    linhas.push({
+      campo: precoTabelaKey(i + 1),
+      rotulo: `Tabela de preço extra #${i + 1}`,
+      coluna: col,
+      origem: 'cliente',
+    });
+  });
+
+  return linhas;
 }

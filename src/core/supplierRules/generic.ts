@@ -12,7 +12,13 @@ export const genericAdapter: SupplierAdapter = {
   aliases: ['generic', 'generico'],
 
   fieldAliases: {
-    codigo: ['codigo', 'cod', 'codfor', 'referencia', 'ref', 'sku', 'item', 'partnumber', 'ean', 'cd', 'code'],
+    // 'codigodoproduto'/'codigoproduto': VAESO (19/08/2026). O alias 'codigo'
+    // não alcança "Código do produto" (6/15 = 40% de tamanho, abaixo do corte
+    // de 60% do near-prefix). Sem isso o código só era salvo por uma heurística
+    // frouxa ("valor que PARECE um código"), que marcava warning em 100% das
+    // linhas e podia pegar o campo errado. `nomedoproduto` já estava na lista
+    // de descricao pelo mesmo motivo.
+    codigo: ['codigo', 'codigodoproduto', 'codigoproduto', 'cod', 'codfor', 'referencia', 'ref', 'sku', 'item', 'partnumber', 'ean', 'cd', 'code'],
     codigoBarras: ['ean', 'codigobarras', 'gtin', 'barcode', 'codbarras', 'cdean'],
     codigoInterno: ['codigointerno', 'codinterno', 'cdintern', 'skuinterno'],
     descricao: ['descricao', 'desc', 'produto', 'nome', 'descrcompl', 'description', 'nomedoproduto', 'item', 'denominacao'],

@@ -1,6 +1,7 @@
 import {
   LayoutDashboard, FileUp, Database, Tag, Download, ArrowRightLeft,
   Building2, Settings as SettingsIcon, History, LogOut, Scissors, Users,
+  Columns3,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -20,9 +21,11 @@ const menuItems = [
   { title: "Conversão de Pedidos", url: "/pedidos", icon: ArrowRightLeft },
   { title: "Cortar PDF", url: "/cortar-pdf", icon: Scissors },
   { title: "Fornecedores", url: "/fornecedores", icon: Building2 },
-  // "Regras de Mapeamento" ESCONDIDO do menu até ser conectado ao supplierRules
-  // real (hoje cria regras em paralelo no banco que o engine ignora). A página
-  // continua disponível na rota /regras se precisar acessar diretamente.
+  // Reexibido em 19/08/2026: o motivo de estar escondido ("cria regras em
+  // paralelo no banco que o engine ignora") deixou de valer — as regras
+  // agora persistem em suppliers.column_mappings e chegam ao pipeline via
+  // applyColumnMappings, vencendo a detecção automática de colunas.
+  { title: "Regras de Colunas", url: "/regras", icon: Columns3 },
   { title: "Histórico", url: "/historico", icon: History },
   { title: "Usuários", url: "/usuarios", icon: Users, adminOnly: true },
   { title: "Configurações", url: "/configuracoes", icon: SettingsIcon },
