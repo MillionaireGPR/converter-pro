@@ -23,13 +23,14 @@ import { Image as ImageIcon } from "lucide-react";
 import { buildAndDownloadZip } from "@/core/images/imageZipBuilder";
 import { ResultadoExtracaoImagens } from "@/core/images/imageTypes";
 import { classifyImageError } from "@/core/images/imageErrorClassifier";
+import { ConferenciaColunas } from "@/components/ConferenciaColunas";
 import { getBackendUrl, backendLabel } from "@/core/backendResolver";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 
 export default function ConversaoProdutos() {
   const { setDetectedHeaders } = useApp();
-  const { fornecedores } = useFornecedores();
+  const { fornecedores, salvarMapeamentoColuna } = useFornecedores();
   const { registrarHistorico, salvarConversao, conversoesSalvas, reabrirConversao, excluirConversao } = useHistorico();
   const { addProdutosNormalizados, setProdutosPadronizados } = useProdutos();
   const [fornecedor, setFornecedor] = useState("");
@@ -560,6 +561,24 @@ export default function ConversaoProdutos() {
                   </Select>
                 </div>
               </div>
+
+              {/* Conferência das colunas ANTES de converter (só planilha —
+                  catálogo PDF não tem coluna). Nasceu do caso VAESO: a
+                  quantidade saiu 1 em todos os itens e só foi percebido
+                  depois de importar no Mercos. */}
+              {selectedFile && tipoArquivo === 'excel' && fornecedor && fornecedor !== 'novo' && (
+                <ConferenciaColunas
+                  file={selectedFile}
+                  supplierId={fornecedor}
+                  supplierName={fornecedores.find(f => f.id === fornecedor)?.nome}
+                  mappings={fornecedores.find(f => f.id === fornecedor)?.columnMappings}
+                  onSalvar={(campo, coluna) => {
+                    const forn = fornecedores.find(f => f.id === fornecedor);
+                    if (!forn) return;
+                    salvarMapeamentoColuna(forn.nome, campo, coluna);
+                  }}
+                />
+              )}
 
               <Button
                 className="w-full gradient-primary text-primary-foreground font-semibold h-9 shadow-sm"
