@@ -667,9 +667,50 @@ def _match_via_embedded(
         used_img_idx.add(pi)
         chosen_by_sku[si] = {"img": page_imgs[pi], "score": s}
 
+    # ── MATRIZ COR × TAMANHO (VAESO, 19/08/2026) ──
+    # O casamento acima é 1:1 (used_img_idx), o que é o certo quando cada
+    # foto pertence a um produto. Mas há páginas que cruzam COR × TAMANHO
+    # numa tabela: a miniatura da cor fica à ESQUERDA e vários códigos à
+    # DIREITA, na MESMA linha —
+    #     [foto Rosé]  ...  KM0002 (500 ml)   KG0002 (750 ml)
+    # Aqui UMA miniatura pertence legitimamente a 2+ códigos. Com 6 fotos
+    # para 12 códigos, o 1:1 deixava metade sem imagem e ainda embaralhava:
+    # o código que sobrava puxava a miniatura da linha VIZINHA (foi o
+    # "trocou os de cima pelos de baixo" relatado pelo cliente).
+    #
+    # Esta passada roda SÓ para quem ficou sem imagem e exige que a faixa
+    # vertical da foto CONTENHA o Y do código (mesma linha visual) — critério
+    # geométrico, não uma folga arbitrária. Como o compartilhamento é
+    # intencional, ela ignora o used_img_idx e o teto de score (que existe
+    # pra barrar logo distante, situação diferente desta).
+    MARGEM_LINHA_PT = 8.0  # código raramente centraliza exato na faixa da foto
+    for si, sku in enumerate(valid_skus):
+        # Só pula quem já tem match ACEITÁVEL. Quem recebeu um par acima do
+        # teto de score está de fato sem imagem (vai virar unmatched adiante),
+        # e é justamente o caso do código que sobrou na matriz — precisa
+        # entrar aqui, senão fica sem foto mesmo tendo a miniatura na linha.
+        ja = chosen_by_sku.get(si)
+        if ja is not None and ja["score"] <= max_score:
+            continue
+        sku_y = sku["spatialContext"]["y"]
+        melhor, melhor_dist = None, float("inf")
+        for img in page_imgs:
+            rect = img.get("rect")
+            if rect is None:
+                continue
+            if rect.y0 - MARGEM_LINHA_PT <= sku_y <= rect.y1 + MARGEM_LINHA_PT:
+                d = abs(img["cy"] - sku_y)
+                if d < melhor_dist:
+                    melhor_dist, melhor = d, img
+        if melhor is not None:
+            chosen_by_sku[si] = {"img": melhor, "score": 0.0, "row_shared": True}
+            print(f"    [Embedded] {sku.get('sku')}: foto compartilhada da mesma linha (matriz cor×tamanho)")
+
     for si, sku in enumerate(valid_skus):
         chosen = chosen_by_sku.get(si)
-        if not chosen or chosen["score"] > max_score:
+        # row_shared já passou pelo critério geométrico de "mesma linha";
+        # o teto de score existe pra outro caso (logo/foto distante).
+        if not chosen or (not chosen.get("row_shared") and chosen["score"] > max_score):
             unmatched.append({"sku": sku.get("sku"), "page": page_num, "reason": "no_plausible_match"})
             continue
 
