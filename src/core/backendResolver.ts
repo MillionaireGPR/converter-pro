@@ -44,17 +44,41 @@ export function setBackends(primary: string, fallback: string): void {
 }
 
 /**
- * URLs em uso:
- *   - primário: atualizado automaticamente pelo watcher do túnel no servidor.
- *   - reserva: Render, estático. Vazio = failover desligado.
+ * Decide quem é primário e quem é reserva a partir das variáveis de ambiente.
+ *
+ * Três variáveis, porque o `VITE_BACKEND_URL` NÃO é confiável como primário:
+ * ele é reescrito automaticamente pelo watcher do Cloudflare Tunnel no
+ * servidor próprio (a URL do túnel gratuito muda a cada reinício) e o watcher
+ * ainda dispara um redeploy. Ou seja: qualquer decisão de "qual servidor
+ * atende o cliente" feita nessa variável é desfeita sozinha na próxima queda
+ * do túnel — foi exatamente o que aconteceria com a troca para o Render em
+ * 20/08/2026, feita enquanto o SSH do servidor próprio estava fechado e o
+ * watcher não podia ser desligado.
+ *
+ *   VITE_BACKEND_URL_PRIMARY   → trava o primário (o watcher não mexe nela).
+ *                                Setada: o `VITE_BACKEND_URL` vira reserva.
+ *   VITE_BACKEND_URL           → escrita pelo watcher (URL do túnel).
+ *   VITE_BACKEND_URL_FALLBACK  → reserva quando não há pin. Vazio = failover
+ *                                desligado.
+ *
+ * Sem o pin, o comportamento é idêntico ao de antes. Para voltar ao servidor
+ * próprio como primário basta APAGAR `VITE_BACKEND_URL_PRIMARY` no Vercel.
  */
-function readBackends(): { primary: string; fallback: string } {
-  if (overrides) return overrides;
-  const env = (import.meta as any).env ?? {};
+export function pickBackends(env: Record<string, any>): { primary: string; fallback: string } {
+  const pin = env.VITE_BACKEND_URL_PRIMARY || '';
+  const doWatcher = env.VITE_BACKEND_URL || '';
+
+  if (pin) return { primary: pin, fallback: doWatcher };
+
   return {
-    primary: env.VITE_BACKEND_URL || 'http://localhost:8000',
+    primary: doWatcher || 'http://localhost:8000',
     fallback: env.VITE_BACKEND_URL_FALLBACK || '',
   };
+}
+
+function readBackends(): { primary: string; fallback: string } {
+  if (overrides) return overrides;
+  return pickBackends((import.meta as any).env ?? {});
 }
 
 /** Timeout do teste de saúde. Servidor fora do ar costuma falhar em ~1s

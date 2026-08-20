@@ -155,3 +155,52 @@ describe('backendLabel — rótulo pra diagnóstico', () => {
     expect(backendLabel('')).toBe('desconhecido');
   });
 });
+
+/**
+ * Trava a decisão de 20/08/2026: o cliente foi apontado para o Render porque o
+ * servidor próprio estava com o código antigo e o SSH fechado (não dava para
+ * atualizar nem para desligar o watcher do túnel). O watcher reescreve
+ * `VITE_BACKEND_URL` e dispara redeploy sozinho — sem o pin, a troca se
+ * desfaria na próxima vez que o túnel reiniciasse, sem ninguém perceber.
+ */
+describe('pickBackends — pin do primário contra o watcher do túnel', () => {
+  it('com pin: o pin manda e o que o watcher escreveu vira reserva', async () => {
+    const { pickBackends } = await import('./backendResolver');
+    expect(
+      pickBackends({
+        VITE_BACKEND_URL_PRIMARY: FALLBACK,
+        VITE_BACKEND_URL: PRIMARY,
+        VITE_BACKEND_URL_FALLBACK: 'https://ignorado.example',
+      })
+    ).toEqual({ primary: FALLBACK, fallback: PRIMARY });
+  });
+
+  it('o watcher trocando a URL do túnel NÃO promove o túnel a primário', async () => {
+    const { pickBackends } = await import('./backendResolver');
+    const depois = pickBackends({
+      VITE_BACKEND_URL_PRIMARY: FALLBACK,
+      VITE_BACKEND_URL: 'https://outro-tunel-qualquer.trycloudflare.com',
+    });
+    expect(depois.primary).toBe(FALLBACK);
+    expect(depois.fallback).toBe('https://outro-tunel-qualquer.trycloudflare.com');
+  });
+
+  it('sem pin: comportamento idêntico ao de antes', async () => {
+    const { pickBackends } = await import('./backendResolver');
+    expect(
+      pickBackends({ VITE_BACKEND_URL: PRIMARY, VITE_BACKEND_URL_FALLBACK: FALLBACK })
+    ).toEqual({ primary: PRIMARY, fallback: FALLBACK });
+  });
+
+  it('sem nenhuma variável: cai em localhost e failover desligado', async () => {
+    const { pickBackends } = await import('./backendResolver');
+    expect(pickBackends({})).toEqual({ primary: 'http://localhost:8000', fallback: '' });
+  });
+
+  it('pin vazio é tratado como ausente (não zera o primário)', async () => {
+    const { pickBackends } = await import('./backendResolver');
+    expect(
+      pickBackends({ VITE_BACKEND_URL_PRIMARY: '', VITE_BACKEND_URL: PRIMARY, VITE_BACKEND_URL_FALLBACK: FALLBACK })
+    ).toEqual({ primary: PRIMARY, fallback: FALLBACK });
+  });
+});
