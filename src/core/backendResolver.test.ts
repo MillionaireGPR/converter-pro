@@ -175,6 +175,27 @@ describe('pickBackends — pin do primário contra o watcher do túnel', () => {
     ).toEqual({ primary: FALLBACK, fallback: PRIMARY });
   });
 
+  it('nunca aponta primario e reserva pro MESMO servidor (failover morto)', async () => {
+    const { pickBackends } = await import('./backendResolver');
+    // Estado real da transicao: enquanto o pin nao valia em producao, o Render
+    // precisava estar em VITE_BACKEND_URL. Ao passar a valer, a reserva pula
+    // essa variavel (igual ao pin) e usa a reserva fixa.
+    expect(
+      pickBackends({
+        VITE_BACKEND_URL_PRIMARY: FALLBACK,
+        VITE_BACKEND_URL: FALLBACK,
+        VITE_BACKEND_URL_FALLBACK: PRIMARY,
+      })
+    ).toEqual({ primary: FALLBACK, fallback: PRIMARY });
+  });
+
+  it('pin sem nenhuma reserva diferente: failover desligado, sem duplicar', async () => {
+    const { pickBackends } = await import('./backendResolver');
+    expect(
+      pickBackends({ VITE_BACKEND_URL_PRIMARY: FALLBACK, VITE_BACKEND_URL: FALLBACK })
+    ).toEqual({ primary: FALLBACK, fallback: '' });
+  });
+
   it('o watcher trocando a URL do túnel NÃO promove o túnel a primário', async () => {
     const { pickBackends } = await import('./backendResolver');
     const depois = pickBackends({

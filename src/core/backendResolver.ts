@@ -67,12 +67,21 @@ export function setBackends(primary: string, fallback: string): void {
 export function pickBackends(env: Record<string, any>): { primary: string; fallback: string } {
   const pin = env.VITE_BACKEND_URL_PRIMARY || '';
   const doWatcher = env.VITE_BACKEND_URL || '';
+  const reservaFixa = env.VITE_BACKEND_URL_FALLBACK || '';
 
-  if (pin) return { primary: pin, fallback: doWatcher };
+  if (pin) {
+    // A reserva é a primeira URL que exista e seja DIFERENTE do pin. Sem esse
+    // cuidado a troca de 20/08 viraria "primário e reserva no mesmo servidor"
+    // (failover morto e ninguém percebe): enquanto o pin não está valendo em
+    // produção, o Render precisa estar em `VITE_BACKEND_URL`; quando passa a
+    // valer, essa mesma variável seria herdada como reserva.
+    const reserva = [doWatcher, reservaFixa].find(u => u && u !== pin) || '';
+    return { primary: pin, fallback: reserva };
+  }
 
   return {
     primary: doWatcher || 'http://localhost:8000',
-    fallback: env.VITE_BACKEND_URL_FALLBACK || '',
+    fallback: reservaFixa,
   };
 }
 
