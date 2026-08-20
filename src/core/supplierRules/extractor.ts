@@ -6,6 +6,7 @@
 import { ProdutoBruto, ProdutoExtraido } from '../types/productPipeline';
 import { SupplierAdapter } from './types';
 import { extractPrice, detectStockStatus, cleanDescription, normalizeSpaces } from '../normalizers/cleaners';
+import { CAMPOS_PASSTHROUGH } from './camposMercos';
 
 /**
  * Normaliza um header para comparação (remove acentos, espaços, pontuação)
@@ -107,6 +108,46 @@ const shouldExclude = (campos: Record<string, any>, adapter: SupplierAdapter): b
 };
 
 /**
+ * Lê os campos do Mercos que o cliente mapeou e que vão CRUS da planilha para
+ * o export (peso, dimensões, estoque, comissão, tamanhos, cores...).
+ *
+ * Só considera o que foi mapeado EXPLICITAMENTE: nada de adivinhar por nome
+ * parecido. Um "Estoque" chutado errado vira dado errado no Mercos, e o
+ * cliente não teria como saber de onde veio.
+ *
+ * Devolve `{}` quando não há nada — assim o spread não cria a chave e produtos
+ * de fornecedor sem mapeamento continuam byte a byte iguais aos de antes.
+ */
+const camposMercosExtras = (
+  campos: Record<string, any>,
+  mapeamento: Record<string, string>
+): { camposMercos?: Record<string, string | number> } => {
+  const out: Record<string, string | number> = {};
+
+  for (const def of CAMPOS_PASSTHROUGH) {
+    const coluna = (mapeamento[def.campo] || '').trim();
+    if (!coluna) continue;
+
+    const bruto = findValue(campos, [coluna]);
+    if (bruto === undefined || bruto === null || String(bruto).trim() === '') continue;
+
+    if (def.tipo === 'numero') {
+      // `toNum` devolve 0 para texto ("SOB CONSULTA" viraria estoque 0), então
+      // exige um dígito antes de aceitar. E 0 é valor legítimo aqui — estoque
+      // zerado, "Ativo/Inativo" = 0 —, por isso não dá pra descartar pelo zero.
+      if (typeof bruto !== 'number' && !/\d/.test(String(bruto))) continue;
+      const n = toNum(bruto);
+      if (Number.isNaN(n)) continue;
+      out[def.campo] = n;
+    } else {
+      out[def.campo] = normalizeSpaces(String(bruto)).trim();
+    }
+  }
+
+  return Object.keys(out).length > 0 ? { camposMercos: out } : {};
+};
+
+/**
  * Extrai produtos de dados brutos usando um adapter de fornecedor.
  * Se o adapter tem função extract() customizada, usa ela.
  * Caso contrário, usa a lógica genérica baseada em fieldAliases.
@@ -118,7 +159,11 @@ export const extractProducts = (
   /** Colunas mapeadas pelo cliente para tabelas de preço EXTRA, na ordem
    *  (#1, #2, ...). Ex. VAESO: ['V50', 'V250', 'V.R.']. Ver
    *  applyColumnMappings.tabelaPrecoColumns. */
-  colunasTabelaPreco: string[] = []
+  colunasTabelaPreco: string[] = [],
+  /** Mapeamento completo campo → coluna configurado pelo cliente. Usado para
+   *  os campos que vão CRUS da planilha pro export (peso, dimensões, estoque,
+   *  comissão, tamanhos...). Ver camposMercos.CAMPOS_PASSTHROUGH. */
+  mapeamentoColunas: Record<string, string> = {}
 ): ProdutoExtraido[] => {
   // Se o adapter tem extração customizada, delega
   if (adapter.extract) {
@@ -344,6 +389,9 @@ export const extractProducts = (
             }),
           }
         : {}),
+      // Campos do Mercos que o cliente mapeou e vão crus da planilha
+      // (peso, dimensões, estoque, comissão, tamanhos, cores...).
+      ...(camposMercosExtras(campos, mapeamentoColunas)),
       unidade,
       quantidadeCaixa,
       embalagem,

@@ -38,7 +38,7 @@ describe('normalizeToMercos', () => {
     expect(headers.length).toBe(42); // A até AP
   });
 
-  it('3) somente 5 colunas preenchidas', () => {
+  it('3) sem mapeamento do cliente, só as colunas que o sistema monta saem preenchidas', () => {
     const p = makeProduto({ ipi: 13 });
     const mercos = normalizeToMercos(p);
 
@@ -198,12 +198,25 @@ describe('validateMercosProduct', () => {
     expect(erros.some(e => e.includes('Nome do produto'))).toBe(true);
   });
 
-  it('valida que nenhuma coluna fora das 5 permitidas foi preenchida', () => {
+  // Até 19/08 esta era a trava "só 5 colunas podem sair preenchidas", e
+  // "Unidade" servia de exemplo de coluna proibida. A reunião com o Josef
+  // (20/08/2026) inverteu isso: o cliente mapeia QUALQUER campo do modelo
+  // oficial, e reprovar Unidade reprovaria justamente o que ele configurou.
+  // A trava que continua valendo — e importa mais — é não inventar coluna.
+  it('coluna do modelo oficial preenchida pelo cliente é aceita (era rejeitada)', () => {
     const p = makeProduto();
     const mercos = normalizeToMercos(p);
     mercos['Unidade (opcional – exemplo: Kg para produtos em quilo, Cx para caixas)'] = 'CX';
     const erros = validateMercosProduct(mercos);
-    expect(erros.some(e => e.includes('Coluna não permitida'))).toBe(true);
+    expect(erros.some(e => e.includes('Coluna não permitida'))).toBe(false);
+  });
+
+  it('coluna fora do modelo oficial continua sendo recusada', () => {
+    const p = makeProduto();
+    const mercos = normalizeToMercos(p);
+    mercos['Coluna Inventada Pelo Fornecedor'] = 'x';
+    const erros = validateMercosProduct(mercos);
+    expect(erros.some(e => e.includes('fora do modelo oficial'))).toBe(true);
   });
 });
 
