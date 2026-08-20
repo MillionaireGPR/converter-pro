@@ -367,6 +367,88 @@ def _finalize_coords(raw: list, tolerance: float, min_count: int,
 
 
 # ─────────────────────────────────────────────────────────────
+# Selos / tags sobrepostos à foto do produto
+# ─────────────────────────────────────────────────────────────
+
+# Foto de produto ~34.000px², selo ~1.300px² (≈4%) — medido no catálogo GIRA.
+# 15% derruba o selo com folga sem encostar em foto real.
+BADGE_AREA_RATIO = 0.15
+# Quanto do selo precisa estar DENTRO da foto para ser considerado sobreposto.
+BADGE_CONTAINMENT = 0.80
+# E ele tem que ser bem menor que a foto: duas fotos de produto nunca se
+# sobrepõem assim, mas um selo "PROMOCIONAL" no canto da foto, sim.
+BADGE_MAX_REL_AREA = 0.50
+
+
+def _descartar_selos(page_imgs: List[Dict], tag: str) -> List[Dict]:
+    """
+    Tira da disputa as imagens que são SELO/TAG, não foto de produto.
+
+    Reunião com o Josef (20/08/2026, catálogo GIRA): tags "PROMOCIONAL",
+    "OFERTA" e "NOVIDADE" estavam saindo como se fossem a imagem do produto.
+    Causa: elas ficam SOBREPOSTAS à foto real, então o centro delas chega a
+    ficar mais perto do texto do código do que o centro da foto grande — e o
+    casamento por proximidade escolhia o selo.
+
+    Dois sinais, ambos geométricos (não dependem do layout do fornecedor):
+
+      1. Tamanho relativo — abaixo de 15% da maior imagem da página não é foto
+         de produto. Já existia no caminho de grid desde 22/07; o caminho por
+         proximidade (Lila, BM36, GIRA) não tinha nenhum filtro, e era por lá
+         que o selo passava.
+
+      2. Sobreposição — imagem contida em ≥80% dentro de outra MAIOR e com
+         menos da metade da área dela é overlay, não produto. Pega o selo que
+         escapa do item 1 por ser grande demais (ex.: faixa "OFERTA" atravessando
+         a foto inteira).
+
+    Nunca esvazia a página: se os dois filtros derrubarem tudo, devolve a lista
+    original. Ficar sem imagem nenhuma é pior que arriscar um selo.
+    """
+    if len(page_imgs) < 2:
+        return page_imgs
+
+    max_area = max(img.get("area", 0) for img in page_imgs)
+    if max_area <= 0:
+        return page_imgs
+
+    sobrepostas = set()
+    for i, selo in enumerate(page_imgs):
+        r_selo, a_selo = selo.get("rect"), selo.get("area", 0)
+        if r_selo is None or a_selo <= 0:
+            continue
+        for j, foto in enumerate(page_imgs):
+            if i == j:
+                continue
+            r_foto, a_foto = foto.get("rect"), foto.get("area", 0)
+            if r_foto is None or a_foto <= 0:
+                continue
+            if a_selo > a_foto * BADGE_MAX_REL_AREA:
+                continue
+            inter = r_selo & r_foto
+            if inter.is_empty:
+                continue
+            if (inter.width * inter.height) >= a_selo * BADGE_CONTAINMENT:
+                sobrepostas.add(i)
+                break
+
+    mantidas = [
+        img for i, img in enumerate(page_imgs)
+        if img.get("area", 0) >= max_area * BADGE_AREA_RATIO and i not in sobrepostas
+    ]
+
+    if not mantidas:
+        print(f"  [{tag}] filtro de selo derrubaria TODAS as imagens — mantendo a página como estava")
+        return page_imgs
+
+    n = len(page_imgs) - len(mantidas)
+    if n > 0:
+        print(f"  [{tag}] {n} selo(s)/tag(s) descartado(s) "
+              f"(< {BADGE_AREA_RATIO:.0%} da maior ou sobreposto a uma foto maior)")
+    return mantidas
+
+
+# ─────────────────────────────────────────────────────────────
 # Estratégia A: Column-First (catálogos com layout em grid)
 # ─────────────────────────────────────────────────────────────
 
@@ -437,15 +519,7 @@ def _match_via_grid(
     # selo ~1.300px² (≈4%) — descartar tudo abaixo de 15% da maior imagem
     # da página elimina o selo com folga, sem risco de rejeitar foto real.
     # ═══════════════════════════════════════════════════════
-    if page_imgs:
-        max_area = max(img.get("area", 0) for img in page_imgs)
-        if max_area > 0:
-            BADGE_AREA_RATIO = 0.15
-            filtered = [img for img in page_imgs if img.get("area", 0) >= max_area * BADGE_AREA_RATIO]
-            n_removed = len(page_imgs) - len(filtered)
-            if n_removed > 0:
-                print(f"  [ColMatch] {n_removed} imagem(ns) pequena(s) descartada(s) (selo/logo, < {BADGE_AREA_RATIO:.0%} da maior)")
-            page_imgs = filtered
+    page_imgs = _descartar_selos(page_imgs, "ColMatch")
 
     # ═══════════════════════════════════════════════════════
     # FASE 2: Descobrir colunas via clustering de X (SKUs + Imagens)
@@ -627,6 +701,11 @@ def _match_via_embedded(
 
     if not page_imgs:
         return [], [{"sku": s.get("sku"), "page": page_num, "reason": "no_embedded_imgs"} for s in page_skus]
+
+    # Selo/tag sobreposto à foto vencia o casamento por proximidade — era o
+    # "PROMOCIONAL saiu como imagem do produto" do catálogo GIRA. Este caminho
+    # (usado por Lila, BM36 e GIRA) não tinha nenhum filtro; o de grid já tinha.
+    page_imgs = _descartar_selos(page_imgs, "Embedded")
 
     matches, unmatched = [], []
 
