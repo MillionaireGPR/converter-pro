@@ -10,6 +10,7 @@ import {
   MERCOS_EXPORT_COLUMNS,
   MERCOS_ALLOWED_FILLED_COLUMNS,
 } from '../types/productPipeline';
+import { CAMPOS_PASSTHROUGH } from '../supplierRules/camposMercos';
 import { sanitizeForExport, normalizeSpaces } from '../normalizers/cleaners';
 
 // ===================================================================
@@ -186,6 +187,23 @@ export const normalizeToMercos = (
     }
   });
 
+  // Campos que o cliente mapeou e vão crus da planilha (peso, dimensões,
+  // estoque, comissão, tamanhos, cores...). Reunião com o Josef, 20/08/2026:
+  // fornecedor que traz esses dados não tinha para onde mandá-los e virava
+  // pedido de código novo.
+  //
+  // Escrito por ÚLTIMO de propósito, mas só em coluna que as regras acima não
+  // tocam (CAMPOS_PASSTHROUGH exclui código, nome, preço, IPI, múltiplo e
+  // informações adicionais): um mapeamento não pode desfazer nome em
+  // maiúsculas, bloqueio de desconto ou marcador de EM BREVE.
+  for (const def of CAMPOS_PASSTHROUGH) {
+    const valor = p.camposMercos?.[def.campo];
+    if (valor === undefined || valor === null || valor === '') continue;
+    if (!(def.coluna in row)) continue;
+    row[def.coluna] =
+      def.tipo === 'numero' ? formatDecimal(Number(valor), 5) : sanitizeForExport(String(valor));
+  }
+
   console.log(`[Mercos Export] sku=${finalCode} nomeFinal="${finalName}" preco=${finalPrice} ipi=${finalIpi || 0} bloqueado=${isBloqueado}`);
 
   return row;
@@ -264,12 +282,17 @@ export const validateMercosProduct = (p: ProdutoMercos): string[] => {
     }
   }
 
-  for (const col of MERCOS_EXPORT_COLUMNS) {
-    if (!MERCOS_ALLOWED_FILLED_COLUMNS.includes(col as (typeof MERCOS_ALLOWED_FILLED_COLUMNS)[number])) {
-      const val = p[col];
-      if (val !== undefined && val !== null && val !== '') {
-        erros.push(`Coluna não permitida nesta fase foi preenchida: "${col}"`);
-      }
+  // Trava contra coluna INVENTADA. Antes a regra era "só estas 5 podem sair
+  // preenchidas"; desde a reunião com o Josef (20/08/2026) o cliente mapeia
+  // qualquer campo do modelo oficial, e reprovar isso reprovaria justamente o
+  // que ele configurou. O que não pode, e continua barrado, é uma chave que o
+  // Mercos não conhece — o arquivo inteiro é recusado na importação.
+  const oficiais = new Set<string>(MERCOS_EXPORT_COLUMNS as readonly string[]);
+  for (const col of Object.keys(p)) {
+    if (oficiais.has(col)) continue;
+    const val = p[col];
+    if (val !== undefined && val !== null && val !== '') {
+      erros.push(`Coluna fora do modelo oficial do Mercos foi preenchida: "${col}"`);
     }
   }
 

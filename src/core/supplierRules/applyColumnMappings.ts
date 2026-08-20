@@ -19,16 +19,14 @@
 
 import { SupplierAdapter } from './types';
 import { findMatchingKey } from './extractor';
+import { CAMPOS_MERCOS, CAMPOS_ESSENCIAIS, MAX_TABELAS_PRECO, precoTabelaKey } from './camposMercos';
 
 /** campo do sistema → nome exato da coluna na planilha do fornecedor. */
 export type ColumnMappings = Record<string, string>;
 
-/** Campos de preço extra (VAESO: V50/V250/V.R.). Índice N → "Preço de
- *  Tabela #N (opcional)" no export Mercos. O Mercos aceita até 12. */
-export const MAX_TABELAS_PRECO = 12;
-
-/** Chave de mapeamento para a N-ésima tabela de preço (1-based). */
-export const precoTabelaKey = (n: number): string => `precoTabela${n}`;
+// Reexportados: a lista de campos passou a viver em `camposMercos.ts` (fonte
+// única que alimenta tela de regras, conferência do upload e export).
+export { MAX_TABELAS_PRECO, precoTabelaKey };
 
 /** Extrai, na ordem, as colunas mapeadas para tabelas de preço extra.
  *  Buracos viram string vazia para preservar a posição (#1, #2, #3...). */
@@ -93,20 +91,11 @@ export function applyColumnMappings(
 // prévia reimplementasse o match, ela poderia divergir do que acontece de
 // verdade, e uma tela que mente sobre o mapeamento é pior que tela nenhuma.
 
-/** Campos que valem a pena conferir na hora do upload. Não é a lista
- *  completa de campos do adapter — é o que quebra na prática. */
-export const CAMPOS_CONFERIVEIS: { campo: string; rotulo: string }[] = [
-  { campo: 'codigo', rotulo: 'Código do produto' },
-  { campo: 'descricao', rotulo: 'Nome / Descrição' },
-  { campo: 'preco', rotulo: 'Preço de tabela' },
-  { campo: 'quantidadeCaixa', rotulo: 'Quantidade na caixa' },
-  { campo: 'precoPromocional', rotulo: 'Preço promocional' },
-  { campo: 'ncm', rotulo: 'NCM' },
-  { campo: 'ipi', rotulo: 'IPI' },
-  { campo: 'codigoBarras', rotulo: 'Código de barras' },
-  { campo: 'unidade', rotulo: 'Unidade' },
-  { campo: 'categoria', rotulo: 'Categoria' },
-];
+/** Campos sempre conferidos no upload, mapeados ou não — é o que quebra na
+ *  prática. Os demais campos do Mercos só aparecem quando o cliente mapeia
+ *  (senão a conferência viraria uma lista de 40 linhas quase toda vazia). */
+export const CAMPOS_CONFERIVEIS: { campo: string; rotulo: string }[] =
+  CAMPOS_ESSENCIAIS.map(({ campo, rotulo }) => ({ campo, rotulo }));
 
 export type OrigemMapeamento = 'cliente' | 'auto' | 'nenhuma';
 
@@ -147,17 +136,17 @@ export function previewColumnMapping(
     });
   }
 
-  // Tabelas de preço extra só aparecem se o cliente configurou — não há
-  // como deduzir "V50 = tabela 50%" sozinho.
-  tabelaPrecoColumns(mappings).forEach((col, i) => {
-    if (!col) return;
-    linhas.push({
-      campo: precoTabelaKey(i + 1),
-      rotulo: `Tabela de preço extra #${i + 1}`,
-      coluna: col,
-      origem: 'cliente',
-    });
-  });
+  // Os demais campos do Mercos (peso, dimensões, estoque, comissão, tamanhos,
+  // tabelas de preço extra...) só aparecem quando o cliente mapeou. Não dá pra
+  // deduzir sozinho que "V50" é a tabela de 50%, e listar 40 linhas vazias
+  // esconderia justamente as que importam.
+  const jaListados = new Set(linhas.map(l => l.campo));
+  for (const { campo, rotulo } of CAMPOS_MERCOS) {
+    if (jaListados.has(campo)) continue;
+    const col = (mappings?.[campo] || '').trim();
+    if (!col) continue;
+    linhas.push({ campo, rotulo, coluna: col, origem: 'cliente' });
+  }
 
   return linhas;
 }

@@ -94,6 +94,12 @@ export interface ProdutoExtraido {
    *  Índice 0 → "Preço de Tabela #1 (opcional)" no export Mercos, e assim
    *  por diante. Preenchido via mapeamento de colunas do fornecedor. */
   precosTabela?: (number | null)[];
+  /** Campos do Mercos que o cliente mapeou e que vão CRUS da planilha para a
+   *  coluna correspondente do export (peso, dimensões, estoque, comissão,
+   *  tamanhos, cores...). Chave = `campo` de CAMPOS_MERCOS. Existe para que
+   *  um campo novo do Mercos seja uma linha de tabela, e não uma alteração em
+   *  cada etapa do pipeline. */
+  camposMercos?: Record<string, string | number>;
   unidade?: string;
   quantidadeCaixa?: number;
   embalagem?: string;
@@ -133,6 +139,8 @@ export interface ProdutoNormalizadoV2 {
   precoPromocional?: number;
   /** Tabelas de preço extra — ver ProdutoExtraido.precosTabela. */
   precosTabela?: (number | null)[];
+  /** Campos mapeados pelo cliente — ver ProdutoExtraido.camposMercos. */
+  camposMercos?: Record<string, string | number>;
   descontoPercentual?: number;
   descontoString?: string;
   precoFinal: number;
@@ -219,35 +227,20 @@ export const MERCOS_EXPORT_COLUMNS = [
   'Preço de Tabela #19 (opcional)',
 ] as const;
 
-/** Colunas permitidas para preenchimento nesta etapa */
-export const MERCOS_ALLOWED_FILLED_COLUMNS = [
-  'Código do produto (recomendado)',
-  'Nome do produto (obrigatório)',
-  'Preço de Tabela (obrigatório)',
-  'IPI (opcional - não informar o símbolo %)',
-  'Informações adicionais (opcional - neste campo coloca-se qualquer detalhe extra do produto. Não aparece no pedido)',
-  // Múltiplo = quantidade por caixa (múltiplo de venda B2B). Cliente
-  // (reunião 11/06/2026) usa essa quantidade como referência; produtos em
-  // unidade devem vir com 1 (nunca vazio/0).
-  'Múltiplo (opcional)',
-  // Tabelas de preço extra (19/08/2026): fornecedores que trabalham com
-  // várias tabelas conforme a situação do cliente (VAESO: V50 = tabela 50%,
-  // V250 = 25%, V.R. = retira no depósito). Só são preenchidas quando o
-  // cliente mapeia essas colunas na tela do fornecedor; caso contrário
-  // seguem vazias como antes.
-  'Preço de Tabela #1 (opcional)',
-  'Preço de Tabela #2 (opcional)',
-  'Preço de Tabela #3 (opcional)',
-  'Preço de Tabela #4 (opcional)',
-  'Preço de Tabela #5 (opcional)',
-  'Preço de Tabela #6 (opcional)',
-  'Preço de Tabela #7 (opcional)',
-  'Preço de Tabela #8 (opcional)',
-  'Preço de Tabela #9 (opcional)',
-  'Preço de Tabela #10 (opcional)',
-  'Preço de Tabela #11 (opcional)',
-  'Preço de Tabela #12 (opcional)',
-] as const;
+/**
+ * Colunas que podem sair preenchidas no export.
+ *
+ * Até 19/08 era uma lista curta ("nesta etapa só preenchemos estas"), porque
+ * só o sistema decidia o que escrever. Depois da reunião com o Josef
+ * (20/08/2026) o cliente mapeia QUALQUER campo do modelo oficial — peso,
+ * dimensões, estoque, comissão, tamanhos, cores, as 19 tabelas de preço —, e
+ * uma lista curta passaria a reprovar exatamente o que ele configurou.
+ *
+ * A trava contra coluna inventada continua existindo, e é mais forte: a linha
+ * nasce de MERCOS_EXPORT_COLUMNS em `createEmptyMercosRow`, então nenhuma
+ * chave fora do modelo chega ao arquivo. Coluna não mapeada segue vazia.
+ */
+export const MERCOS_ALLOWED_FILLED_COLUMNS = MERCOS_EXPORT_COLUMNS;
 
 /** Schema de validação da exportação Mercos */
 export const MERCOS_EXPORT_SCHEMA = {
