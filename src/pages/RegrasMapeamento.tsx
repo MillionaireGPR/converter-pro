@@ -3,6 +3,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CAMPOS_MERCOS, campoMercos } from "@/core/supplierRules/camposMercos";
+
+/** Nome do campo como o cliente entende. Cai na chave crua se a regra tiver
+ *  sido salva com um destino que não existe mais. */
+const rotuloCampo = (campo: string): string => campoMercos(campo)?.rotulo || campo;
 import { useApp } from "@/context/AppContext";
 import { useFornecedores } from "@/context/FornecedoresContext";
 import { useHistorico } from "@/context/HistoricoContext";
@@ -55,8 +60,21 @@ export default function RegrasMapeamento() {
       updateRegra(editId, form);
       toast.success("Regra atualizada!");
     } else {
-      addRegra(form);
-      toast.success("Regra criada!");
+      // Regra nova para um destino que o fornecedor JÁ tinha: sobrescreve
+      // (reunião Josef, 20/08/2026 — "a nova configuração sobrescreve a regra
+      // antiga"). Sem isso as duas linhas apareceriam na tela enquanto o banco
+      // guarda só uma (column_mappings é chaveado pelo destino), e o cliente
+      // veria uma regra que não vale nada.
+      const jaExiste = regrasMapeamento.find(
+        r => r.fornecedor === form.fornecedor && r.colunaDestino === form.colunaDestino
+      );
+      if (jaExiste) {
+        updateRegra(jaExiste.id, form);
+        toast.success(`Regra de "${rotuloCampo(form.colunaDestino)}" atualizada — agora vem de "${form.colunaOrigem}".`);
+      } else {
+        addRegra(form);
+        toast.success("Regra criada!");
+      }
     }
     setDialogOpen(false);
   };
@@ -305,7 +323,7 @@ export default function RegrasMapeamento() {
               <div className="flex items-center gap-2 cursor-pointer" onClick={() => openEdit(r)}>
                 <div className="flex-1 bg-accent rounded-lg px-3 py-2 text-sm font-medium text-accent-foreground truncate">{r.colunaOrigem}</div>
                 <ArrowRight className="h-4 w-4 text-primary shrink-0" />
-                <div className="flex-1 bg-primary/10 rounded-lg px-3 py-2 text-sm font-medium text-primary truncate">{r.colunaDestino}</div>
+                <div className="flex-1 bg-primary/10 rounded-lg px-3 py-2 text-sm font-medium text-primary truncate">{rotuloCampo(r.colunaDestino)}</div>
               </div>
               {r.valor && <p className="text-xs text-muted-foreground">Valor: {r.valor}</p>}
             </CardContent>
@@ -387,12 +405,7 @@ export default function RegrasMapeamento() {
                         <Badge variant="outline" className="text-xs truncate max-w-[140px]">{s.colunaOrigem}</Badge>
                         <ArrowRight className="h-3 w-3 text-muted-foreground" />
                         <Badge className="text-xs bg-primary/10 text-primary border-0">
-                          {s.colunaDestino === 'codigo' && 'Código do produto'}
-                          {s.colunaDestino === 'nome' && 'Nome/Produto'}
-                          {s.colunaDestino === 'precoBase' && 'Preço de Tabela'}
-                          {s.colunaDestino === 'quantidadeCaixa' && 'Quantidade Caixa'}
-                          {s.colunaDestino === 'ipi' && 'IPI (%)'}
-                          {s.colunaDestino === 'categoria' && 'Categoria'}
+                          {rotuloCampo(s.colunaDestino)}
                         </Badge>
                       </div>
                       <div className="flex items-center gap-1">
@@ -486,20 +499,15 @@ export default function RegrasMapeamento() {
               <Select value={form.colunaDestino} onValueChange={v => setForm(f => ({ ...f, colunaDestino: v }))}>
                 <SelectTrigger><SelectValue placeholder="Selecionar destino" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="codigo">Código do produto</SelectItem>
-                  <SelectItem value="descricao">Nome / Descrição</SelectItem>
-                  <SelectItem value="descricaoComplementar">Descrição Completa</SelectItem>
-                  <SelectItem value="preco">Preço de Tabela (principal)</SelectItem>
-                  <SelectItem value="quantidadeCaixa">Quantidade Caixa</SelectItem>
-                  <SelectItem value="ipi">IPI (%)</SelectItem>
-                  <SelectItem value="categoria">Categoria</SelectItem>
-                  <SelectItem value="codigoBarras">Código de barras</SelectItem>
-                  <SelectItem value="ncm">NCM</SelectItem>
-                  <SelectItem value="unidade">Unidade</SelectItem>
-                  <SelectItem value="precoPromocional">Preço promocional</SelectItem>
-                  <SelectItem value="precoTabela1">Tabela de preço extra #1</SelectItem>
-                  <SelectItem value="precoTabela2">Tabela de preço extra #2</SelectItem>
-                  <SelectItem value="precoTabela3">Tabela de preço extra #3</SelectItem>
+                  {/* Lista completa do modelo Mercos (reunião Josef, 20/08/2026):
+                      antes só apareciam os campos obrigatórios, então peso,
+                      dimensões, estoque, comissão, tamanhos e as tabelas de
+                      preço extra não tinham destino e viravam pedido de código
+                      novo. A fonte é CAMPOS_MERCOS — campo novo do Mercos entra
+                      aqui sozinho. */}
+                  {CAMPOS_MERCOS.map(c => (
+                    <SelectItem key={c.campo} value={c.campo}>{c.rotulo}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

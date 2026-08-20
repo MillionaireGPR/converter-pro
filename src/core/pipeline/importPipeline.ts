@@ -956,6 +956,7 @@ const normalizeExtracted = (
       precoBase,
       precoPromocional: e.precoPromocional,
       precosTabela: e.precosTabela,
+      camposMercos: e.camposMercos,
       precoFinal: precoBase, // Será recalculado ao aplicar desconto
       ipi: e.ipi,
       ncm: e.ncm,
@@ -1186,7 +1187,7 @@ export const runImportPipeline = async (
 
   // 4. Extração usando o adapter
   // NOVO: Passar informações de estilo de célula para adapters da família CLINK
-  const extraidos = extractProducts(brutos, adapter, file.name, colunasTabelaPreco);
+  const extraidos = extractProducts(brutos, adapter, file.name, colunasTabelaPreco, options.columnMappings || {});
   console.log(`[Pipeline] ${extraidos.length} produtos extraídos pelo adapter "${adapter.nome}"`);
 
   // NOVO: Contagem de categorias visuais para métricas
