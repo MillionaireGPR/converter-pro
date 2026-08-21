@@ -152,3 +152,35 @@ O Gabriel toca 4-5 projetos em paralelo e o contexto desta sessão é caro
 
 A confiança do cliente já foi afetada por demora. Cada regressão piora isso.
 **Velocidade ≠ pressa.** Validar localmente antes de pushar economiza muito tempo.
+
+---
+
+## 🔗 Integração permanente com IQC Machine
+
+Este projeto (identificador `MICHELE_CONVERSOR`) está registrado no IQC Project
+Runner (`C:\IQC_PROJECT_RUNNER`) para continuidade de estado com a IQC Machine.
+Regras permanentes:
+
+1. Antes de iniciar qualquer nova tarefa neste projeto, leia `IQC_STATUS_ATUAL.md`
+   na raiz para entender o estado real antes de agir.
+2. Após concluir qualquer tarefa relevante (fix, feature, merge, decisão),
+   atualize `IQC_STATUS_ATUAL.md` refletindo o novo estado — não espere o
+   Gabriel pedir a atualização.
+3. Nunca registre senhas, tokens, API keys, credenciais ou dados
+   sensíveis/financeiros em `IQC_STATUS_ATUAL.md` ou em qualquer outro
+   Markdown na raiz do projeto (o Runner varre e transporta esses arquivos).
+4. O transporte do status até a IQC Machine é automático via
+   `sync_outbound.py` (monitora mudanças em `IQC_STATUS_ATUAL.md` por hash e
+   gera pacote em `bridge_retorno` após estabilidade) — não é necessário nem
+   desejável enviar manualmente.
+5. Não gere pacote de retorno manual (`gerar_retorno.py`) exceto se o Runner
+   automático falhar ou estiver indisponível.
+6. Após uma futura migração de ambiente/pasta/branch deste projeto, atualize
+   em `IQC_STATUS_ATUAL.md`: caminho, ambiente, estado e próxima ação — para
+   a IQC Machine não trabalhar com informação desatualizada.
+7. Mudanças de código continuam seguindo o workflow normal já descrito acima
+   (branch → `npm run verify` → PR → merge); a integração IQC Machine é só
+   de continuidade/observabilidade e não altera esse fluxo.
+8. Esta integração é de **estado**, não de execução: a existência da IQC
+   Machine não autoriza pular o fluxo normal de desenvolvimento nem agir sem
+   confirmação do Gabriel em ações de alto risco (push, merge, deploy).
