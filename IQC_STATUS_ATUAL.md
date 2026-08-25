@@ -1,7 +1,7 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 21/08/2026
+**Atualizado em:** 25/08/2026
 
 ---
 
@@ -29,6 +29,62 @@ Meta: cliente configura sozinho, uma vez por fornecedor.
 
 **Restrição comercial:** plano de R$259/mês (inclui IA + servidor). Não pode
 estourar esse escopo e precisa estar 100% funcional.
+
+---
+
+## ✅ RESOLVIDO em 24/08 — servidor do Wesley atualizado e promovido
+
+O SSH `187.94.39.160:2531` voltou a responder. Os quatro arquivos previstos
+no handoff foram atualizados no servidor próprio a partir do `main`:
+`main.py`, `gemini_extractor.py`, `supplier_profile.py` e `cv_extractor.py`.
+
+- backup pré-deploy mantido em
+  `/home/invictusos/converter-pro-backend/backups/20260824T210629Z`
+- serviço `converter-backend.service` reiniciado normalmente
+- `/health` local, proxy `:28080` e túnel público responderam `200`
+- OpenAPI público confirmado com `supplierRules` em `extract_products_ai`
+- smoke público: CORS, `not_found`, Vercel e latência passaram
+- URL atual do túnel:
+  `https://aqua-verification-documentary-crowd.trycloudflare.com`
+
+Na promoção foi encontrada e corrigida uma inconsistência: o
+`VITE_BACKEND_URL_FALLBACK` ainda apontava para o túnel antigo. Antes de
+remover o pin, ele foi alterado para o Render. Configuração final confirmada
+no bundle `index-DqKO2cWH.js`:
+
+- `VITE_BACKEND_URL` → túnel atual do servidor do Wesley (primário)
+- `VITE_BACKEND_URL_FALLBACK` → Render (reserva)
+- `VITE_BACKEND_URL_PRIMARY` → removida
+
+Os dois backends responderam saudáveis após a promoção. O watcher continua
+atualizando `VITE_BACKEND_URL` e disparando redeploy quando a URL do Quick
+Tunnel muda.
+
+### ⚠️ Reconferido em 25/08 08:22 — túnel já caiu de novo
+
+Validação independente antes deste merge, ~11h depois da promoção:
+
+| checagem | resultado |
+|---|---|
+| `curl .../health` no túnel acima | `Could not resolve host` (DNS não resolve mais) |
+| Mesmo teste pelo Browser (rede diferente) | navegação falhou — confirma que não é problema local |
+| SSH `187.94.39.160:2531` | fechada de novo |
+| `VITE_BACKEND_URL` no Vercel agora | ainda é a mesma URL morta — o watcher não escreveu uma nova |
+| **Cliente afetada?** | **Não** — `pickBackends`/`probe()` (inalterados desde o PR #103,
+16 testes cobrindo exatamente "primário some por erro de rede") caem no
+Render sozinhos. Confirmado: Render `/health` → 200 |
+| `/servidor` (painel admin) | **quebrado agora** — por design (`PainelServidor.tsx`) usa
+`VITE_BACKEND_URL` direto, sem passar pelo failover, pra nunca mostrar um
+bookmark desatualizado. Enquanto o túnel não voltar, usar o painel do
+Render direto ou aguardar |
+
+Ou seja: a promoção de 24/08 foi real e validada no momento — mas o Quick
+Tunnel já se comportou exatamente como o risco descrito na pendência #2
+abaixo prevê (sem SLA, cai sem aviso). A infraestrutura de failover
+absorveu a queda sozinha; ninguém percebeu do lado do cliente. O que falta
+checar é por que o watcher não subiu uma URL nova — provável causa: o
+processo do watcher/túnel no servidor caiu junto (não dá pra confirmar
+sem SSH).
 
 ---
 
@@ -135,9 +191,9 @@ arquivos de backend e devolver o servidor próprio ao papel de primário.
 
 - **Frontend:** Vercel (deploy automático do `main`)
 - **Backend:** dois ambientes
-  - Servidor próprio (7,7GB) via **Cloudflare Quick Tunnel** — ⚠️ **não puxa
-    do GitHub**, exige `scp` manual a cada correção de backend
-  - Render Starter (512MB) — puxa do `main` sozinho, serve de reserva
+  - **Primário:** servidor próprio (7,7GB) via **Cloudflare Quick Tunnel** —
+    ⚠️ **não puxa do GitHub**, exige `scp` manual a cada correção de backend
+  - **Reserva:** Render Starter (512MB) — puxa do `main` sozinho
 - **Banco:** Supabase (`suppliers` já tem `column_mappings`,
   `extraction_rules`, `extraction_rules_compiled`)
 
@@ -179,22 +235,17 @@ motivo pra não apagar `VITE_BACKEND_URL_PRIMARY` antes de atualizá-lo.
 
 ## Pendências abertas
 
-1. **Wesley:** reabrir SSH 2531 — testado 21/08 12h, AINDA FECHADA
-   (`timeout 8 bash -c 'cat < /dev/null > /dev/tcp/187.94.39.160/2531'` →
-   timeout). Sem isso o servidor próprio fica com código antigo e não pode
-   voltar a ser primário. Quando abrir:
-   1. `ssh -p 2531 invictusos@187.94.39.160`
-   2. Subir os 4 arquivos de backend (gemini_extractor.py, supplier_profile.py,
-      main.py, cv_extractor.py)
-   3. Confirmar código novo: `curl -s https://stainless-articles-mpg-floating.trycloudflare.com/openapi.json`
-      → procurar `supplierRules` nas properties de `extract_products_ai`
-   4. SÓ ENTÃO apagar `VITE_BACKEND_URL_PRIMARY` no Vercel (senão volta pro
-      servidor com código antigo na hora — ver prova do selo/GIRA abaixo)
+1. **Túnel do Wesley está fora AGORA** (ver "Reconferido em 25/08" acima) e
+   SSH 2531 fechada de novo — sem acesso não dá pra saber se é o processo
+   do túnel, o watcher, ou o servidor inteiro. Cliente não afetada (Render
+   assume sozinho). Ação: pedir ao Wesley pra checar o servidor/reabrir SSH.
 2. **Servidor não puxa do GitHub** — automatizar quando estabilizar
-3. **42 imagens sem match** no catálogo Fortal completo (outros layouts;
+3. **Quick Tunnel continua sem SLA e muda de URL** — migrar para túnel
+   nomeado quando houver domínio/orçamento; até lá, manter watcher + Render.
+4. **42 imagens sem match** no catálogo Fortal completo (outros layouts;
    `no_img_in_col` 27 + `no_plausible_match` 15). O padrão matriz cor×tamanho
    foi resolvido, esses são casos diferentes.
-4. **Gemini:** Google exige migração para pré-pago (prazo deles)
+5. **Gemini:** Google exige migração para pré-pago (prazo deles)
 
 ---
 
