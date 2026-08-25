@@ -81,10 +81,41 @@ Render direto ou aguardar |
 Ou seja: a promoção de 24/08 foi real e validada no momento — mas o Quick
 Tunnel já se comportou exatamente como o risco descrito na pendência #2
 abaixo prevê (sem SLA, cai sem aviso). A infraestrutura de failover
-absorveu a queda sozinha; ninguém percebeu do lado do cliente. O que falta
-checar é por que o watcher não subiu uma URL nova — provável causa: o
-processo do watcher/túnel no servidor caiu junto (não dá pra confirmar
-sem SSH).
+absorveu a queda sozinha; ninguém percebeu do lado do cliente.
+
+### ✅ Resolvido em 25/08 12:09 — causa raiz + túnel restabelecido
+
+Causa raiz confirmada por SSH (voltou a responder): o servidor caiu de
+madrugada em 24/08 porque o Wesley trocou a placa de vídeo fisicamente.
+Ao religar, `cf-tunnel.service` e `converter-backend.service` subiram
+como "active" no systemd — mas o processo do `cloudflared` nunca chegou
+a reconectar de verdade na Cloudflare (rede provavelmente não estava
+pronta no boot). Como o processo não crashava, o systemd nunca o
+reiniciou sozinho, e o watcher não tinha nada de novo pra detectar —
+local (`localhost:28080/health`) respondia normal o tempo todo, só a
+ponta pública é que nunca existiu de fato.
+
+Fix: `sudo systemctl restart cf-tunnel.service`. Log confirmou:
+```
+[update-vercel] VITE_BACKEND_URL atualizado -> https://testing-ownership-wal-loc.trycloudflare.com
+[update-vercel] Redeploy disparado com sucesso
+```
+
+Validado de fora, independente do log:
+
+| checagem | resultado |
+|---|---|
+| `/health` no túnel novo | 200 |
+| OpenAPI `extract_products_ai` | `supplierRules` presente |
+| `VITE_BACKEND_URL` no Vercel | túnel novo |
+| Bundle em produção | `index-BtAO3A8D.js` já com o túnel novo inlinado |
+
+Servidor do Wesley voltou a ser o backend real usado pelas conversões,
+Render de volta ao papel de reserva.
+
+**Ainda em aberto:** o Wesley mesmo notou a instabilidade e comentou
+querer migrar pro **túnel nomeado/fixo** — resolve a causa raiz (elimina
+o watcher e esse tipo de falha silenciosa de vez). Ver pendência #3.
 
 ---
 
@@ -235,17 +266,16 @@ motivo pra não apagar `VITE_BACKEND_URL_PRIMARY` antes de atualizá-lo.
 
 ## Pendências abertas
 
-1. **Túnel do Wesley está fora AGORA** (ver "Reconferido em 25/08" acima) e
-   SSH 2531 fechada de novo — sem acesso não dá pra saber se é o processo
-   do túnel, o watcher, ou o servidor inteiro. Cliente não afetada (Render
-   assume sozinho). Ação: pedir ao Wesley pra checar o servidor/reabrir SSH.
-2. **Servidor não puxa do GitHub** — automatizar quando estabilizar
-3. **Quick Tunnel continua sem SLA e muda de URL** — migrar para túnel
-   nomeado quando houver domínio/orçamento; até lá, manter watcher + Render.
-4. **42 imagens sem match** no catálogo Fortal completo (outros layouts;
+1. **Servidor não puxa do GitHub** — automatizar quando estabilizar
+2. **Migrar para túnel nomeado/fixo** — o próprio Wesley notou a instabilidade
+   do Quick Tunnel e quer fazer essa migração. Resolve a causa raiz do
+   incidente de 24-25/08 (tunnel "active" no systemd sem estar conectado de
+   verdade) e elimina a dependência do watcher. Prioridade subiu depois do
+   incidente.
+3. **42 imagens sem match** no catálogo Fortal completo (outros layouts;
    `no_img_in_col` 27 + `no_plausible_match` 15). O padrão matriz cor×tamanho
    foi resolvido, esses são casos diferentes.
-5. **Gemini:** Google exige migração para pré-pago (prazo deles)
+4. **Gemini:** Google exige migração para pré-pago (prazo deles)
 
 ---
 
