@@ -113,8 +113,8 @@ Validado de fora, independente do log:
 Servidor do Wesley voltou a ser o backend real usado pelas conversões,
 Render de volta ao papel de reserva.
 
-**Ainda em aberto:** o Wesley mesmo notou a instabilidade e comentou
-querer migrar pro **túnel nomeado/fixo** — resolve a causa raiz (elimina
+**Ainda em aberto:** o Gabriel já tinha comentado com o Wesley (25/08) sobre
+migrar pro **túnel nomeado/fixo** — resolve a causa raiz (elimina
 o watcher e esse tipo de falha silenciosa de vez). Ver pendência #3.
 
 ---
@@ -267,11 +267,18 @@ motivo pra não apagar `VITE_BACKEND_URL_PRIMARY` antes de atualizá-lo.
 ## Pendências abertas
 
 1. **Servidor não puxa do GitHub** — automatizar quando estabilizar
-2. **Migrar para túnel nomeado/fixo** — o próprio Wesley notou a instabilidade
-   do Quick Tunnel e quer fazer essa migração. Resolve a causa raiz do
-   incidente de 24-25/08 (tunnel "active" no systemd sem estar conectado de
-   verdade) e elimina a dependência do watcher. Prioridade subiu depois do
-   incidente.
+2. **Migrar para túnel nomeado/fixo** — Gabriel já vinha comentando isso com
+   o Wesley. Resolve a causa raiz do incidente de 24-25/08 (tunnel "active"
+   no systemd sem estar conectado de verdade) e elimina a dependência do
+   watcher. Prioridade subiu depois do incidente.
+
+   **Custo levantado (25/08):** domínio `.com.br` é R$40/ano no Registro.br
+   (fonte oficial); Cloudflare Tunnel + DNS não têm mensalidade no plano
+   Free (Zero Trust free até 50 usuários cobre bem essa escala). O projeto
+   **já tem** `metodoiqc.com.br` registrado (~30/07, hoje nas nameservers do
+   Registro.br) — não precisa comprar domínio novo, só apontar pra Cloudflare
+   e criar subdomínio (ex.: `wesley.metodoiqc.com.br`). Mesmo domínio serve
+   pra outros clientes depois, um subdomínio por servidor, sem custo extra.
 3. **42 imagens sem match** no catálogo Fortal completo (outros layouts;
    `no_img_in_col` 27 + `no_plausible_match` 15). O padrão matriz cor×tamanho
    foi resolvido, esses são casos diferentes.
