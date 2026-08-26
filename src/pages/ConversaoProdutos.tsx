@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Upload, FileSpreadsheet, FileText, CheckCircle, AlertCircle, ArrowRight, Loader2, File as FileIcon, Info, History, Image, RotateCcw, Trash2, Clock, Package, Download } from "lucide-react";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useApp, Produto } from "@/context/AppContext";
@@ -24,18 +25,27 @@ import { buildAndDownloadZip } from "@/core/images/imageZipBuilder";
 import { ResultadoExtracaoImagens } from "@/core/images/imageTypes";
 import { classifyImageError } from "@/core/images/imageErrorClassifier";
 import { ConferenciaColunas } from "@/components/ConferenciaColunas";
+import type { ColumnMappings } from "@/core/supplierRules/applyColumnMappings";
 import { getBackendUrl, backendLabel } from "@/core/backendResolver";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 
 export default function ConversaoProdutos() {
   const { setDetectedHeaders } = useApp();
-  const { fornecedores, salvarMapeamentoColuna } = useFornecedores();
+  const { fornecedores, salvarMapeamentoColuna, updateFornecedor } = useFornecedores();
   const { registrarHistorico, salvarConversao, conversoesSalvas, reabrirConversao, excluirConversao } = useHistorico();
   const { addProdutosNormalizados, setProdutosPadronizados } = useProdutos();
   const [fornecedor, setFornecedor] = useState("");
   const [novoFornecedor, setNovoFornecedor] = useState("");
   const [tipoArquivo, setTipoArquivo] = useState("");
+  // Particularidades/mapeamento escritos NA HORA do upload (26/08/2026) —
+  // antes só dava pra configurar depois, numa segunda visita a Fornecedores
+  // ou Regras de Colunas. Pedido do Gabriel: se já vai subir um catálogo
+  // novo, quer escrever a regra no mesmo passo, sem precisar voltar depois.
+  const [regrasNovoFornecedor, setRegrasNovoFornecedor] = useState("");
+  const [mappingsNovoFornecedor, setMappingsNovoFornecedor] = useState<ColumnMappings>({});
+  const [regrasExistente, setRegrasExistente] = useState("");
+  const [salvandoRegrasExistente, setSalvandoRegrasExistente] = useState(false);
   const [state, setState] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
   const [progress, setProgress] = useState(0);
   const [progressMsg, setProgressMsg] = useState("");
@@ -69,6 +79,37 @@ export default function ConversaoProdutos() {
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [state]);
+
+  // Ao trocar de fornecedor selecionado (existente), recarrega as
+  // particularidades já salvas dele — senão a caixa mostraria o texto do
+  // fornecedor anterior ou ficaria vazia mesmo já tendo regra salva.
+  useEffect(() => {
+    if (fornecedor && fornecedor !== 'novo') {
+      setRegrasExistente(fornecedores.find(f => f.id === fornecedor)?.regrasExtracao || "");
+    } else {
+      setRegrasExistente("");
+    }
+  }, [fornecedor, fornecedores]);
+
+  // "+ Novo" só existe durante ESTE upload — sai da tela, não faz sentido
+  // manter o rascunho pro próximo fornecedor que for cadastrado.
+  useEffect(() => {
+    if (fornecedor !== 'novo') {
+      setRegrasNovoFornecedor("");
+      setMappingsNovoFornecedor({});
+    }
+  }, [fornecedor]);
+
+  const salvarRegrasExistente = async () => {
+    if (!fornecedor || fornecedor === 'novo') return;
+    setSalvandoRegrasExistente(true);
+    try {
+      await updateFornecedor(fornecedor, { regrasExtracao: regrasExistente.trim() });
+      toast.success("Particularidades salvas para este fornecedor.");
+    } finally {
+      setSalvandoRegrasExistente(false);
+    }
+  };
 
   // Formata segundos em "m:ss" (ex: 95 → "1:35")
   const fmtTempo = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -276,7 +317,12 @@ export default function ConversaoProdutos() {
           name: supplier.nome,
           file_type: supplier.tipoArquivo,
           status: supplier.status,
-          frequency: supplier.frequencia
+          frequency: supplier.frequencia,
+          // Particularidades/mapeamento escritos na tela de upload (26/08/2026)
+          // pro fornecedor novo já nascer configurado, sem precisar de uma
+          // segunda visita a Fornecedores ou Regras de Colunas.
+          ...(regrasNovoFornecedor.trim() ? { extraction_rules: regrasNovoFornecedor.trim() } : {}),
+          ...(Object.keys(mappingsNovoFornecedor).length ? { column_mappings: mappingsNovoFornecedor } : {}),
         }).select().single();
 
         if (insertError) {
@@ -579,6 +625,62 @@ export default function ConversaoProdutos() {
                     salvarMapeamentoColuna(forn.nome, campo, coluna);
                   }}
                 />
+              )}
+
+              {/* Mesma conferência para fornecedor NOVO (26/08/2026) — ele
+                  ainda não existe no banco, então guarda em memória e só
+                  grava junto com o insert em handleProcessar. */}
+              {selectedFile && tipoArquivo === 'excel' && fornecedor === 'novo' && novoFornecedor.trim() && (
+                <ConferenciaColunas
+                  file={selectedFile}
+                  supplierName={novoFornecedor.trim()}
+                  mappings={mappingsNovoFornecedor}
+                  onSalvar={(campo, coluna) => {
+                    setMappingsNovoFornecedor(prev => {
+                      const atualizado = { ...prev };
+                      if (coluna) atualizado[campo] = coluna; else delete atualizado[campo];
+                      return atualizado;
+                    });
+                  }}
+                />
+              )}
+
+              {/* Particularidades do catálogo PDF direto na hora do upload
+                  (26/08/2026) — antes só dava pra escrever depois, voltando
+                  em Fornecedores. Fornecedor novo: guarda em memória e entra
+                  junto no insert. Fornecedor existente: salva na hora, igual
+                  ao ajuste de coluna acima faz pra planilha. */}
+              {tipoArquivo === 'pdf' && fornecedor === 'novo' && novoFornecedor.trim() && (
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">Particularidades do catálogo (PDF)</label>
+                  <Textarea
+                    value={regrasNovoFornecedor}
+                    onChange={e => setRegrasNovoFornecedor(e.target.value)}
+                    placeholder='Ex.: "o preço aparece uma vez só no topo e vale pra todas as cores da página"'
+                    className="text-sm min-h-[70px]"
+                  />
+                </div>
+              )}
+              {tipoArquivo === 'pdf' && fornecedor && fornecedor !== 'novo' && (
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">Particularidades do catálogo (PDF)</label>
+                  <Textarea
+                    value={regrasExistente}
+                    onChange={e => setRegrasExistente(e.target.value)}
+                    placeholder='Ex.: "o preço aparece uma vez só no topo e vale pra todas as cores da página"'
+                    className="text-sm min-h-[70px]"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    disabled={salvandoRegrasExistente}
+                    onClick={salvarRegrasExistente}
+                  >
+                    {salvandoRegrasExistente ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}
+                    Salvar particularidades
+                  </Button>
+                </div>
               )}
 
               <Button
