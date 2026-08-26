@@ -11,6 +11,13 @@
 - **Formulários e Validação:** `react-hook-form` com `zod` e `@hookform/resolvers`.
 - **Backend as a Service / DB:** Supabase (`@supabase/supabase-js`).
 - **Manipulação de Arquivos e Utils:** `xlsx` para conversão e leitura Excel/CSV, `jspdf` para geração de PDFs, `date-fns` para datas.
+- **Extração de catálogos (desde v23, 09/06/2026):** Gemini 2.5 Flash é o
+  extrator PRIMÁRIO — lê o PDF inteiro e escolhe a imagem do produto. O
+  regex de 14 parsers manuais virou FALLBACK automático (nunca removido).
+  Ver `## 14` abaixo e `ARCHITECTURE.md` (invariantes IV-01 a IV-23).
+- **Backend Python (FastAPI):** roda em dois ambientes simultâneos — servidor
+  próprio (via Cloudflare Tunnel) como primário e Render Starter como
+  reserva, com failover automático no cliente. Ver `## 14.3`.
 
 ---
 
@@ -385,6 +392,70 @@ if 1 <= n_interior_v <= 4:  # aumentar para <=6 se catálogo tem mais colunas
 ```
 
 Rodar `test_all_suppliers.py` após qualquer ajuste para validar cobertura geral.
+
+---
+
+## 14. Alterações Recentes (Junho–Agosto 2026) — Motor AI-First e Autonomia do Cliente
+
+> Este guia ficou sem atualização de 30/04 até 26/08 — quatro meses de
+> evolução real não documentada aqui (estava só em `ARCHITECTURE.md`,
+> `CLAUDE.md` e `IQC_STATUS_ATUAL.md`). Este bloco fecha essa lacuna com os
+> pilares que mudaram a arquitetura de fato. Detalhe fino de cada invariante
+> está em `ARCHITECTURE.md` (IV-01 a IV-23) — não duplicado aqui.
+
+### 14.1 Motor AI-First (v23, 09/06/2026)
+Os 14 parsers regex artesanais deixaram de ser o caminho principal.
+**Gemini 2.5 Flash lê o catálogo PDF inteiro** e devolve os produtos
+estruturados; o regex antigo virou **fallback automático** (nunca removido —
+IV-15) se a IA falhar ou o catálogo estiver na blocklist (NIX, GOAL KIDS).
+Ajustar um fornecedor agora é editar 3-4 linhas de prompt em
+`SUPPLIER_HINTS` (`backend/image_extractor/gemini_extractor.py`), não criar
+parser novo. Extração de imagem segue o mesmo princípio: Gemini escolhe qual
+imagem é o produto (AI Picker), memory-safe — manda 1 página anotada, extrai
+só a escolhida (nunca todas as candidatas — foi o que causou OOM no v21).
+
+### 14.2 Fornecedor configura sozinho (PRs #97-#111, ago/2026)
+Motivação: cada fornecedor com layout próprio exigia o Gabriel editar
+código + PR + deploy. Agora o cliente configura pela própria interface:
+- **Mapeamento de colunas** (`suppliers.column_mappings`, tela `/regras` +
+  painel de conferência no upload): qual coluna da planilha alimenta qual
+  campo do sistema. Vence a detecção automática; aliases originais seguem
+  como fallback se o fornecedor renomear a coluna.
+- **Particularidades do catálogo PDF em texto livre**
+  (`suppliers.extraction_rules`): o cliente escreve com as próprias
+  palavras o que aquele fornecedor tem de diferente; `compile_client_rules`
+  (Gemini) traduz em regras objetivas ANTES de entrar no prompt — evita
+  "devaneio" e trunca por thinking-tokens (mesma classe de bug do Phase 0,
+  resolvida com `_gen_text_json`). Cache por hash do texto.
+- **Configuração na hora do upload** (26/08/2026, PR #111): as duas coisas
+  acima agora também aparecem direto em `/conversao` — fornecedor novo
+  ("+ Novo") ou existente — sem precisar de uma segunda visita a
+  Fornecedores/Regras de Colunas depois de subir o catálogo. Fornecedor
+  novo ainda não tem `id` no banco: mapeamento/particularidades ficam em
+  memória e entram junto no mesmo `INSERT` que o cria.
+
+### 14.3 Infraestrutura de backend dual + failover (14/08–25/08/2026)
+O backend Python roda em **dois ambientes ao mesmo tempo**:
+servidor próprio (mais forte, mas atrás de um Cloudflare Quick Tunnel sem
+SLA — a URL muda a cada reinício) e Render Starter (mais fraco, porém
+estável, puxa do `main` sozinho). `src/core/backendResolver.ts` testa o
+primário via `/health` e cai no outro na MESMA requisição se não responder
+— zero downtime perceptível pelo cliente, sem depender de nenhum monitor
+externo. `VITE_BACKEND_URL_PRIMARY` existe para travar manualmente qual dos
+dois é o primário durante transições (ex.: servidor próprio com código
+desatualizado) sem que o watcher do túnel reverta a escolha sozinho.
+
+**Causa raiz de instabilidade encontrada (25/08):** um serviço systemd pode
+aparecer "active" sem que a conexão real do túnel exista (rede não pronta
+no boot) — só reinicia o serviço, não crasha sozinho. Diagnóstico sempre
+externo (curl real), nunca só pelo status do systemd.
+
+### 14.4 Painel do servidor e observabilidade
+`/admin/dashboard` (backend) + `/servidor` (frontend, redireciona pro
+backend ativo): CPU/RAM em tempo real, pico por conversão, jobs recentes.
+Histórico de conversões (`/historico`) registra servidor usado, tempo de
+processamento e se a extração foi via Gemini ou regex — auditoria sem
+precisar pedir print pro cliente.
 
 ---
 
