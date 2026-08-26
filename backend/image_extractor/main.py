@@ -81,7 +81,7 @@ app.add_middleware(
 )
 
 
-SERVICE_VERSION = "2026.06.30-v51-universal-promo-price"  # incrementa a cada deploy de feature
+SERVICE_VERSION = "2026.08.25-v52-supplier-rules-column-mapping"  # incrementa a cada deploy de feature
 
 
 @app.get("/health")
