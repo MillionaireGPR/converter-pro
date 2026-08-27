@@ -412,7 +412,22 @@ def _descartar_selos(page_imgs: List[Dict], tag: str) -> List[Dict]:
     if max_area <= 0:
         return page_imgs
 
+    # sobrepostas: selo propriamente dito (≥80% contido numa foto maior) — some
+    # a imagem some da disputa mesmo sendo grande o bastante pra passar no
+    # filtro de tamanho (ex.: faixa "OFERTA" atravessando a foto inteira).
+    #
+    # toca_imagem_maior: sinal mais fraco — a imagem apenas ENCOSTA em alguma
+    # foto maior, mesmo sem os 80% de contenção. É o que separa selo de
+    # variante de cor: um selo/tag sempre fica SOBRE a foto real (é assim que
+    # o Josef descreveu o bug da GIRA — "sobrepostas à foto"). Uma miniatura
+    # de variante de cor (VAESO: 4 cores, 1 foto grande + 3 pequenas — 25/08)
+    # fica no SEU PRÓPRIO espaço da página, sem tocar a foto grande. Por isso
+    # o filtro de tamanho (item 1) só vale se a imagem pequena também tocar
+    # alguma maior — sem essa condição as 3 fotos legítimas de cor eram
+    # descartadas junto com os selos de verdade, e a VAESO saía com 102 de
+    # 162 produtos sem imagem.
     sobrepostas = set()
+    toca_imagem_maior = set()
     for i, selo in enumerate(page_imgs):
         r_selo, a_selo = selo.get("rect"), selo.get("area", 0)
         if r_selo is None or a_selo <= 0:
@@ -421,12 +436,13 @@ def _descartar_selos(page_imgs: List[Dict], tag: str) -> List[Dict]:
             if i == j:
                 continue
             r_foto, a_foto = foto.get("rect"), foto.get("area", 0)
-            if r_foto is None or a_foto <= 0:
-                continue
-            if a_selo > a_foto * BADGE_MAX_REL_AREA:
+            if r_foto is None or a_foto <= 0 or a_foto <= a_selo:
                 continue
             inter = r_selo & r_foto
             if inter.is_empty:
+                continue
+            toca_imagem_maior.add(i)
+            if a_selo > a_foto * BADGE_MAX_REL_AREA:
                 continue
             if (inter.width * inter.height) >= a_selo * BADGE_CONTAINMENT:
                 sobrepostas.add(i)
@@ -434,7 +450,8 @@ def _descartar_selos(page_imgs: List[Dict], tag: str) -> List[Dict]:
 
     mantidas = [
         img for i, img in enumerate(page_imgs)
-        if img.get("area", 0) >= max_area * BADGE_AREA_RATIO and i not in sobrepostas
+        if i not in sobrepostas
+        and (img.get("area", 0) >= max_area * BADGE_AREA_RATIO or i not in toca_imagem_maior)
     ]
 
     if not mantidas:
