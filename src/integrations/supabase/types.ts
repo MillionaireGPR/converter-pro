@@ -131,6 +131,14 @@ export type Database = {
           item_count: number | null
           status: string | null
           created_at: string | null
+          server_used: string | null
+          duration_sec: number | null
+          parser_used: string | null
+          used_ai: boolean | null
+          images_found: number | null
+          images_matched: number | null
+          images_failed: number | null
+          failure_report: string | null
         }
         Insert: {
           id?: string
@@ -142,6 +150,14 @@ export type Database = {
           item_count?: number | null
           status?: string | null
           created_at?: string | null
+          server_used?: string | null
+          duration_sec?: number | null
+          parser_used?: string | null
+          used_ai?: boolean | null
+          images_found?: number | null
+          images_matched?: number | null
+          images_failed?: number | null
+          failure_report?: string | null
         }
         Update: {
           id?: string
@@ -153,6 +169,14 @@ export type Database = {
           item_count?: number | null
           status?: string | null
           created_at?: string | null
+          server_used?: string | null
+          duration_sec?: number | null
+          parser_used?: string | null
+          used_ai?: boolean | null
+          images_found?: number | null
+          images_matched?: number | null
+          images_failed?: number | null
+          failure_report?: string | null
         }
       }
     }

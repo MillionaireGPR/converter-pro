@@ -499,6 +499,68 @@ visível) — não é bug, é a proteção contra linha vazia/desalinhada
 funcionando. Teste manual com SKU real (ex: `AB1234`) pra não confundir
 "catálogo zerado" com "dado de teste ruim".
 
+## 16. Histórico estruturado + relatório de falhas persistido (27/08/2026)
+
+**Problema:** um catálogo (VAESO) apareceu no histórico com 2 conversões
+"render" e 1 "proprio" e o cliente não conseguia saber, só olhando a
+tela, se isso indicava o servidor próprio instável ou o failover
+funcionando normalmente — porque servidor/tempo/parser viviam embutidos
+como TEXTO dentro de `conversion_type` (ex: `"Importação (pdf-ai-first ·
+IA) · 4:54 · proprio"`, ver `## 14` sobre o resolvedor de backend),
+sem coluna própria pra filtrar/badge. Pior: o relatório de SKUs sem
+imagem (`unmatchedSkusDetails`) só existia na MEMÓRIA do navegador que
+rodou a conversão — baixável na hora, mas perdido ao trocar de máquina
+ou fechar a aba, então "confirmar que o fix de imagem funcionou" exigia
+reprocessar o catálogo de novo em vez de olhar o histórico.
+
+**Solução — migration `20260827_historico_estruturado.sql`:** adiciona em
+`export_history` colunas reais: `server_used`, `duration_sec`,
+`parser_used`, `used_ai`, `images_found`, `images_matched`,
+`images_failed`, `failure_report` (texto do relatório, mesmo formato do
+`.txt` baixável — SKU/página/motivo, sempre poucos KB mesmo em catálogos
+grandes). `tipoConversao` continua existindo como resumo legível, mas as
+colunas novas são a fonte de verdade pra filtro/badge/diagnóstico.
+
+- **`HistoricoContext.registrarHistorico`** grava os campos estruturados
+  junto com o `insert` de sempre. **Fallback deliberado:** se o insert com
+  as colunas novas falhar (schema antigo — migration ainda não aplicada
+  nesse projeto Supabase), refaz automaticamente só com as colunas
+  legadas, pra não quebrar o registro de histórico inteiro enquanto o SQL
+  não é rodado manualmente no painel do Supabase (ver
+  `HistoricoContext.estruturado.test.tsx`, cenário que trava exatamente
+  esse fallback).
+- **`Historico.tsx`** ganhou colunas "Servidor" (badge verde=próprio,
+  laranja=render/reserva — bater o olho numa fileira de laranja já indica
+  queda recorrente do servidor próprio) e "Imagens"
+  (`associadas/encontradas`, com aviso quando há falhas), mais um botão
+  "Falhas (N)" que baixa `failure_report` DIRETO DO BANCO — funciona de
+  qualquer máquina, ao contrário do botão equivalente na tela de
+  Conversão (que só existe enquanto o job está na memória daquele
+  navegador). Linhas com falha de imagem ou status de erro ganham borda
+  de alerta pra achar problema no histórico sem abrir cada linha.
+- **Conversões completas continuam só no localStorage** (produtos +
+  imagens em base64) — grandes demais pra Supabase, e o histórico nunca
+  foi pensado pra virar arquivo morto.
+
+**Retenção (14 dias):** a migration cria `limpar_historico_antigo()` +
+tenta agendar via `pg_cron` (silencioso se a extensão não estiver
+habilitada nesse projeto — não quebra a migration). Fallback GARANTIDO,
+que não depende de plano/extensão: `HistoricoContext` roda a limpeza
+oportunisticamente toda vez que a tela de Histórico carrega, no máximo
+1x/dia por navegador (`localStorage` guarda o timestamp da última
+limpeza). Catálogo é atualizado toda semana pelo fornecedor — 14 dias
+cobre "essa semana vs a passada" sem acumular histórico indefinidamente.
+
+**Pendência de infraestrutura:** a migration foi criada mas NÃO aplicada
+— a CLI do Supabase usada nesta sessão não tem acesso ao projeto
+`xjznoddaifyxlfbivmau` (`supabase link` retorna "account does not have
+the necessary privileges"). Alguém com acesso ao painel do Supabase
+precisa colar o conteúdo de
+`supabase/migrations/20260827_historico_estruturado.sql` no SQL Editor
+antes que os campos estruturados comecem a ser preenchidos — até lá, o
+fallback acima mantém o histórico funcionando normalmente, só sem os
+badges novos.
+
 ---
 
 **Mantenha este guia atualizado após cada mudança significativa.**

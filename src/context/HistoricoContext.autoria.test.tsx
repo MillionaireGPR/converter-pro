@@ -37,6 +37,7 @@ vi.mock('../integrations/supabase/client', () => ({
   supabase: {
     from: () => ({
       select: () => ({ order: () => Promise.resolve({ data: [] }) }),
+      delete: () => ({ lt: () => Promise.resolve({ data: null, error: null }) }),
       insert: (payload: any) => {
         insertSpy(payload);
         return {

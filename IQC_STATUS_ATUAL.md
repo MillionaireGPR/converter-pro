@@ -1,7 +1,7 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 27/08/2026
+**Atualizado em:** 27/08/2026 (tarde)
 
 ---
 
@@ -29,6 +29,40 @@ Meta: cliente configura sozinho, uma vez por fornecedor.
 
 **Restrição comercial:** plano de R$259/mês (inclui IA + servidor). Não pode
 estourar esse escopo e precisa estar 100% funcional.
+
+---
+
+## ⚠️ ENTREGUE em 27/08 (tarde) — histórico estruturado (PR pendente de merge)
+
+Gabriel notou 2 conversões "render" da VAESO no histórico e perguntou se o
+servidor próprio estava com problema (não estava — as 2 aconteceram durante
+a queda de túnel do meio-dia, o failover funcionou certo; a 3ª conversão,
+"proprio", rodou ANTES do fix #2 de imagem merger, por isso ainda tinha 17
+falhas). Pra não precisar cruzar timestamps de PR com histórico toda vez
+que isso acontecer de novo, o histórico virou estruturado:
+
+- Colunas novas em `export_history`: servidor usado, duração, parser,
+  contagem de imagens (encontradas/associadas/falhas) e o **relatório de
+  falhas completo**, persistido como texto — antes só existia na memória
+  do navegador que processou, agora dá pra conferir de qualquer máquina.
+- Tela `/historico` ganhou badge de servidor (laranja = caiu no Render,
+  bater o olho já mostra padrão de instabilidade), contagem de imagens e
+  botão de baixar o relatório de falhas direto do banco.
+- Retenção automática de 14 dias (catálogo é semanal, histórico não deve
+  virar arquivo morto) — `pg_cron` se disponível, fallback garantido via
+  limpeza oportunista no frontend.
+- Ver `guide.md #16` pro detalhamento técnico e o fallback de schema
+  (insert com colunas novas falha graciosamente pro schema antigo
+  enquanto a migration não for aplicada).
+
+**⚠️ AÇÃO PENDENTE (ver "Pendências abertas" #5):** a migration SQL foi
+criada mas **não aplicada** — precisa rodar manualmente no SQL Editor do
+Supabase (CLI desta sessão não tinha acesso ao projeto). Código já
+degrada com segurança sem ela (testado), então não é bloqueante pro
+merge, mas os badges novos só aparecem depois do SQL rodar.
+
+412 → 420 testes (8 novos cobrindo o insert estruturado, o fallback de
+schema antigo e a renderização dos badges), `npm run verify` OK.
 
 ---
 
@@ -346,6 +380,14 @@ motivo pra não apagar `VITE_BACKEND_URL_PRIMARY` antes de atualizá-lo.
    `no_img_in_col` 27 + `no_plausible_match` 15). O padrão matriz cor×tamanho
    foi resolvido, esses são casos diferentes.
 4. **Gemini:** Google exige migração para pré-pago (prazo deles)
+5. **CRÍTICO — rodar a migration `20260827_historico_estruturado.sql` no
+   Supabase.** Código já está pronto e mergeado (PR abaixo), mas quem tem
+   acesso ao painel do Supabase (projeto `xjznoddaifyxlfbivmau`) precisa
+   colar o SQL de `supabase/migrations/20260827_historico_estruturado.sql`
+   no SQL Editor e rodar uma vez. A CLI usada nesta sessão não tinha
+   permissão nesse projeto (`supabase link` → "account does not have the
+   necessary privileges"). Até isso rodar, o histórico funciona igual a
+   antes (fallback automático), só sem os badges de servidor/imagens.
 
 ---
 

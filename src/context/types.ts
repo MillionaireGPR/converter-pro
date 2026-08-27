@@ -88,6 +88,17 @@ export interface OperacaoHistorico {
   produtos?: Produto[];
   imagens?: { id: string; url: string; nome: string }[];
   headersDetectados?: string[];
+  /** proprio | render | local | outro — qual backend processou (ver backendLabel()). */
+  servidor?: string;
+  duracaoSeg?: number;
+  parserUsado?: string;
+  usouIA?: boolean;
+  imagensEncontradas?: number;
+  imagensAssociadas?: number;
+  imagensFalhas?: number;
+  /** Texto do relatório de SKUs sem imagem, persistido no banco (mesmo
+   *  conteúdo do .txt baixável) — permite conferir de qualquer máquina. */
+  relatorioFalhas?: string;
 }
 
 export interface ConversaoSalva {
