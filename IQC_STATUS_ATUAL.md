@@ -1,7 +1,7 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 25/08/2026
+**Atualizado em:** 27/08/2026
 
 ---
 
@@ -29,6 +29,37 @@ Meta: cliente configura sozinho, uma vez por fornecedor.
 
 **Restrição comercial:** plano de R$259/mês (inclui IA + servidor). Não pode
 estourar esse escopo e precisa estar 100% funcional.
+
+---
+
+## ✅ ENTREGUE em 26-27/08 — configuração completa direto no upload (PRs #111-#113)
+
+Gabriel testou o painel ao vivo com o cliente em mente e achou o gap real:
+mapeamento de colunas e particularidades de IA existiam, mas só eram
+editáveis numa segunda visita (Fornecedores ou Regras de Colunas), depois
+de já ter subido o catálogo.
+
+- **PR #111**: `/conversao` ganhou os campos de configuração no próprio
+  upload — fornecedor novo ("+ Novo") ou existente, PDF (particularidades
+  em texto livre) ou planilha (mapeamento de colunas via
+  `ConferenciaColunas`, já existente desde 19/08). Fornecedor novo ainda
+  não tem `id` no banco — mapeamento fica em memória e entra junto no
+  `INSERT` que o cria.
+- **PR #113**: dois ajustes pedidos pelo Gabriel testando ao vivo — (1)
+  legenda explicando qual lado é o campo do Mercos e qual é a coluna da
+  planilha do cliente; (2) tabelas de preço extra (VAESO: V50/V250/V.R.)
+  agora configuráveis no mesmo painel, com botão que revela um slot por
+  vez (até as 19 do modelo Mercos), sem precisar mais ir em Regras de
+  Colunas à parte.
+
+Os dois caminhos (PDF e planilha, fornecedor novo e existente) foram
+testados ao vivo contra o Supabase real (escrita + confirmação direto no
+banco, dado de teste removido depois). 412 testes, IV-01..23 OK em cada PR.
+
+**Achado no caminho (não é bug):** a lista de `/fornecedores` reordena
+entre carregamentos e o dropdown de `/conversao` é alfabético — dá
+impressão de "regra sumiu" quando na real é outro fornecedor sendo
+editado. Vale considerar padronizar a ordem numa próxima passada de UX.
 
 ---
 
