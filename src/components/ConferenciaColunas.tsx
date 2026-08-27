@@ -6,11 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, Plus } from "lucide-react";
 import { getAdapterById, getGenericAdapter } from "@/core/supplierRules/registry";
 import {
   previewColumnMapping,
   precoTabelaKey,
+  tabelaPrecoColumns,
+  MAX_TABELAS_PRECO,
   type ColumnMappings,
   type LinhaPrevia,
 } from "@/core/supplierRules/applyColumnMappings";
@@ -53,6 +55,10 @@ export function ConferenciaColunas({ file, supplierId, supplierName, mappings, o
   const [linhas, setLinhas] = useState<LinhaPrevia[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
+  // Quantos slots de "tabela de preço extra" mostrar. Começa com o que já
+  // está mapeado; o botão "+ tabela de preço" revela o próximo (26/08/2026
+  // — antes só dava pra adicionar entrando em Regras de Colunas separado).
+  const [qtdTabelasPreco, setQtdTabelasPreco] = useState(0);
 
   useEffect(() => {
     let cancelado = false;
@@ -66,6 +72,7 @@ export function ConferenciaColunas({ file, supplierId, supplierName, mappings, o
           getAdapterById(supplierId || supplierName || "") || getGenericAdapter();
         setHeaders(hs);
         setLinhas(previewColumnMapping(hs, adapter, mappings));
+        setQtdTabelasPreco(tabelaPrecoColumns(mappings).length);
       })
       .catch(e => {
         if (!cancelado) setErro(e?.message || "Não foi possível ler as colunas.");
@@ -79,9 +86,16 @@ export function ConferenciaColunas({ file, supplierId, supplierName, mappings, o
 
   const trocar = (campo: string, coluna: string) => {
     const valor = coluna === "__nenhuma__" ? "" : coluna;
-    setLinhas(prev =>
-      prev.map(l => (l.campo === campo ? { ...l, coluna: valor, origem: valor ? "cliente" : "nenhuma" } : l))
-    );
+    setLinhas(prev => {
+      if (prev.some(l => l.campo === campo)) {
+        return prev.map(l => (l.campo === campo ? { ...l, coluna: valor, origem: valor ? "cliente" : "nenhuma" } : l));
+      }
+      // Slot de tabela de preço revelado agora pelo botão "+" — ainda não
+      // existia em `linhas` (só nasce ali quando já vinha mapeado).
+      const m = campo.match(/^precoTabela(\d+)$/);
+      const rotulo = m ? `Tabela de preço extra #${m[1]}` : campo;
+      return [...prev, { campo, rotulo, coluna: valor, origem: valor ? "cliente" as const : "nenhuma" as const }];
+    });
     onSalvar(campo, valor);
   };
 
@@ -100,6 +114,41 @@ export function ConferenciaColunas({ file, supplierId, supplierName, mappings, o
   if (erro || headers.length === 0) return null;
 
   const semColuna = linhas.filter(l => l.origem === "nenhuma" && !l.campo.startsWith("precoTabela"));
+  const linhasPrincipais = linhas.filter(l => !l.campo.startsWith("precoTabela"));
+
+  // Slots de tabela de preço a mostrar: os já mapeados + os revelados pelo
+  // botão "+ tabela de preço". Não dá pra deduzir sozinho que "V50" é uma
+  // tabela de 50% — por isso nunca aparecem automaticamente, só quando o
+  // cliente pede.
+  const linhasTabelaPreco: LinhaPrevia[] = Array.from({ length: qtdTabelasPreco }, (_, i) => {
+    const campo = precoTabelaKey(i + 1);
+    return linhas.find(l => l.campo === campo) || {
+      campo, rotulo: `Tabela de preço extra #${i + 1}`, coluna: "", origem: "nenhuma" as const,
+    };
+  });
+
+  const renderLinha = (l: LinhaPrevia) => (
+    <div key={l.campo} className="flex items-center gap-2">
+      <span className="text-xs w-40 shrink-0 text-muted-foreground">{l.rotulo}</span>
+      <Select
+        value={l.coluna || "__nenhuma__"}
+        onValueChange={v => trocar(l.campo, v)}
+      >
+        <SelectTrigger className="h-8 text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__nenhuma__">— não usar —</SelectItem>
+          {headers.map(h => (
+            <SelectItem key={h} value={h}>{h}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {l.origem === "cliente" && (
+        <Badge variant="secondary" className="text-[10px] shrink-0">definido</Badge>
+      )}
+    </div>
+  );
 
   return (
     <Card className="mt-4">
@@ -108,7 +157,9 @@ export function ConferenciaColunas({ file, supplierId, supplierName, mappings, o
           <div>
             <h3 className="font-semibold text-sm">Confira de onde vem cada informação</h3>
             <p className="text-xs text-muted-foreground">
-              O ajuste fica salvo neste fornecedor — você só precisa fazer uma vez.
+              À esquerda, o campo do Mercos. À direita, a coluna da SUA planilha
+              que alimenta esse campo. O ajuste fica salvo neste fornecedor —
+              você só precisa fazer uma vez.
             </p>
           </div>
           {semColuna.length > 0 ? (
@@ -124,36 +175,30 @@ export function ConferenciaColunas({ file, supplierId, supplierName, mappings, o
         </div>
 
         <div className="grid gap-2 sm:grid-cols-2">
-          {linhas.map(l => (
-            <div key={l.campo} className="flex items-center gap-2">
-              <span className="text-xs w-40 shrink-0 text-muted-foreground">{l.rotulo}</span>
-              <Select
-                value={l.coluna || "__nenhuma__"}
-                onValueChange={v => trocar(l.campo, v)}
-              >
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__nenhuma__">— não usar —</SelectItem>
-                  {headers.map(h => (
-                    <SelectItem key={h} value={h}>{h}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {l.origem === "cliente" && (
-                <Badge variant="secondary" className="text-[10px] shrink-0">definido</Badge>
-              )}
-            </div>
-          ))}
+          {linhasPrincipais.map(renderLinha)}
         </div>
 
-        {/* Tabelas de preço extra não têm como ser deduzidas (não dá pra saber
-            que "V50" é a tabela de 50%), então só aparecem se configuradas. */}
-        {!linhas.some(l => l.campo === precoTabelaKey(1)) && (
-          <p className="text-[11px] text-muted-foreground">
-            Tem mais de uma tabela de preço? Configure em <strong>Regras de Colunas</strong>.
-          </p>
+        {(linhasTabelaPreco.length > 0 || qtdTabelasPreco < MAX_TABELAS_PRECO) && (
+          <div className="pt-2 border-t space-y-2">
+            <span className="text-xs font-medium text-muted-foreground">Tabelas de preço extra</span>
+            {linhasTabelaPreco.length > 0 && (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {linhasTabelaPreco.map(renderLinha)}
+              </div>
+            )}
+            {qtdTabelasPreco < MAX_TABELAS_PRECO && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs gap-1"
+                onClick={() => setQtdTabelasPreco(n => n + 1)}
+              >
+                <Plus className="h-3 w-3" />
+                Tabela de preço {qtdTabelasPreco + 1}
+              </Button>
+            )}
+          </div>
         )}
       </CardContent>
     </Card>
