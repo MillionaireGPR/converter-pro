@@ -30,6 +30,39 @@ import { getBackendUrl, backendLabel } from "@/core/backendResolver";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 
+/**
+ * Um catálogo em processamento (ou já processado) na fila de conversões
+ * simultâneas (27/08/2026). Cada job roda de forma independente — o backend
+ * já enfileira sozinho além do limite real (`MAX_CONCURRENT_JOBS`: 3 no
+ * servidor do Wesley, 1 no fallback Render), então o frontend só precisa
+ * disparar cada job e acompanhar seu próprio estado, sem gerenciar fila
+ * aqui também.
+ */
+interface CatalogJob {
+  id: string;
+  file: File;
+  // Snapshot do formulário no momento em que o job foi criado — o
+  // formulário é limpo e reaproveitado pro próximo catálogo logo em
+  // seguida, então o job não pode depender do estado do componente.
+  fornecedorSelecionado: string; // id do fornecedor ou 'novo'
+  novoFornecedorNome: string;
+  regrasNovoFornecedor: string;
+  mappingsNovoFornecedor: ColumnMappings;
+  tipoArquivo: string; // só decorativo (ícone do painel)
+  fornecedorNome: string;
+  status: 'processing' | 'done' | 'error';
+  progress: number;
+  progressMsg: string;
+  startedAt: number;
+  elapsedSec: number;
+  finalElapsedSec: number | null;
+  errorMsg: string | null;
+  resultData: { total: number; ok: number; pendentes: number; erros: number; duplicados: number; fileName: string; fornNome: string } | null;
+  importMeta: ImportMetadata | null;
+  imageResult: ResultadoExtracaoImagens | null;
+  isZipping: boolean;
+}
+
 export default function ConversaoProdutos() {
   const { setDetectedHeaders } = useApp();
   const { fornecedores, salvarMapeamentoColuna, updateFornecedor } = useFornecedores();
@@ -46,39 +79,32 @@ export default function ConversaoProdutos() {
   const [mappingsNovoFornecedor, setMappingsNovoFornecedor] = useState<ColumnMappings>({});
   const [regrasExistente, setRegrasExistente] = useState("");
   const [salvandoRegrasExistente, setSalvandoRegrasExistente] = useState(false);
-  const [state, setState] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
-  const [progress, setProgress] = useState(0);
-  const [progressMsg, setProgressMsg] = useState("");
-  const [elapsedSec, setElapsedSec] = useState(0);
-  const [finalElapsedSec, setFinalElapsedSec] = useState<number | null>(null); // tempo total fixado ao concluir
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const startTimeRef = useRef<number>(0);
   const [dragOver, setDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [resultData, setResultData] = useState<{ total: number; ok: number; pendentes: number; erros: number; duplicados: number; fileName: string; fornNome: string } | null>(null);
-  const [importMeta, setImportMeta] = useState<ImportMetadata | null>(null);
-  const [imageResult, setImageResult] = useState<ResultadoExtracaoImagens | null>(null);
-  const [isZipping, setIsZipping] = useState(false);
   const [reabrindoId, setReabrindoId] = useState<string | null>(null);
+  // Zipping do botão "baixar imagens" no HISTÓRICO — ação isolada (um item
+  // por vez), não faz parte da fila de jobs de conversão.
+  const [isZippingHistorico, setIsZippingHistorico] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
-  // Timer de progresso — conta segundos enquanto está processando.
-  // Usa Date.now() (não soma de +1) p/ ser preciso mesmo se a aba ficar em 2º plano.
-  useEffect(() => {
-    if (state === 'processing') {
-      setElapsedSec(0);
-      setFinalElapsedSec(null);
-      startTimeRef.current = Date.now();
-      timerRef.current = setInterval(
-        () => setElapsedSec(Math.floor((Date.now() - startTimeRef.current) / 1000)),
-        500
-      );
-    } else {
-      if (timerRef.current) clearInterval(timerRef.current);
-    }
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [state]);
+  // Fila de conversões em paralelo (27/08/2026) — pedido do Gabriel após
+  // reunião com o Josef: o servidor do Wesley processa até 3 catálogos ao
+  // mesmo tempo (autoajustado por RAM, ver MAX_CONCURRENT_JOBS em main.py);
+  // no fallback do Render, só 1. Cada catálogo vira um "job" independente
+  // com seu próprio progresso/resultado — o formulário acima serve pra
+  // CONFIGURAR o próximo job antes de adicioná-lo à fila.
+  //
+  // Um único array de estado (não N state hooks) porque o número de
+  // catálogos é dinâmico — não dá pra ter useState fixo por catálogo.
+  const [jobs, setJobs] = useState<CatalogJob[]>([]);
+  // Handles de setInterval por job, fora do React state (senão cada patch
+  // teria que carregar o handle junto pra não perdê-lo).
+  const jobTimersRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+
+  const atualizarJob = (id: string, patch: Partial<CatalogJob>) => {
+    setJobs(prev => prev.map(j => (j.id === id ? { ...j, ...patch } : j)));
+  };
 
   // Ao trocar de fornecedor selecionado (existente), recarrega as
   // particularidades já salvas dele — senão a caixa mostraria o texto do
@@ -163,7 +189,7 @@ export default function ConversaoProdutos() {
       });
     });
 
-    setIsZipping(true);
+    setIsZippingHistorico(true);
     try {
       const JSZip = (await import('jszip')).default;
       const { saveAs } = await import('file-saver');
@@ -259,7 +285,7 @@ export default function ConversaoProdutos() {
       console.error("[DownloadImagens] Erro ao criar ZIP:", error);
       toast.error("Erro ao gerar arquivo ZIP: " + (error instanceof Error ? error.message : 'Erro desconhecido'));
     } finally {
-      setIsZipping(false);
+      setIsZippingHistorico(false);
     }
   };
 
@@ -285,25 +311,31 @@ export default function ConversaoProdutos() {
     }
   };
 
-  const handleProcessar = async () => {
-    if (!fornecedor) { toast.error("Selecione um fornecedor"); return; }
-    if (!selectedFile) { toast.error("Selecione um arquivo para processar"); return; }
-
-    setState('processing');
-    setProgress(5);
-    setProgressMsg('Preparando arquivo...');
-    setImportMeta(null);
+  /**
+   * Processa UM catálogo isoladamente. Recebe tudo que precisa via `job` (não
+   * lê `selectedFile`/`fornecedor`/etc. do componente) — o formulário pode já
+   * ter sido reaproveitado pro PRÓXIMO catálogo enquanto este ainda roda.
+   *
+   * Não é `await`ado por quem chama: dispara e o job se atualiza sozinho via
+   * `atualizarJob`. Vários jobs chamam isso ao mesmo tempo sem conflito
+   * porque cada um só mexe na sua própria entrada em `jobs`.
+   */
+  const processarCatalogo = async (job: CatalogJob) => {
+    const file = job.file;
+    jobTimersRef.current[job.id] = setInterval(() => {
+      atualizarJob(job.id, { elapsedSec: Math.floor((Date.now() - job.startedAt) / 1000) });
+    }, 500);
 
     try {
-      let supplier = fornecedores.find(f => f.id === fornecedor);
+      let supplier = fornecedores.find(f => f.id === job.fornecedorSelecionado);
       let supplierId = supplier?.id;
 
-      if (fornecedor === 'novo') {
-        if (!novoFornecedor.trim()) throw new Error("Digite o nome do novo fornecedor");
+      if (job.fornecedorSelecionado === 'novo') {
+        if (!job.novoFornecedorNome.trim()) throw new Error("Digite o nome do novo fornecedor");
         supplier = {
           id: '', // Será preenchido após o insert
-          nome: novoFornecedor.trim(),
-          tipoArquivo: detectFileType(selectedFile.name) === 'pdf' ? 'PDF' : 'Excel',
+          nome: job.novoFornecedorNome.trim(),
+          tipoArquivo: detectFileType(file.name) === 'pdf' ? 'PDF' : 'Excel',
           frequencia: "Eventual",
           descontoPadrao: 0,
           ipiPadrao: 0,
@@ -321,8 +353,8 @@ export default function ConversaoProdutos() {
           // Particularidades/mapeamento escritos na tela de upload (26/08/2026)
           // pro fornecedor novo já nascer configurado, sem precisar de uma
           // segunda visita a Fornecedores ou Regras de Colunas.
-          ...(regrasNovoFornecedor.trim() ? { extraction_rules: regrasNovoFornecedor.trim() } : {}),
-          ...(Object.keys(mappingsNovoFornecedor).length ? { column_mappings: mappingsNovoFornecedor } : {}),
+          ...(job.regrasNovoFornecedor.trim() ? { extraction_rules: job.regrasNovoFornecedor.trim() } : {}),
+          ...(Object.keys(job.mappingsNovoFornecedor).length ? { column_mappings: job.mappingsNovoFornecedor } : {}),
         }).select().single();
 
         if (insertError) {
@@ -348,28 +380,31 @@ export default function ConversaoProdutos() {
       if (!supplier) throw new Error("Fornecedor não encontrado");
       if (!supplierId) throw new Error("ID do fornecedor não pôde ser resolvido para o relacionamento no banco.");
 
-      setProgress(15);
-      setProgressMsg(`Lendo e processando planilha de ${supplier.nome}...`);
+      atualizarJob(job.id, { progress: 15, progressMsg: `Lendo e processando planilha de ${supplier.nome}...`, fornecedorNome: supplier.nome });
       console.log(`[Pipeline] Processando com pipeline V2 para: ${supplier.nome}`);
 
-      // Progresso animado durante o processamento completo (pipeline + imagens)
+      // Progresso animado durante o processamento completo (pipeline + imagens).
+      // OBS: é uma estimativa de tempo, não o status real do backend — se o
+      // catálogo cair na fila do servidor (além do limite de jobs simultâneos),
+      // essa barra sobe até ~90% e para ali até o resultado chegar de verdade.
       const imgProgressInterval = setInterval(() => {
-        setProgress(prev => {
-          if (prev >= 90) { clearInterval(imgProgressInterval); return prev; }
-          // Atualiza mensagem conforme o progresso avança
-          if (prev === 40) setProgressMsg('Produtos identificados. Normalizando dados...');
-          if (prev === 55) setProgressMsg('Dados salvos. Extraindo imagens do PDF...');
-          if (prev === 70) setProgressMsg('Extraindo imagens (pode levar alguns minutos)...');
-          if (prev === 80) setProgressMsg('Finalizando extração de imagens...');
-          return prev + 1;
-        });
+        setJobs(prev => prev.map(j => {
+          if (j.id !== job.id) return j;
+          if (j.progress >= 90) return j;
+          let msg = j.progressMsg;
+          if (j.progress === 40) msg = 'Produtos identificados. Normalizando dados...';
+          if (j.progress === 55) msg = 'Dados salvos. Extraindo imagens do PDF...';
+          if (j.progress === 70) msg = 'Extraindo imagens (pode levar alguns minutos)...';
+          if (j.progress === 80) msg = 'Finalizando extração de imagens...';
+          return { ...j, progress: j.progress + 1, progressMsg: msg };
+        }));
       }, 2000); // Avança 1% a cada 2 segundos
 
       // Pipeline V2: aceita File diretamente (Excel, CSV ou PDF).
       // columnMappings = colunas que o CLIENTE configurou pra este fornecedor
       // na tela de Regras; vencem a detecção automática (só afeta planilhas).
       const result = await processarArquivoV2(
-        selectedFile,
+        file,
         supplierId,
         supplier.nome,
         supplier.columnMappings,
@@ -377,21 +412,18 @@ export default function ConversaoProdutos() {
       );
       clearInterval(imgProgressInterval);
 
-      setProgress(92);
-      setProgressMsg(`${result.produtos.length} produtos processados! Salvando...`);
-      setImportMeta(result.metadata);
+      atualizarJob(job.id, { progress: 92, progressMsg: `${result.produtos.length} produtos processados! Salvando...` });
       setDetectedHeaders(result.metadata.camposDetectados);
 
       console.log(`[Pipeline] ${result.produtos.length} produtos. Parser: ${result.metadata.parserUsado}`);
 
       // Salva no contexto e no Supabase
       await addProdutosNormalizados(result.produtos);
-      setProgress(95);
-      setProgressMsg('Salvando no histórico...');
+      atualizarJob(job.id, { progress: 95, progressMsg: 'Salvando no histórico...' });
 
       // Preparar dados da conversão para salvar no histórico
       // Se backend retornou ZIP, salva a URL. Senão, salva imagens individuais
-      const imagensParaSalvar = result.imageResults?.zipUrl 
+      const imagensParaSalvar = result.imageResults?.zipUrl
         ? [{ id: 'zip', nome: 'imagens_extraidas.zip', url: result.imageResults.zipUrl, temporaryId: 'zip' }]
         : result.imageResults?.images?.map(img => ({
             id: img.sku,
@@ -416,7 +448,7 @@ export default function ConversaoProdutos() {
         // Verificar se tem imagem vinculada a este SKU
         const imagemDoSku = imagensPorSku.get(p.codigo);
         const temImagemVinculada = !!imagemDoSku;
-        
+
         return {
           id: p.codigo || p.codigoOriginal,
           fornecedor: supplier.nome,
@@ -441,7 +473,7 @@ export default function ConversaoProdutos() {
 
       // Salvar conversão completa no histórico (localStorage)
       await salvarConversao({
-        arquivo: selectedFile.name,
+        arquivo: file.name,
         fornecedor: supplier.nome,
         produtos: produtosParaSalvar,
         imagens: imagensParaSalvar,
@@ -454,7 +486,7 @@ export default function ConversaoProdutos() {
       // Tempo total da conversão (preciso, via timestamp de início) — fixado
       // ANTES do histórico para registrar o tempo no log (monitoramento de
       // tempos/erros conforme o cliente usa a ferramenta).
-      const totalSec = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000));
+      const totalSec = Math.max(1, Math.round((Date.now() - job.startedAt) / 1000));
 
       // Registra histórico no banco. Tudo embutido no tipoConversao (sem
       // migração de schema), no formato:
@@ -466,7 +498,7 @@ export default function ConversaoProdutos() {
       const usouIA = /ai-first|gemini/i.test(result.metadata.parserUsado || '');
       const servidor = backendLabel(await getBackendUrl());
       await registrarHistorico({
-        arquivo: selectedFile.name,
+        arquivo: file.name,
         fornecedor: supplier.nome,
         usuario: 'Admin',
         data: new Date().toISOString().replace('T', ' ').substring(0, 16),
@@ -477,27 +509,23 @@ export default function ConversaoProdutos() {
         status: 'concluído',
       });
 
-      setResultData({
-        total: result.stats.total,
-        ok: result.stats.validados,
-        pendentes: result.stats.pendentes,
-        erros: result.stats.erros,
-        duplicados: result.stats.duplicados,
-        fileName: selectedFile.name,
-        fornNome: result.metadata.fornecedorDetectado || result.metadata.fornecedorConfirmado || supplier.nome
+      atualizarJob(job.id, {
+        progress: 100,
+        status: 'done',
+        finalElapsedSec: totalSec,
+        importMeta: result.metadata,
+        imageResult: result.imageResults || null,
+        resultData: {
+          total: result.stats.total,
+          ok: result.stats.validados,
+          pendentes: result.stats.pendentes,
+          erros: result.stats.erros,
+          duplicados: result.stats.duplicados,
+          fileName: file.name,
+          fornNome: result.metadata.fornecedorDetectado || result.metadata.fornecedorConfirmado || supplier.nome,
+        },
       });
-
-      if (result.imageResults) {
-        setImageResult(result.imageResults);
-      } else {
-        setImageResult(null);
-      }
-
-      setProgress(100);
-      // Fixa o tempo total da conversão (já calculado acima p/ o histórico)
-      setFinalElapsedSec(totalSec);
-      setState('done');
-      toast.success(`Sucesso! ${result.stats.total} itens em ${fmtTempo(totalSec)}.`);
+      toast.success(`Sucesso! ${result.stats.total} itens em ${fmtTempo(totalSec)} (${file.name}).`);
 
       // Extração de imagens pode falhar silenciosamente (ex: servidor reiniciou
       // por OOM em catálogo grande) sem que o pipeline de texto/preço seja afetado.
@@ -508,16 +536,63 @@ export default function ConversaoProdutos() {
         const info = classifyImageError(imgErros[0]);
         // Detalhe técnico só no console (pra suporte), com o mesmo código:
         console.error(`[${info.code}] Falha na extração de imagens:`, info.technical);
-        toast.warning(`${info.friendly} (código ${info.code})`, { duration: 10000 });
+        toast.warning(`${info.friendly} (código ${info.code}) — ${file.name}`, { duration: 10000 });
       }
     } catch (error: any) {
       console.error(error);
-      setState('error');
-      toast.error(error.message || "Erro ao processar arquivo");
+      atualizarJob(job.id, { status: 'error', errorMsg: error.message || "Erro ao processar arquivo" });
+      toast.error(`${error.message || "Erro ao processar arquivo"} (${file.name})`);
+    } finally {
+      const handle = jobTimersRef.current[job.id];
+      if (handle) { clearInterval(handle); delete jobTimersRef.current[job.id]; }
     }
   };
 
-  const resultStats = resultData;
+  /** Adiciona o catálogo configurado no formulário à fila e limpa o
+   *  formulário — o cliente já pode configurar o PRÓXIMO enquanto este roda.
+   *  Não faz `await` do processamento: só dispara. */
+  const handleProcessar = () => {
+    if (!fornecedor) { toast.error("Selecione um fornecedor"); return; }
+    if (!selectedFile) { toast.error("Selecione um arquivo para processar"); return; }
+    if (fornecedor === 'novo' && !novoFornecedor.trim()) { toast.error("Digite o nome do novo fornecedor"); return; }
+
+    const fornecedorExistente = fornecedores.find(f => f.id === fornecedor);
+    const job: CatalogJob = {
+      id: crypto.randomUUID(),
+      file: selectedFile,
+      fornecedorSelecionado: fornecedor,
+      novoFornecedorNome: novoFornecedor,
+      regrasNovoFornecedor,
+      mappingsNovoFornecedor,
+      fornecedorNome: fornecedor === 'novo' ? novoFornecedor.trim() : (fornecedorExistente?.nome || ''),
+      tipoArquivo,
+      status: 'processing',
+      progress: 5,
+      progressMsg: 'Preparando arquivo...',
+      startedAt: Date.now(),
+      elapsedSec: 0,
+      finalElapsedSec: null,
+      errorMsg: null,
+      resultData: null,
+      importMeta: null,
+      imageResult: null,
+      isZipping: false,
+    };
+    setJobs(prev => [job, ...prev]);
+    void processarCatalogo(job);
+
+    // Limpa o formulário pro próximo catálogo — cada job já levou consigo
+    // tudo que precisava (file, fornecedor, regras, mappings).
+    setSelectedFile(null);
+    setFornecedor("");
+    setNovoFornecedor("");
+    setTipoArquivo("");
+    setRegrasNovoFornecedor("");
+    setMappingsNovoFornecedor({});
+    setRegrasExistente("");
+  };
+
+  const atualizarJobZipping = (id: string, zipping: boolean) => atualizarJob(id, { isZipping: zipping });
 
   return (
     <div className="space-y-4">
@@ -686,275 +761,202 @@ export default function ConversaoProdutos() {
               <Button
                 className="w-full gradient-primary text-primary-foreground font-semibold h-9 shadow-sm"
                 onClick={handleProcessar}
-                disabled={state === 'processing'}
               >
-                {state === 'processing' ? (
-                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Processando...</>
-                ) : (
-                  <>Processar Arquivo</>
-                )}
+                Processar Arquivo
               </Button>
-
-              {/* Info do processamento (quando done) - compacto */}
-              {state === 'done' && resultData && (
-                <div className="mt-3 pt-3 border-t border-dashed space-y-1.5 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Arquivo:</span>
-                    <span className="font-medium truncate max-w-[200px]" title={resultData.fileName}>{resultData.fileName}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Fornecedor:</span>
-                    <span className="font-medium">{resultData.fornNome}</span>
-                  </div>
-                  {importMeta && (
-                    <>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Parser:</span>
-                        <Badge variant="outline" className="text-[10px] h-4 px-1">{importMeta.parserUsado}</Badge>
-                      </div>
-                      {importMeta.fornecedorDetectado && importMeta.fornecedorDetectado !== resultData.fornNome && (
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Detectado:</span>
-                          <span className="text-muted-foreground italic">{importMeta.fornecedorDetectado}</span>
-                        </div>
-                      )}
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Confiança:</span>
-                        <span className="font-medium">{importMeta.confiancaExtracao}%</span>
-                      </div>
-                    </>
-                  )}
-                  <div className="flex justify-between items-center pt-1">
-                    <span className="text-muted-foreground">Status:</span>
-                    <StatusBadge status="processado" />
-                  </div>
-                </div>
+              {jobs.some(j => j.status === 'processing') && (
+                <p className="text-[10px] text-muted-foreground text-center pt-1">
+                  {jobs.filter(j => j.status === 'processing').length} catálogo(s) em andamento — pode configurar e
+                  adicionar outro agora mesmo. O servidor processa até 3 ao mesmo tempo (1 no modo de reserva).
+                </p>
               )}
             </CardContent>
           </Card>
         </div>
 
-        {/* Coluna da Direita: Ações e Resumo (quando processing/done/error) ou Histórico (quando idle) */}
+        {/* Coluna da Direita: fila de conversões (um painel por catálogo) + Histórico */}
         <div className="xl:col-span-5 space-y-3">
-          {/* Processing State */}
-          {state === 'processing' && (
-            <Card className="shadow-card overflow-hidden border-l-2 border-l-primary">
-              <CardContent className="p-4 space-y-3">
-                {/* CRONÔMETRO ao vivo — sinal honesto de evolução em tempo real */}
-                <div className="text-center">
-                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">Convertendo — tempo decorrido</div>
-                  <div className="flex items-center justify-center gap-2">
-                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                    <span className="text-3xl font-extrabold text-primary tabular-nums">{fmtTempo(elapsedSec)}</span>
-                  </div>
-                </div>
-                {/* Barra INDETERMINADA (sweep) — mostra atividade sem fingir % */}
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                  <div className="h-full w-1/3 rounded-full bg-primary animate-[indeterminate_1.4s_ease-in-out_infinite]" />
-                </div>
-                {/* Etapa atual (real) */}
-                <div className="flex items-center gap-1.5 text-xs text-foreground font-medium rounded p-2 bg-muted/50">
-                  <FileIcon className="h-3 w-3 text-primary shrink-0" />
-                  <span>{progressMsg || 'Preparando...'}</span>
-                </div>
-                <p className="text-[10px] text-muted-foreground text-center">
-                  Catálogos grandes podem levar alguns minutos — pode usar outras abas, o processo roda em segundo plano.
-                </p>
+          {jobs.map(job => (
+            <Card
+              key={job.id}
+              className={`shadow-card overflow-hidden border-l-4 ${
+                job.status === 'error' ? 'border-l-destructive' : job.status === 'done' ? 'border-l-success' : 'border-l-primary'
+              }`}
+            >
+              <CardHeader className="py-2 px-3">
+                <CardTitle className="text-xs font-semibold flex items-center gap-2">
+                  {job.tipoArquivo === 'pdf' ? <FileText className="h-3.5 w-3.5 text-destructive shrink-0" /> : <FileSpreadsheet className="h-3.5 w-3.5 text-success shrink-0" />}
+                  <span className="truncate" title={job.file.name}>{job.file.name}</span>
+                  <span className="ml-auto shrink-0">
+                    {job.status === 'processing' && <Badge variant="outline" className="text-[10px] gap-1"><Loader2 className="h-2.5 w-2.5 animate-spin" /> {fmtTempo(job.elapsedSec)}</Badge>}
+                    {job.status === 'done' && <Badge variant="outline" className="text-[10px] bg-success/10 text-success border-success/20">concluído</Badge>}
+                    {job.status === 'error' && <Badge variant="outline" className="text-[10px] bg-destructive/10 text-destructive border-destructive/20">erro</Badge>}
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-3 pb-3 space-y-2">
+                <p className="text-[11px] text-muted-foreground">{job.fornecedorNome || 'fornecedor novo'}</p>
+
+                {job.status === 'processing' && (
+                  <>
+                    {/* Barra INDETERMINADA (sweep) — mostra atividade sem fingir % real do
+                        backend (ver comentário em processarCatalogo sobre a fila). */}
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                      <div className="h-full w-1/3 rounded-full bg-primary animate-[indeterminate_1.4s_ease-in-out_infinite]" />
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs text-foreground font-medium rounded p-2 bg-muted/50">
+                      <FileIcon className="h-3 w-3 text-primary shrink-0" />
+                      <span>{job.progressMsg || 'Preparando...'}</span>
+                    </div>
+                  </>
+                )}
+
+                {job.status === 'error' && (
+                  <p className="text-xs text-destructive">{job.errorMsg}</p>
+                )}
+
+                {job.status === 'done' && job.resultData && (
+                  <>
+                    <div className="text-center py-1">
+                      <div className="text-3xl font-extrabold text-success mb-0.5">{job.resultData.total}</div>
+                      <div className="flex items-center justify-center gap-1 text-xs">
+                        <CheckCircle className="h-3.5 w-3.5 text-success" />
+                        <span className="text-success font-medium">{job.resultData.ok} importados com sucesso</span>
+                      </div>
+                      {job.finalElapsedSec != null && (
+                        <div className="flex items-center justify-center gap-1 text-xs mt-1 text-muted-foreground">
+                          <Clock className="h-3.5 w-3.5" />
+                          <span>Convertido em <span className="font-semibold text-foreground tabular-nums">{fmtTempo(job.finalElapsedSec)}</span></span>
+                        </div>
+                      )}
+                      {(job.resultData.pendentes > 0 || job.resultData.erros > 0 || job.resultData.duplicados > 0) && (
+                        <div className="flex flex-wrap justify-center gap-2 mt-2 pt-2 border-t border-dashed">
+                          {job.resultData.pendentes > 0 && (
+                            <Badge variant="outline" className="text-[10px] bg-warning/10 text-warning border-warning/20">{job.resultData.pendentes} pendentes</Badge>
+                          )}
+                          {job.resultData.erros > 0 && (
+                            <Badge variant="outline" className="text-[10px] bg-destructive/10 text-destructive border-destructive/20">{job.resultData.erros} erros</Badge>
+                          )}
+                          {job.resultData.duplicados > 0 && (
+                            <Badge variant="outline" className="text-[10px] bg-muted">{job.resultData.duplicados} duplicados</Badge>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {job.importMeta && (
+                      <div className="text-[11px] text-muted-foreground flex items-center justify-between border-t border-dashed pt-1.5">
+                        <span>Parser:</span>
+                        <Badge variant="outline" className="text-[10px] h-4 px-1">{job.importMeta.parserUsado}</Badge>
+                      </div>
+                    )}
+
+                    {/* Imagens extraídas (se houver) */}
+                    {job.imageResult && (job.imageResult.zipUrl || job.imageResult.totalImagesFound > 0 || (job.imageResult.errors && job.imageResult.errors.length > 0)) && (
+                      <div className={`text-xs rounded-lg border p-2 space-y-1 ${job.imageResult.errors?.length ? 'border-destructive/30 bg-destructive/5' : 'border-primary/20 bg-primary/5'}`}>
+                        {job.imageResult.errors && job.imageResult.errors.length > 0 ? (
+                          (() => {
+                            const info = classifyImageError(job.imageResult!.errors![0]);
+                            return (
+                              <div className="space-y-1">
+                                <div className="text-foreground">{info.friendly}</div>
+                                <div className="flex items-center gap-1.5 text-muted-foreground">
+                                  <span>Código de suporte:</span>
+                                  <code className="px-1.5 py-0.5 rounded bg-muted font-mono text-[10px] font-semibold text-foreground">{info.code}</code>
+                                </div>
+                              </div>
+                            );
+                          })()
+                        ) : (
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground flex items-center gap-1"><ImageIcon className="h-3 w-3" /> Imagens:</span>
+                            <span className="font-medium">
+                              {job.imageResult.zipUrl ? 'ZIP pronto' : `${job.imageResult.totalImagesFound} extraídas`}
+                              {(job.imageResult.totalImagesMatched || 0) > 0 && ` · ${job.imageResult.totalImagesMatched} associadas`}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Botões de Ação */}
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <Button size="sm" className="h-8 gradient-success text-primary-foreground font-semibold shadow-sm" onClick={() => navigate('/exportacoes')}>
+                        <ArrowRight className="h-3.5 w-3.5 mr-1" /> Exportar
+                      </Button>
+                      {job.imageResult?.zipUrl && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 border-primary/30 bg-primary/5 hover:bg-primary/10"
+                          onClick={() => {
+                            window.open(job.imageResult!.zipUrl, '_blank');
+                            toast.success("Download do ZIP iniciado!");
+                          }}
+                        >
+                          <Download className="h-3.5 w-3.5 mr-1" /> Baixar ZIP
+                        </Button>
+                      )}
+                      {job.imageResult?.unmatchedSkusDetails && job.imageResult.unmatchedSkusDetails.length > 0 && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 border-warning/50 bg-warning/10 text-warning hover:bg-warning/20 hover:text-warning"
+                          onClick={() => {
+                            const linhas = ["RELATÓRIO DE SKUS SEM IMAGEM\n============================"];
+                            job.imageResult!.unmatchedSkusDetails!.forEach(det => {
+                              linhas.push(`SKU: ${det.sku} | Página: ${det.page} | Motivo: ${det.reason}`);
+                            });
+                            const blob = new Blob([linhas.join('\n')], { type: "text/plain;charset=utf-8" });
+                            saveAs(blob, `relatorio_falhas_match_${job.file.name}.txt`);
+                            toast.success("Relatório de falhas baixado!");
+                          }}
+                        >
+                          <Download className="h-3.5 w-3.5 mr-1" /> Falhas ({job.imageResult.unmatchedSkusDetails.length})
+                        </Button>
+                      )}
+                      {!job.imageResult?.zipUrl && job.imageResult?.images && job.imageResult.images.length > 0 && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 border-primary/30 bg-primary/5 hover:bg-primary/10"
+                          onClick={async () => {
+                            atualizarJobZipping(job.id, true);
+                            try {
+                              const zip = new JSZip();
+                              let adicionadas = 0;
+                              for (const img of job.imageResult!.images) {
+                                if (img.imageDataUrl && img.sku) {
+                                  const base64Data = img.imageDataUrl.split(',')[1];
+                                  if (base64Data) { zip.file(`${img.sku}.jpg`, base64Data, { base64: true }); adicionadas++; }
+                                }
+                              }
+                              if (adicionadas === 0) { toast.error("Nenhuma imagem para download"); return; }
+                              const zipBlob = await zip.generateAsync({ type: 'blob' });
+                              const baseName = job.file.name.replace(/\.(xlsx|xls|csv)$/i, '');
+                              saveAs(zipBlob, `${baseName}_imagens.zip`);
+                              toast.success(`${adicionadas} imagens baixadas!`);
+                            } catch (error) {
+                              toast.error("Erro ao gerar ZIP: " + (error instanceof Error ? error.message : 'Erro'));
+                            } finally {
+                              atualizarJobZipping(job.id, false);
+                            }
+                          }}
+                          disabled={job.isZipping}
+                        >
+                          <Download className="h-3.5 w-3.5 mr-1" />
+                          {job.isZipping ? 'Gerando...' : `Baixar ${job.imageResult.totalImagesMatched} Imagens`}
+                        </Button>
+                      )}
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
-          )}
+          ))}
 
-          {/* Done State - Total + Métricas + Ações */}
-          {state === 'done' && resultData && resultStats && (
-            <>
-              {/* Card do Total Destacado */}
-              <Card className="shadow-card overflow-hidden border-l-4 border-l-success bg-gradient-to-br from-success/5 to-background">
-                <CardContent className="p-4 text-center">
-                  <div className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Produtos Encontrados</div>
-                  <div className="text-4xl font-extrabold text-success mb-1">{resultStats.total}</div>
-                  <div className="flex items-center justify-center gap-1 text-xs">
-                    <CheckCircle className="h-3.5 w-3.5 text-success" />
-                    <span className="text-success font-medium">{resultStats.ok} importados com sucesso</span>
-                  </div>
-                  {finalElapsedSec != null && (
-                    <div className="flex items-center justify-center gap-1 text-xs mt-1.5 text-muted-foreground">
-                      <Clock className="h-3.5 w-3.5" />
-                      <span>Convertido em <span className="font-semibold text-foreground tabular-nums">{fmtTempo(finalElapsedSec)}</span></span>
-                    </div>
-                  )}
-                  {(resultStats.pendentes > 0 || resultStats.erros > 0 || resultData.duplicados > 0) && (
-                    <div className="flex flex-wrap justify-center gap-2 mt-2 pt-2 border-t border-dashed">
-                      {resultStats.pendentes > 0 && (
-                        <Badge variant="outline" className="text-[10px] bg-warning/10 text-warning border-warning/20">{resultStats.pendentes} pendentes</Badge>
-                      )}
-                      {resultStats.erros > 0 && (
-                        <Badge variant="outline" className="text-[10px] bg-destructive/10 text-destructive border-destructive/20">{resultStats.erros} erros</Badge>
-                      )}
-                      {resultData.duplicados > 0 && (
-                        <Badge variant="outline" className="text-[10px] bg-muted">{resultData.duplicados} duplicados</Badge>
-                      )}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Métricas de Imagens (se houver) */}
-              {/* Mostra tanto para ZIP (PDF/backend) quanto para imagens individuais (Excel).
-                  Também mostra quando houve ERRO (0 imagens + falha real) — antes essa condição
-                  escondia o card inteiro, mascarando falhas de servidor como se fosse sucesso. */}
-              {imageResult && (imageResult.zipUrl || imageResult.totalImagesFound > 0 || (imageResult.errors && imageResult.errors.length > 0)) && (
-                <Card className={`shadow-card overflow-hidden border-l-4 ${imageResult.errors?.length ? 'border-l-destructive' : 'border-l-primary'}`}>
-                  <CardHeader className="py-2 px-3">
-                    <CardTitle className="text-xs font-semibold flex items-center gap-2">
-                      <ImageIcon className="h-3.5 w-3.5 text-primary" />
-                      {imageResult.errors?.length ? 'Imagens — Falhou' : (imageResult.zipUrl ? 'Imagens (Backend)' : 'Imagens Extraídas')}
-                      {!imageResult.errors?.length && (
-                        <Badge variant="outline" className="ml-auto text-[10px] bg-primary/10">
-                          {imageResult.totalImagesMatched || 0} associadas
-                        </Badge>
-                      )}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="px-3 pb-3 space-y-1.5">
-                    {imageResult.errors && imageResult.errors.length > 0 ? (
-                      (() => {
-                        const info = classifyImageError(imageResult.errors[0]);
-                        return (
-                          <div className="text-xs space-y-1.5">
-                            <div className="text-foreground">{info.friendly}</div>
-                            <div className="flex items-center gap-1.5 text-muted-foreground">
-                              <span>Se precisar de suporte, informe o código:</span>
-                              <code className="px-1.5 py-0.5 rounded bg-muted font-mono text-[11px] font-semibold text-foreground">{info.code}</code>
-                            </div>
-                          </div>
-                        );
-                      })()
-                    ) : (
-                      <>
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground">Total extraído:</span>
-                          <span className="font-medium">{imageResult.totalImagesFound || 0}</span>
-                        </div>
-                        {imageResult.totalImagesUnmatched > 0 && (
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-muted-foreground">Não associadas:</span>
-                            <span className="font-medium text-warning">{imageResult.totalImagesUnmatched}</span>
-                          </div>
-                        )}
-                        {/* Mostrar avisos se houver */}
-                        {imageResult.warnings && imageResult.warnings.length > 0 && (
-                          <div className="text-xs text-muted-foreground mt-1">
-                            {imageResult.warnings.map((w, i) => (
-                              <div key={i} className="truncate" title={w}>• {w}</div>
-                            ))}
-                          </div>
-                        )}
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground">Formato:</span>
-                          <span className="font-medium text-success">
-                            {imageResult.zipUrl ? 'ZIP pronto' : `${imageResult.totalImagesFound} imagens individuais`}
-                          </span>
-                        </div>
-                      </>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Botões de Ação */}
-              <div className="grid grid-cols-2 gap-2">
-                <Button size="sm" className="h-9 gradient-success text-primary-foreground font-semibold shadow-sm" onClick={() => navigate('/exportacoes')}>
-                  <ArrowRight className="h-3.5 w-3.5 mr-1" /> Exportar
-                </Button>
-                {/* Botão ZIP (PDF/backend) */}
-                {imageResult?.zipUrl && (
-                  <Button 
-                    size="sm" 
-                    variant="outline"
-                    className="h-9 border-primary/30 bg-primary/5 hover:bg-primary/10"
-                    onClick={() => {
-                      window.open(imageResult.zipUrl, '_blank');
-                      toast.success("Download do ZIP iniciado!");
-                    }}
-                  >
-                    <Download className="h-3.5 w-3.5 mr-1" />
-                    Baixar ZIP
-                  </Button>
-                )}
-                
-                {/* NOVO: Botão Baixar Relatório (Sem Match) */}
-                {imageResult?.unmatchedSkusDetails && imageResult.unmatchedSkusDetails.length > 0 && (
-                  <Button 
-                    size="sm" 
-                    variant="outline"
-                    className="h-9 border-warning/50 bg-warning/10 text-warning hover:bg-warning/20 hover:text-warning"
-                    onClick={() => {
-                      const linhas = ["RELATÓRIO DE SKUS SEM IMAGEM\n============================"];
-                      imageResult.unmatchedSkusDetails!.forEach(det => {
-                        linhas.push(`SKU: ${det.sku} | Página: ${det.page} | Motivo: ${det.reason}`);
-                      });
-                      const blob = new Blob([linhas.join('\n')], { type: "text/plain;charset=utf-8" });
-                      saveAs(blob, `relatorio_falhas_match.txt`);
-                      toast.success("Relatório de falhas baixado!");
-                    }}
-                  >
-                    <Download className="h-3.5 w-3.5 mr-1" />
-                    Relatório Falhas ({imageResult.unmatchedSkusDetails.length})
-                  </Button>
-                )}
-                {/* ✅ NOVO: Botão Download Imagens (Excel - imagens individuais) */}
-                {!imageResult?.zipUrl && imageResult?.images && imageResult.images.length > 0 && (
-                  <Button 
-                    size="sm" 
-                    variant="outline"
-                    className="h-9 border-primary/30 bg-primary/5 hover:bg-primary/10"
-                    onClick={async () => {
-                      setIsZipping(true);
-                      try {
-                        const zip = new JSZip();
-                        let adicionadas = 0;
-                        
-                        for (const img of imageResult.images) {
-                          if (img.imageDataUrl && img.sku) {
-                            const base64Data = img.imageDataUrl.split(',')[1];
-                            if (base64Data) {
-                              zip.file(`${img.sku}.jpg`, base64Data, { base64: true });
-                              adicionadas++;
-                            }
-                          }
-                        }
-                        
-                        if (adicionadas === 0) {
-                          toast.error("Nenhuma imagem para download");
-                          return;
-                        }
-                        
-                        const zipBlob = await zip.generateAsync({ type: 'blob' });
-                        const fileName = selectedFile?.name || 'planilha';
-                        saveAs(zipBlob, `${fileName.replace('.xlsx', '').replace('.xls', '').replace('.csv', '')}_imagens.zip`);
-                        toast.success(`${adicionadas} imagens baixadas!`);
-                      } catch (error) {
-                        toast.error("Erro ao gerar ZIP: " + (error instanceof Error ? error.message : 'Erro'));
-                      } finally {
-                        setIsZipping(false);
-                      }
-                    }}
-                    disabled={isZipping}
-                  >
-                    <Download className="h-3.5 w-3.5 mr-1" />
-                    {isZipping ? 'Gerando...' : `Baixar ${imageResult.totalImagesMatched} Imagens`}
-                  </Button>
-                )}
-              </div>
-              
-              <Button variant="outline" size="sm" className="w-full h-8 border-primary/20 text-primary hover:bg-primary/5" onClick={() => navigate('/base')}>
-                Ver Base Completa <ArrowRight className="h-3.5 w-3.5 ml-1" />
-              </Button>
-            </>
-          )}
-
-        {/* Histórico (apenas quando idle) */}
-        {state === 'idle' && ultimasConversoes.length > 0 && (
+        {/* Histórico */}
+        {ultimasConversoes.length > 0 && (
           <Card className="shadow-card border-l-2 border-l-primary">
             <CardHeader className="py-3 px-4">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
@@ -1032,7 +1034,7 @@ export default function ConversaoProdutos() {
                             size="icon"
                             className="h-7 w-7 text-primary"
                             onClick={() => handleBaixarImagensHistorico(conversao.id, conversao.arquivo)}
-                            disabled={isZipping}
+                            disabled={isZippingHistorico}
                             title={`Baixar ${conversao.imagens.length} imagens`}
                           >
                             <Image className="h-3 w-3" />
