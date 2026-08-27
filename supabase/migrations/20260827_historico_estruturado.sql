@@ -58,17 +58,17 @@ AS $$
   WHERE created_at < (timezone('utc'::text, now()) - interval '14 days');
 $$;
 
-DO $$
+DO $do_cron$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
     PERFORM cron.schedule(
       'limpar_historico_antigo_diario',
       '0 6 * * *', -- todo dia às 06:00 UTC
-      $$SELECT public.limpar_historico_antigo();$$
+      $cron$SELECT public.limpar_historico_antigo();$cron$
     );
   END IF;
 EXCEPTION WHEN OTHERS THEN
   -- pg_cron existe mas o schedule falhou (ex: já agendado, sem permissão) —
   -- não deve derrubar a migration; o fallback do frontend cobre o caso.
   NULL;
-END $$;
+END $do_cron$;
