@@ -5,6 +5,8 @@ import { useAuth } from "./AuthContext";
 import { OperacaoHistorico, ConversaoSalva, ArquivoProcessado } from "./types"; // I'll create a types.ts
 
 const CONVERSOES_STORAGE_KEY = 'converter-pro-conversoes-salvas';
+const LIMPEZA_HISTORICO_KEY = 'converter-pro-limpeza-historico-em';
+const RETENCAO_DIAS = 14;
 
 interface HistoricoContextType {
   historico: OperacaoHistorico[];
@@ -47,6 +49,23 @@ export function HistoricoProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     async function load() {
+      // Limpeza de retenção (14 dias) ANTES de ler — oportunista, no máximo
+      // 1x/dia por navegador (fallback do pg_cron da migration 20260827,
+      // que só roda se a extensão estiver habilitada no projeto Supabase).
+      // O histórico é painel de diagnóstico recente, não arquivo morto: os
+      // fornecedores atualizam catálogo toda semana, então 14 dias já cobre
+      // "essa semana vs a passada" sem acumular indefinidamente.
+      try {
+        const ultimaLimpeza = Number(localStorage.getItem(LIMPEZA_HISTORICO_KEY) || 0);
+        if (Date.now() - ultimaLimpeza > 24 * 60 * 60 * 1000) {
+          const corte = new Date(Date.now() - RETENCAO_DIAS * 24 * 60 * 60 * 1000).toISOString();
+          await (supabase.from('export_history') as any).delete().lt('created_at', corte);
+          localStorage.setItem(LIMPEZA_HISTORICO_KEY, String(Date.now()));
+        }
+      } catch (e) {
+        console.warn('Erro na limpeza de retenção do histórico', e);
+      }
+
       try {
         const { data: histData } = await (supabase.from('export_history') as any).select('*').order('date', { ascending: false });
         if (histData) {
@@ -60,13 +79,21 @@ export function HistoricoProvider({ children }: { children: ReactNode }) {
             data: h.date,
             tipoConversao: h.conversion_type || '',
             qtdItens: h.item_count || 0,
-            status: h.status as any
+            status: h.status as any,
+            servidor: h.server_used || undefined,
+            duracaoSeg: h.duration_sec ?? undefined,
+            parserUsado: h.parser_used || undefined,
+            usouIA: h.used_ai ?? undefined,
+            imagensEncontradas: h.images_found ?? undefined,
+            imagensAssociadas: h.images_matched ?? undefined,
+            imagensFalhas: h.images_failed ?? undefined,
+            relatorioFalhas: h.failure_report || undefined,
           })));
         }
       } catch (e) {
         console.warn('Erro ao carregar histórico', e);
       }
-      
+
       try {
         const salvos = localStorage.getItem(CONVERSOES_STORAGE_KEY);
         if (salvos) setConversoesSalvas(JSON.parse(salvos));
@@ -78,31 +105,62 @@ export function HistoricoProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const registrarHistorico = useCallback(async (op: Omit<OperacaoHistorico, 'id'>) => {
-    try {
-      // O autor SEMPRE vem da sessão logada. O op.usuario das telas é ignorado
-      // de propósito (era 'Admin' fixo em todas elas) — só serve de fallback
-      // se por algum motivo não houver sessão.
-      const autor = usuarioLogado || op.usuario || 'Desconhecido';
-      const { data, error } = await (supabase.from('export_history') as any).insert({
-        filename: op.arquivo,
-        supplier_name: op.fornecedor,
-        user_name: autor,
-        conversion_type: op.tipoConversao,
-        item_count: op.qtdItens,
-        status: op.status
-      }).select().single();
+    // O autor SEMPRE vem da sessão logada. O op.usuario das telas é ignorado
+    // de propósito (era 'Admin' fixo em todas elas) — só serve de fallback
+    // se por algum motivo não houver sessão.
+    const autor = usuarioLogado || op.usuario || 'Desconhecido';
+    const base = {
+      filename: op.arquivo,
+      supplier_name: op.fornecedor,
+      user_name: autor,
+      conversion_type: op.tipoConversao,
+      item_count: op.qtdItens,
+      status: op.status,
+    };
+    const colunasEstruturadas = {
+      server_used: op.servidor ?? null,
+      duration_sec: op.duracaoSeg ?? null,
+      parser_used: op.parserUsado ?? null,
+      used_ai: op.usouIA ?? null,
+      images_found: op.imagensEncontradas ?? null,
+      images_matched: op.imagensAssociadas ?? null,
+      images_failed: op.imagensFalhas ?? null,
+      failure_report: op.relatorioFalhas ?? null,
+    };
 
-      if (error) throw error;
-      if (data) {
-        setHistorico(prev => [{
-          id: data.id, arquivo: data.filename, fornecedor: data.supplier_name || '-',
-          usuario: data.user_name || autor, data: data.date || now(),
-          tipoConversao: data.conversion_type || '', qtdItens: data.item_count || 0, status: data.status as any
-        }, ...prev]);
-      }
-    } catch (e) {
-      console.error(e);
+    let { data, error } = await (supabase.from('export_history') as any)
+      .insert({ ...base, ...colunasEstruturadas })
+      .select()
+      .single();
+
+    // Fallback: se a migration 20260827 (colunas estruturadas) ainda não
+    // rodou nesse projeto Supabase, o insert acima falha com "column does
+    // not exist" — tenta de novo só com as colunas antigas pra não quebrar
+    // o registro de histórico enquanto a SQL não é aplicada manualmente.
+    if (error) {
+      console.warn('Insert com colunas estruturadas falhou, tentando sem elas:', error.message);
+      ({ data, error } = await (supabase.from('export_history') as any).insert(base).select().single());
+    }
+
+    if (error) {
+      console.error(error);
       toast.error("Erro ao salvar histórico.");
+      return;
+    }
+    if (data) {
+      setHistorico(prev => [{
+        id: data.id, arquivo: data.filename, fornecedor: data.supplier_name || '-',
+        usuario: data.user_name || autor, data: data.date || now(),
+        tipoConversao: data.conversion_type || '', qtdItens: data.item_count || 0, status: data.status as any,
+        servidor: data.server_used || undefined,
+        duracaoSeg: data.duration_sec ?? undefined,
+        parserUsado: data.parser_used || undefined,
+        usouIA: data.used_ai ?? undefined,
+        imagensEncontradas: data.images_found ?? undefined,
+        imagensAssociadas: data.images_matched ?? undefined,
+        imagensFalhas: data.images_failed ?? undefined,
+        relatorioFalhas: data.failure_report || undefined,
+      }, ...prev]);
     }
   }, [usuarioLogado]);
 

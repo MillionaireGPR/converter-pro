@@ -1,11 +1,12 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useHistorico } from "@/context/HistoricoContext";
 import { useProdutos } from "@/context/ProdutosContext";
 import { useApp } from "@/context/AppContext";
-import { History, RotateCcw, Inbox, Download, Trash2, Image } from "lucide-react";
+import { History, RotateCcw, Inbox, Download, Trash2, Image, Server, AlertTriangle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useState } from "react";
@@ -19,6 +20,18 @@ const routeMap: Record<string, string> = {
   'Validação de Produtos': '/base',
   'Aplicação de Desconto': '/descontos',
   'Exportação Excel': '/descontos',
+};
+
+/** Rótulo + cor por servidor — mesmos códigos de `backendLabel()`
+ *  (src/core/backendResolver.ts). "render" em laranja porque é o fallback:
+ *  ver um monte de linhas com essa cor é sinal de queda recorrente do
+ *  servidor próprio, exatamente o tipo de padrão que o histórico devia
+ *  deixar óbvio de bater o olho (27/08/2026). */
+const servidorBadge: Record<string, { label: string; className: string }> = {
+  proprio: { label: 'próprio', className: 'bg-success/10 text-success border-success/20' },
+  render: { label: 'render (reserva)', className: 'bg-warning/10 text-warning border-warning/20' },
+  local: { label: 'local (dev)', className: 'bg-muted text-muted-foreground' },
+  outro: { label: 'outro', className: 'bg-muted text-muted-foreground' },
 };
 
 export default function Historico() {
@@ -79,6 +92,15 @@ export default function Historico() {
     }
   };
 
+  /** Baixa o relatório de falhas gravado no banco (27/08/2026) — funciona de
+   *  qualquer máquina, diferente do botão na tela de Conversão que só existe
+   *  enquanto o job está na memória daquele navegador. */
+  const handleBaixarRelatorioFalhas = (arquivo: string, relatorioFalhas: string) => {
+    const blob = new Blob([relatorioFalhas], { type: "text/plain;charset=utf-8" });
+    saveAs(blob, `relatorio_falhas_match_${arquivo}.txt`);
+    toast.success("Relatório de falhas baixado!");
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -104,6 +126,8 @@ export default function Historico() {
                   <TableHead>Data</TableHead>
                   <TableHead>Tipo</TableHead>
                   <TableHead className="text-right">Itens</TableHead>
+                  <TableHead>Servidor</TableHead>
+                  <TableHead>Imagens</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
@@ -111,40 +135,69 @@ export default function Historico() {
               <TableBody>
                 {historico.map(h => {
                   // Verificar se existe uma conversão salva para esta operação
-                  const conversao = conversoesSalvas.find(c => 
+                  const conversao = conversoesSalvas.find(c =>
                     c.arquivo === h.arquivo && c.fornecedor === h.fornecedor
                   );
                   const temImagens = conversao && conversao.imagens && conversao.imagens.length > 0;
                   const isLoading = conversaoAtiva === conversao?.id;
-                  
+                  const badge = h.servidor ? servidorBadge[h.servidor] : undefined;
+                  const temFalhaImagem = (h.imagensFalhas ?? 0) > 0;
+                  // Marcação visual (pedido do Gabriel, 27/08/2026): linha com
+                  // falha de imagem ou erro geral fica com borda de alerta —
+                  // dá pra bater o olho no histórico e achar o problema sem
+                  // abrir cada linha.
+                  const linhaComProblema = temFalhaImagem || h.status === 'erro';
+
                   return (
-                    <TableRow key={h.id}>
+                    <TableRow key={h.id} className={linhaComProblema ? 'border-l-2 border-l-warning' : undefined}>
                       <TableCell className="text-sm font-medium">{h.arquivo}</TableCell>
                       <TableCell className="text-sm">{h.fornecedor}</TableCell>
                       <TableCell className="text-sm">{h.usuario}</TableCell>
                       <TableCell className="text-sm">{h.data}</TableCell>
                       <TableCell className="text-xs">{h.tipoConversao}</TableCell>
                       <TableCell className="text-right text-sm">{h.qtdItens}</TableCell>
+                      <TableCell>
+                        {badge ? (
+                          <Badge variant="outline" className={`text-[10px] ${badge.className}`}>
+                            <Server className="h-3 w-3 mr-1" />{badge.label}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {h.imagensEncontradas != null ? (
+                          <div className="flex items-center gap-1">
+                            <span className={`text-xs ${temFalhaImagem ? 'text-warning font-medium' : 'text-muted-foreground'}`}>
+                              {h.imagensAssociadas ?? 0}/{h.imagensEncontradas}
+                              {temFalhaImagem && ` (${h.imagensFalhas} falhas)`}
+                            </span>
+                            {temFalhaImagem && <AlertTriangle className="h-3 w-3 text-warning" />}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
                       <TableCell><StatusBadge status={h.status} /></TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
                           {/* Botão Reabrir - sempre disponível */}
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className="text-xs" 
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-xs"
                             onClick={() => handleReabrir(h)}
                             disabled={isLoading}
                           >
-                            <RotateCcw className={`h-3.5 w-3.5 mr-1 ${isLoading ? 'animate-spin' : ''}`} /> 
+                            <RotateCcw className={`h-3.5 w-3.5 mr-1 ${isLoading ? 'animate-spin' : ''}`} />
                             {isLoading ? 'Carregando...' : 'Reabrir'}
                           </Button>
-                          
+
                           {/* Botão Baixar Imagens - apenas se tiver imagens */}
                           {temImagens && (
-                            <Button 
-                              variant="ghost" 
-                              size="sm" 
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               className="text-xs text-primary"
                               onClick={() => conversao && handleBaixarImagens(conversao.id, conversao.arquivo)}
                               disabled={isLoading}
@@ -154,12 +207,27 @@ export default function Historico() {
                               Imagens ({conversao?.imagens?.length})
                             </Button>
                           )}
-                          
+
+                          {/* Botão Baixar Relatório de Falhas - vem do banco,
+                              funciona de qualquer máquina (27/08/2026) */}
+                          {h.relatorioFalhas && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-xs text-warning"
+                              onClick={() => handleBaixarRelatorioFalhas(h.arquivo, h.relatorioFalhas!)}
+                              title={`Baixar relatório de ${h.imagensFalhas} falhas`}
+                            >
+                              <Download className="h-3.5 w-3.5 mr-1" />
+                              Falhas ({h.imagensFalhas})
+                            </Button>
+                          )}
+
                           {/* Botão Excluir - apenas se tiver conversão salva */}
                           {conversao && (
-                            <Button 
-                              variant="ghost" 
-                              size="sm" 
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               className="text-xs text-destructive"
                               onClick={() => handleExcluirConversao(conversao.id)}
                               disabled={isLoading}

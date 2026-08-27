@@ -63,6 +63,16 @@ interface CatalogJob {
   isZipping: boolean;
 }
 
+/** Mesmo formato do .txt baixável no painel — usado tanto no download local
+ *  quanto no texto persistido em `export_history.failure_report` (27/08/2026),
+ *  pra conferir de qualquer máquina quais SKUs ficaram sem imagem numa
+ *  conversão já fechada, sem precisar pedir print pro cliente. */
+function buildRelatorioFalhasTexto(detalhes: { sku: string; page: number; reason: string }[]): string {
+  const linhas = ["RELATÓRIO DE SKUS SEM IMAGEM\n============================"];
+  detalhes.forEach(det => linhas.push(`SKU: ${det.sku} | Página: ${det.page} | Motivo: ${det.reason}`));
+  return linhas.join('\n');
+}
+
 export default function ConversaoProdutos() {
   const { setDetectedHeaders } = useApp();
   const { fornecedores, salvarMapeamentoColuna, updateFornecedor } = useFornecedores();
@@ -497,6 +507,7 @@ export default function ConversaoProdutos() {
       // com quedas do servidor próprio vs fallback no Render).
       const usouIA = /ai-first|gemini/i.test(result.metadata.parserUsado || '');
       const servidor = backendLabel(await getBackendUrl());
+      const unmatchedDetails = result.imageResults?.unmatchedSkusDetails;
       await registrarHistorico({
         arquivo: file.name,
         fornecedor: supplier.nome,
@@ -507,6 +518,18 @@ export default function ConversaoProdutos() {
           ` · ${fmtTempo(totalSec)} · ${servidor}`,
         qtdItens: result.produtos.length,
         status: 'concluído',
+        // Colunas estruturadas (27/08/2026) — mesmos dados de cima, mas
+        // como campos filtráveis/ordenáveis em vez de texto embutido.
+        servidor,
+        duracaoSeg: totalSec,
+        parserUsado: result.metadata.parserUsado,
+        usouIA,
+        imagensEncontradas: result.imageResults?.totalImagesFound,
+        imagensAssociadas: result.imageResults?.totalImagesMatched,
+        imagensFalhas: result.imageResults?.totalImagesUnmatched,
+        relatorioFalhas: unmatchedDetails && unmatchedDetails.length > 0
+          ? buildRelatorioFalhasTexto(unmatchedDetails)
+          : undefined,
       });
 
       atualizarJob(job.id, {
@@ -903,11 +926,8 @@ export default function ConversaoProdutos() {
                           variant="outline"
                           className="h-8 border-warning/50 bg-warning/10 text-warning hover:bg-warning/20 hover:text-warning"
                           onClick={() => {
-                            const linhas = ["RELATÓRIO DE SKUS SEM IMAGEM\n============================"];
-                            job.imageResult!.unmatchedSkusDetails!.forEach(det => {
-                              linhas.push(`SKU: ${det.sku} | Página: ${det.page} | Motivo: ${det.reason}`);
-                            });
-                            const blob = new Blob([linhas.join('\n')], { type: "text/plain;charset=utf-8" });
+                            const texto = buildRelatorioFalhasTexto(job.imageResult!.unmatchedSkusDetails!);
+                            const blob = new Blob([texto], { type: "text/plain;charset=utf-8" });
                             saveAs(blob, `relatorio_falhas_match_${job.file.name}.txt`);
                             toast.success("Relatório de falhas baixado!");
                           }}
