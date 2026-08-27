@@ -459,4 +459,46 @@ precisar pedir print pro cliente.
 
 ---
 
+## 15. Conversão em paralelo — fila de jobs (27/08/2026)
+
+**Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
+vez (estado global único: `selectedFile`/`state`/`progress`/`resultData`)
+para uma **fila de `CatalogJob[]`**, cada um com seu progresso/resultado
+isolado.
+
+- **Por quê:** o backend já limita processamento pesado simultâneo
+  (`MAX_CONCURRENT_JOBS`, autoajustado por RAM — 3 no servidor próprio,
+  1 no fallback Render, ver `## 14.3`) desde 13/08, mas isso era só
+  proteção anti-OOM — o FRONTEND obrigava o cliente a esperar um catálogo
+  terminar antes de configurar o próximo, mesmo o backend tendo folga.
+- **Como:** `handleProcessar` cria um `CatalogJob`, dispara
+  `processarCatalogo(job)` **sem aguardar** (fire-and-forget) e limpa o
+  formulário na hora — o cliente já configura o próximo catálogo com o
+  anterior ainda rodando. `processarCatalogo` é a MESMA lógica de sempre
+  (motor de extração, adapters, backend — nada mudou nesses), só que lê/
+  escreve num job específico em vez de estado singular do componente.
+- **Render:** a coluna de resultado virou uma lista de mini-painéis
+  (`jobs.map(...)`), um por catálogo, cada um com seu próprio cronômetro/
+  progresso/resultado/download de imagens.
+- **Limitação conhecida:** a barra de progresso de cada job continua
+  sendo uma ESTIMATIVA animada (nunca foi o status real do backend, isso
+  já era assim antes) — se um catálogo cair na fila real do servidor
+  (além do limite de 3), a barra sobe até ~90% e espera ali até o
+  resultado chegar, sem indicar "na fila" de verdade. Corrigir isso
+  exigiria expor o `stage` do polling em `aiFirstExtractionApi.ts`
+  (protegido por invariante) — decisão consciente de deixar de fora
+  desse ciclo, escopo maior.
+
+**Achado no caminho, vale saber pra quem for testar manualmente:** o
+pipeline tem um validador anti-linha-fantasma
+(`validateAndFixRows`/`hasCode` em `importPipeline.ts`) que rejeita linhas
+cujo texto não "parece" um código de produto real (regex:
+`[A-Z]{1,4}\d{2,}` ou `\d{4,}` em algum lugar da linha). Um SKU de teste
+tipo `"PAR1-AAA"` é silenciosamente descartado (0 produtos, sem erro
+visível) — não é bug, é a proteção contra linha vazia/desalinhada
+funcionando. Teste manual com SKU real (ex: `AB1234`) pra não confundir
+"catálogo zerado" com "dado de teste ruim".
+
+---
+
 **Mantenha este guia atualizado após cada mudança significativa.**

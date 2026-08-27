@@ -32,6 +32,38 @@ estourar esse escopo e precisa estar 100% funcional.
 
 ---
 
+## ✅ ENTREGUE em 27/08 — conversão em paralelo (PR #115)
+
+Gabriel lembrava de ter combinado processamento simultâneo com o Josef,
+mas nunca tinha existido no frontend — a tela `/conversao` assumia UM
+catálogo por vez (estado global único). Investigação confirmou: só havia
+um limitador no BACKEND (`MAX_CONCURRENT_JOBS`, autoajustado por RAM — 3
+no servidor do Wesley, 1 no fallback Render), criado 13/08 como proteção
+anti-OOM, não como recurso de UX pro cliente. "33 simultâneos" no pedido
+original era erro de digitação — correto é **3**.
+
+Agora cada catálogo é um `CatalogJob` independente, um mini-painel por
+catálogo na tela. `handleProcessar` dispara o processamento SEM esperar e
+limpa o formulário na hora — o cliente configura e adiciona o próximo
+catálogo com o anterior ainda rodando. O motor de extração em si (adapters,
+backend, Gemini) não mudou nada — só a orquestração da página.
+
+**Limitação conhecida, documentada e deixada de propósito:** a barra de
+progresso de cada job é uma estimativa animada (como já era antes), não o
+status real do backend — não mostra "na fila" de verdade se o catálogo
+esperar vaga além do limite de 3. Corrigir isso exigiria tocar
+`aiFirstExtractionApi.ts` (protegido por invariante) — escopo maior,
+fica pra depois.
+
+Validado ao vivo em dev local: 5 catálogos disparados em sequência rápida,
+painéis isolados e corretos. Achado no caminho: dados de teste com SKU
+"fake" (`PAR1-AAA`) batiam 0 produtos — não é bug, é o validador
+anti-linha-fantasma do pipeline rejeitando código que não parece SKU real
+(ver `guide.md #15` pra não confundir isso com regressão numa próxima
+sessão). 412 testes, IV-01..23 OK.
+
+---
+
 ## ✅ ENTREGUE em 26-27/08 — configuração completa direto no upload (PRs #111-#113)
 
 Gabriel testou o painel ao vivo com o cliente em mente e achou o gap real:
