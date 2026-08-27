@@ -539,6 +539,47 @@ def _match_via_grid(
     page_imgs = _descartar_selos(page_imgs, "ColMatch")
 
     # ═══════════════════════════════════════════════════════
+    # FASE 1.6: Legenda logo abaixo da foto grande (VAESO, 27/08/2026)
+    #
+    # Layout: 1 foto grande (variante "principal") + N miniaturas de cor
+    # abaixo dela. A legenda da variante principal fica no VÃO entre o fim
+    # da foto grande e o início das miniaturas. Duas coisas quebravam esse
+    # caso na FASE 4 (por coluna): (1) a foto grande é larga — seu centro X
+    # cai numa coluna DIFERENTE da coluna do SKU, então o casamento normal
+    # por coluna nunca a considera; (2) o fallback last-resort (Y-proximity
+    # pura, sem checar gap/alinhamento) processa colunas em ordem e deixa
+    # QUALQUER SKU processado antes reivindicar a foto grande por ela ser
+    # "a mais próxima disponível" — mesmo sendo de um SKU errado (efeito
+    # cascata: o dono de verdade processa depois e não sobra nada).
+    #
+    # Roda ANTES da divisão em colunas, pra quem bate o critério preciso
+    # (gap pequeno e positivo, SKU dentro da faixa horizontal da foto)
+    # reservar sua foto ANTES de qualquer fallback genérico de outro SKU
+    # poder roubá-la. Preenche `used_xrefs_global` adiantado — a FASE 4 já
+    # respeita esse conjunto nativamente (todo `_try_match` já checa antes
+    # de considerar uma imagem).
+    # ═══════════════════════════════════════════════════════
+    used_xrefs_global: set = set()
+    pre_matched: Dict[str, Dict] = {}
+    for sku in valid_skus:
+        sku_code = sku.get("sku", "UNKNOWN")
+        sku_x, sku_y = sku["spatialContext"]["x"], sku["spatialContext"]["y"]
+        melhor, melhor_gap = None, float("inf")
+        for img in page_imgs:
+            if img["xref"] in used_xrefs_global:
+                continue
+            rect = img.get("rect")
+            if rect is None:
+                continue
+            gap = sku_y - rect.y1
+            if 0 <= gap <= 30.0 and rect.x0 <= sku_x <= rect.x1 and gap < melhor_gap:
+                melhor_gap, melhor = gap, img
+        if melhor is not None:
+            pre_matched[sku_code] = melhor
+            used_xrefs_global.add(melhor["xref"])
+            print(f"    [ColMatch] {sku_code}: foto grande logo acima da legenda (gap={melhor_gap:.1f}pt)")
+
+    # ═══════════════════════════════════════════════════════
     # FASE 2: Descobrir colunas via clustering de X (SKUs + Imagens)
     # ═══════════════════════════════════════════════════════
     all_xs = [s["spatialContext"]["x"] for s in valid_skus] + [img["cx"] for img in page_imgs]
@@ -581,8 +622,8 @@ def _match_via_grid(
         # Remove sufixos comuns: -A, -P, -V, -01, /A, etc.
         return _re.sub(r"[-_/][A-Z0-9]{1,3}$", "", str(code))
 
-    # Pool global de imagens usadas (para detectar conflitos cross-column)
-    used_xrefs_global: set = set()
+    # used_xrefs_global já existe (populado na FASE 1.6, com o que foi
+    # reservado pra legenda-abaixo-da-foto-grande).
     # Mapa: sku_code → imagem matched (para variantes pegarem a mesma)
     variant_cache: Dict[str, Dict] = {}
 
@@ -596,6 +637,19 @@ def _match_via_grid(
             sku_y = sku["spatialContext"]["y"]
             sku_code = sku.get("sku", "UNKNOWN")
             base = _base_sku(sku_code)
+
+            # Já resolvido na FASE 1.6 (legenda logo abaixo da foto grande) —
+            # não repete a busca por coluna, só extrai e segue.
+            if sku_code in pre_matched:
+                best_img = pre_matched[sku_code]
+                variant_cache[base] = best_img
+                img_arr = _extract_perfect_image(doc, best_img, raster, width, height, scale)
+                if img_arr is not None and img_arr.size > 0:
+                    filepath = _save_image(img_arr, sku_code, output_folder)
+                    matches.append(_make_match(sku, page_num, filepath, "col_match"))
+                else:
+                    unmatched.append({"sku": sku_code, "page": page_num, "reason": "extract_failed"})
+                continue
 
             # FAST-PATH para variantes: se o base já recebeu uma imagem na página,
             # reaproveita a mesma imagem para a variante (ex: NX445-A,-P,-V)
@@ -801,6 +855,45 @@ def _match_via_embedded(
         if melhor is not None:
             chosen_by_sku[si] = {"img": melhor, "score": 0.0, "row_shared": True}
             print(f"    [Embedded] {sku.get('sku')}: foto compartilhada da mesma linha (matriz cor×tamanho)")
+
+    # ── LEGENDA LOGO ABAIXO DA FOTO GRANDE (VAESO, 27/08/2026) ──
+    # Layout: 1 foto grande (a variante "principal") + N miniaturas de cor
+    # abaixo. A legenda da variante principal fica no VÃO entre o fim da
+    # foto grande e o início das miniaturas — fora da faixa ±8pt do passo
+    # acima (pensado pra legenda DENTRO da faixa da foto, não abaixo dela).
+    # E a foto grande, sendo larga, tem o centro longe da própria legenda —
+    # o score ponderado (passo 1) rejeita como implausível, mesmo com a
+    # foto certa disponível e sem uso. Cliente reportou isso exatamente:
+    # a variante "principal" de cada grupo (a que teria a foto grande)
+    # ficando sem imagem enquanto as de cor saíam certas.
+    #
+    # Só roda pra quem ainda não tem nenhum match aceitável (nada a perder)
+    # e só considera imagens que NINGUÉM mais vai usar — nunca tira a foto
+    # de um SKU que já casou certo.
+    imgs_em_uso = {
+        id(v["img"]) for v in chosen_by_sku.values()
+        if v.get("row_shared") or v["score"] <= max_score
+    }
+    MARGEM_ABAIXO_PT = 30.0  # vão típico legenda/preço entre a foto e o texto
+    for si, sku in enumerate(valid_skus):
+        ja = chosen_by_sku.get(si)
+        if ja is not None and (ja.get("row_shared") or ja["score"] <= max_score):
+            continue
+        sku_x, sku_y = sku["spatialContext"]["x"], sku["spatialContext"]["y"]
+        melhor, melhor_gap = None, float("inf")
+        for img in page_imgs:
+            if id(img) in imgs_em_uso:
+                continue
+            rect = img.get("rect")
+            if rect is None:
+                continue
+            gap = sku_y - rect.y1  # legenda deve estar LOGO ABAIXO (gap pequeno e positivo)
+            if 0 <= gap <= MARGEM_ABAIXO_PT and rect.x0 <= sku_x <= rect.x1 and gap < melhor_gap:
+                melhor_gap, melhor = gap, img
+        if melhor is not None:
+            chosen_by_sku[si] = {"img": melhor, "score": 0.0, "row_shared": True}
+            imgs_em_uso.add(id(melhor))
+            print(f"    [Embedded] {sku.get('sku')}: foto grande logo acima da legenda (gap={melhor_gap:.1f}pt)")
 
     for si, sku in enumerate(valid_skus):
         chosen = chosen_by_sku.get(si)
