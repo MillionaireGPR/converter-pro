@@ -1,7 +1,7 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 27/08/2026 (tarde)
+**Atualizado em:** 01/09/2026
 
 ---
 
@@ -32,7 +32,40 @@ estourar esse escopo e precisa estar 100% funcional.
 
 ---
 
-## ⚠️ ENTREGUE em 27/08 (tarde) — histórico estruturado (PR pendente de merge)
+## ✅ ENTREGUE em 28/08–01/09 — domínio na Cloudflare + Tunnel fixo do backend (PR #120)
+
+Resolve de vez a Pendência #2 abaixo (estava aberta desde 25/08). Causa raiz
+real das quedas do servidor próprio: o Cloudflare **Quick Tunnel** gera uma
+URL aleatória (`*.trycloudflare.com`) diferente a cada restart; um watcher
+(`cf_tunnel_watcher.sh`) detectava a URL nova e disparava um **redeploy
+completo do site** só pra atualizar `VITE_BACKEND_URL` — cada queda do
+túnel virava minutos de cliente parado até o redeploy terminar.
+
+- `metodoiqc.com.br` (Registro.br) migrou nameservers pra Cloudflare
+  (`carlos`/`jasmine.ns.cloudflare.com`). Os 5 registros que já existiam
+  (MX do Google Workspace, CNAME do Central Pirralhos, CNAME do
+  digitalcompany, TXT de verificação do Google) foram replicados na
+  Cloudflare via API **antes** do corte de nameserver — nada quebrou.
+- Backend próprio trocou o Quick Tunnel por um **Tunnel nomeado**, config
+  gerenciada pela própria Cloudflare (sem `config.yml` local), exposto
+  permanentemente em `https://conversor-api.metodoiqc.com.br` — reaproveitou
+  um subdomínio que já existia com IP morto, em vez de criar nome novo.
+  Confirmado via `/health` → `200 OK` real, e o endereço já está assado no
+  bundle de produção.
+- `VITE_BACKEND_URL_PRIMARY` setado em produção (Vercel) pra esse endereço
+  fixo — mecanismo de pin que já existia no código (ver `## Infraestrutura`
+  e `backendResolver.ts`), nunca tinha sido usado até agora.
+- `backendLabel()` atualizado pra reconhecer `metodoiqc.com.br` como
+  "próprio" (PR #120, 420 testes OK).
+
+**Limpeza que falta (não bloqueante):** desligar o processo do Quick Tunnel
+antigo no servidor próprio e apagar `cf_tunnel_watcher.sh` +
+`update_vercel_backend_url.py` do repo — ficaram obsoletos mas ainda não
+foram removidos. Ver `guide.md #14.3`.
+
+---
+
+## ✅ ENTREGUE em 27/08 (tarde) — histórico estruturado (PR #119, migration aplicada)
 
 Gabriel notou 2 conversões "render" da VAESO no histórico e perguntou se o
 servidor próprio estava com problema (não estava — as 2 aconteceram durante
@@ -55,11 +88,11 @@ que isso acontecer de novo, o histórico virou estruturado:
   (insert com colunas novas falha graciosamente pro schema antigo
   enquanto a migration não for aplicada).
 
-**⚠️ AÇÃO PENDENTE (ver "Pendências abertas" #5):** a migration SQL foi
-criada mas **não aplicada** — precisa rodar manualmente no SQL Editor do
-Supabase (CLI desta sessão não tinha acesso ao projeto). Código já
-degrada com segurança sem ela (testado), então não é bloqueante pro
-merge, mas os badges novos só aparecem depois do SQL rodar.
+**✅ Migration aplicada em produção (28/08)** — Gabriel rodou o SQL no editor
+do Supabase; achou e corrigiu no caminho um bug real de dollar-quoting
+duplicada (`DO $...$` colidindo com o `$...$` do comando do `cron.schedule`)
+que quebrava o `DO` block do agendamento de limpeza. PR #119 mergeado, badges
+de servidor/imagens já funcionam em produção.
 
 412 → 420 testes (8 novos cobrindo o insert estruturado, o fallback de
 schema antigo e a renderização dos badges), `npm run verify` OK.
@@ -319,18 +352,24 @@ arquivos de backend e devolver o servidor próprio ao papel de primário.
 
 - **Frontend:** Vercel (deploy automático do `main`)
 - **Backend:** dois ambientes
-  - **Primário:** servidor próprio (7,7GB) via **Cloudflare Quick Tunnel** —
+  - **Primário:** servidor próprio (7,7GB) via **Cloudflare Tunnel nomeado e
+    fixo** (`https://conversor-api.metodoiqc.com.br`, desde 01/09) —
     ⚠️ **não puxa do GitHub**, exige `scp` manual a cada correção de backend
   - **Reserva:** Render Starter (512MB) — puxa do `main` sozinho
 - **Banco:** Supabase (`suppliers` já tem `column_mappings`,
   `extraction_rules`, `extraction_rules_compiled`)
+- **Domínio:** `metodoiqc.com.br` (Registro.br, nameservers na Cloudflare
+  desde 01/09) — zona Cloudflare tem também `pirralhos` (Central Pirralhos),
+  `digitalcompany` (GitHub Pages) e o TXT de verificação do Google.
 
-**Sobre a instabilidade:** boa parte das quedas foi o **túnel gratuito**, que
-o próprio Cloudflare avisa não ter garantia de disponibilidade, e cuja URL
-muda a cada reinício (há automação que atualiza o Vercel). Do servidor em si,
-só 2 incidentes confirmados: fibra rompida (12/08) e bloqueio de segurança
-(13/08) — ambos externos e resolvidos pelo Wesley. Decisão do Gabriel: manter
-o túnel gratuito até entrarem as primeiras mensalidades.
+**Sobre a instabilidade (histórico, resolvido em 01/09):** boa parte das
+quedas era o **túnel gratuito (Quick Tunnel)**, que o próprio Cloudflare
+avisa não ter garantia de disponibilidade e cuja URL mudava a cada
+reinício — coberto até então por uma automação que atualizava o Vercel e
+disparava redeploy a cada troca. Migrado pro Tunnel nomeado/fixo (ver
+entrega de 01/09 acima), que não tem esse problema. Do servidor em si, só 2
+incidentes confirmados: fibra rompida (12/08) e bloqueio de segurança
+(13/08) — ambos externos e resolvidos pelo Wesley.
 
 ---
 
@@ -364,30 +403,20 @@ motivo pra não apagar `VITE_BACKEND_URL_PRIMARY` antes de atualizá-lo.
 ## Pendências abertas
 
 1. **Servidor não puxa do GitHub** — automatizar quando estabilizar
-2. **Migrar para túnel nomeado/fixo** — Gabriel já vinha comentando isso com
-   o Wesley. Resolve a causa raiz do incidente de 24-25/08 (tunnel "active"
-   no systemd sem estar conectado de verdade) e elimina a dependência do
-   watcher. Prioridade subiu depois do incidente.
-
-   **Custo levantado (25/08):** domínio `.com.br` é R$40/ano no Registro.br
-   (fonte oficial); Cloudflare Tunnel + DNS não têm mensalidade no plano
-   Free (Zero Trust free até 50 usuários cobre bem essa escala). O projeto
-   **já tem** `metodoiqc.com.br` registrado (~30/07, hoje nas nameservers do
-   Registro.br) — não precisa comprar domínio novo, só apontar pra Cloudflare
-   e criar subdomínio (ex.: `wesley.metodoiqc.com.br`). Mesmo domínio serve
-   pra outros clientes depois, um subdomínio por servidor, sem custo extra.
+2. ~~Migrar para túnel nomeado/fixo~~ — **RESOLVIDO 01/09** (ver entrega
+   acima). `conversor-api.metodoiqc.com.br` é o endereço fixo definitivo.
 3. **42 imagens sem match** no catálogo Fortal completo (outros layouts;
    `no_img_in_col` 27 + `no_plausible_match` 15). O padrão matriz cor×tamanho
    foi resolvido, esses são casos diferentes.
 4. **Gemini:** Google exige migração para pré-pago (prazo deles)
-5. **CRÍTICO — rodar a migration `20260827_historico_estruturado.sql` no
-   Supabase.** Código já está pronto e mergeado (PR abaixo), mas quem tem
-   acesso ao painel do Supabase (projeto `xjznoddaifyxlfbivmau`) precisa
-   colar o SQL de `supabase/migrations/20260827_historico_estruturado.sql`
-   no SQL Editor e rodar uma vez. A CLI usada nesta sessão não tinha
-   permissão nesse projeto (`supabase link` → "account does not have the
-   necessary privileges"). Até isso rodar, o histórico funciona igual a
-   antes (fallback automático), só sem os badges de servidor/imagens.
+5. **Limpeza pós-migração do Tunnel (não bloqueante):** desligar o processo
+   do Quick Tunnel antigo no servidor próprio e remover `cf_tunnel_watcher.sh`
+   + `update_vercel_backend_url.py` do repo (obsoletos desde 01/09).
+6. **Construir subdomínios pros demais sistemas em `metodoiqc.com.br`**
+   (Nunê AI, Banknect, Pontual Working, Contacado, StickerOps) — zona já
+   está na Cloudflare, falta só criar cada CNAME + registrar no projeto
+   Vercel correspondente. Pedido explícito do Gabriel (28/08), ainda não
+   escopado por sistema.
 
 ---
 
