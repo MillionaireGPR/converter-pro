@@ -159,7 +159,10 @@ export function invalidateBackend(): void {
 export function backendLabel(url: string): string {
   if (!url) return 'desconhecido';
   if (url.includes('onrender.com')) return 'render';
-  if (url.includes('trycloudflare.com')) return 'proprio';
+  // trycloudflare.com = túnel temporário (URL mudava a cada restart, hoje
+  // aposentado); metodoiqc.com.br = túnel nomeado fixo (01/09/2026), mesmo
+  // servidor próprio, endereço permanente.
+  if (url.includes('trycloudflare.com') || url.includes('metodoiqc.com.br')) return 'proprio';
   if (url.includes('localhost') || url.includes('127.0.0.1')) return 'local';
   return 'outro';
 }

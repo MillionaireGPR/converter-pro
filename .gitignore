@@ -31,6 +31,10 @@ dist-ssr
 .vercel
 .env*.local
 
+# Tokens de automação de infra (Vercel/Cloudflare) — nunca versionar
+scripts/server-ops/*.env
+scripts/server-ops/dns_atual_registrobr.txt
+
 # Python (backend/image_extractor)
 __pycache__/
 *.py[cod]
