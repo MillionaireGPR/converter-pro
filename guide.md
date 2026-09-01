@@ -16,8 +16,9 @@
   regex de 14 parsers manuais virou FALLBACK automático (nunca removido).
   Ver `## 14` abaixo e `ARCHITECTURE.md` (invariantes IV-01 a IV-23).
 - **Backend Python (FastAPI):** roda em dois ambientes simultâneos — servidor
-  próprio (via Cloudflare Tunnel) como primário e Render Starter como
-  reserva, com failover automático no cliente. Ver `## 14.3`.
+  próprio (via Cloudflare Tunnel nomeado/fixo, `conversor-api.metodoiqc.com.br`)
+  como primário e Render Starter como reserva, com failover automático no
+  cliente. Ver `## 14.3`.
 
 ---
 
@@ -436,19 +437,43 @@ código + PR + deploy. Agora o cliente configura pela própria interface:
 
 ### 14.3 Infraestrutura de backend dual + failover (14/08–25/08/2026)
 O backend Python roda em **dois ambientes ao mesmo tempo**:
-servidor próprio (mais forte, mas atrás de um Cloudflare Quick Tunnel sem
-SLA — a URL muda a cada reinício) e Render Starter (mais fraco, porém
-estável, puxa do `main` sozinho). `src/core/backendResolver.ts` testa o
-primário via `/health` e cai no outro na MESMA requisição se não responder
-— zero downtime perceptível pelo cliente, sem depender de nenhum monitor
-externo. `VITE_BACKEND_URL_PRIMARY` existe para travar manualmente qual dos
-dois é o primário durante transições (ex.: servidor próprio com código
+servidor próprio e Render Starter (mais fraco, porém estável, puxa do
+`main` sozinho). `src/core/backendResolver.ts` testa o primário via
+`/health` e cai no outro na MESMA requisição se não responder — zero
+downtime perceptível pelo cliente, sem depender de nenhum monitor externo.
+`VITE_BACKEND_URL_PRIMARY` existe para travar manualmente qual dos dois é
+o primário durante transições (ex.: servidor próprio com código
 desatualizado) sem que o watcher do túnel reverta a escolha sozinho.
 
 **Causa raiz de instabilidade encontrada (25/08):** um serviço systemd pode
 aparecer "active" sem que a conexão real do túnel exista (rede não pronta
 no boot) — só reinicia o serviço, não crasha sozinho. Diagnóstico sempre
 externo (curl real), nunca só pelo status do systemd.
+
+**Migração pro Tunnel fixo da Cloudflare (28/08–01/09/2026):** o domínio
+`metodoiqc.com.br` (Registro.br) migrou os nameservers pro Cloudflare
+(`carlos`/`jasmine.ns.cloudflare.com`), e o servidor próprio trocou o
+Cloudflare **Quick Tunnel** (`*.trycloudflare.com`, URL aleatória a cada
+restart — causa raiz das quedas percebidas pelo cliente, cobertas até
+então por `cf_tunnel_watcher.sh` detectando a URL nova e disparando
+redeploy) por um **Tunnel nomeado, config gerenciada pela própria
+Cloudflare** (`config_src: cloudflare`, sem `config.yml` local), exposto
+permanentemente em `https://conversor-api.metodoiqc.com.br` (reaproveita
+um subdomínio que já existia com um IP morto). `VITE_BACKEND_URL_PRIMARY`
+foi setado em produção pra esse endereço fixo — é o mesmo mecanismo de pin
+já existente, nunca usado até então. `backendLabel()` (`backendResolver.ts`)
+passou a reconhecer `metodoiqc.com.br`, além do antigo `trycloudflare.com`,
+como servidor "próprio".
+
+`cf_tunnel_watcher.sh` e `update_vercel_backend_url.py` ficam obsoletos
+depois dessa migração (o endereço não muda mais sozinho) mas ainda não
+foram removidos do repo — desligar o processo do Quick Tunnel no servidor
+próprio e então apagar os dois scripts é o próximo passo de limpeza.
+Registros DNS de `metodoiqc.com.br` replicados manualmente na Cloudflare
+antes do corte de nameserver: MX (Google Workspace), CNAME de
+`pirralhos.metodoiqc.com.br` (Central Pirralhos/Vercel), CNAME de
+`digitalcompany.metodoiqc.com.br` (GitHub Pages) e o TXT de verificação do
+Google em `pantoni.metodoiqc.com.br`.
 
 ### 14.4 Painel do servidor e observabilidade
 `/admin/dashboard` (backend) + `/servidor` (frontend, redireciona pro
