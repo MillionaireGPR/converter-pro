@@ -151,6 +151,7 @@ describe('backendLabel — rótulo pra diagnóstico', () => {
     const { backendLabel } = await loadResolver({ VITE_BACKEND_URL: PRIMARY });
     expect(backendLabel('https://x.onrender.com')).toBe('render');
     expect(backendLabel('https://y.trycloudflare.com')).toBe('proprio');
+    expect(backendLabel('https://conversor-api.metodoiqc.com.br')).toBe('proprio');
     expect(backendLabel('http://localhost:8000')).toBe('local');
     expect(backendLabel('')).toBe('desconhecido');
   });
