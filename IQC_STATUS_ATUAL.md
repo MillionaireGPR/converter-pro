@@ -47,8 +47,11 @@ ICP Core para substituir o Render como reserva depois da homologação.
 - **Stack do provedor preservada:** ICP ativo em `:2090`; Nginx do ICP roda
   no container `ic-nginx-vH9X`; Docker 29.8.0 e Compose 5.5.1.
 - **Backend de homologação:** container `converter-pro-backend` saudável,
-  restrito a `127.0.0.1:28081` (ainda sem exposição pública), mesma versão
-  `2026.08.25-v52-supplier-rules-column-mapping` do Render.
+  restrito internamente a `127.0.0.1:28081` e publicado somente pelo Nginx em
+  `https://conversor-vps.metodoiqc.com.br`, mesma versão
+  `2026.08.25-v52-supplier-rules-column-mapping` do Render. O registro A está
+  em modo **Somente DNS**, evitando o limite de upload de 100 MB do proxy
+  Cloudflare.
 - **Proteção do Core:** `MAX_CONCURRENT_JOBS=1`, teto de 5 GB RAM / 6 GB com
   swap, 3,5 vCPU, restart automático, healthcheck e rotação de logs.
 - **Persistência:** dados fora do checkout em `/opt/converter-pro/data`;
@@ -58,16 +61,23 @@ ICP Core para substituir o Render como reserva depois da homologação.
   OpenAPI contém os endpoints esperados; smoke AI com PDF sintético extraiu
   1/1 produto em 6,24s, confiança 100% e pico de 178,9 MB de RAM; CORS,
   persistência após restart e retorno automático após reboot completo OK.
+  O endpoint público redireciona HTTP para HTTPS, apresentou certificado
+  válido, retornou `/health` 200 e aceitou o CORS do painel Vercel.
+- **TLS:** Let's Encrypt emitido em 04/09, com renovação automática pelo
+  `certbot.timer` e deploy hook `converter-pro-renew-tls`. Foi usado o caminho
+  manual porque o hostname do Painel ICP fornecido pelo provedor ainda não
+  resolve no DNS. A simulação de renovação e o restart isolado do Nginx foram
+  aprovados; o endpoint HTTPS voltou sozinho e saudável.
 - **Código:** branch `infra/integrator-vps`; Dockerfile, Compose, deploy,
   limpeza, modelo Nginx e runbook em `infra/integrator/`. `npm run verify`:
   420/420 testes e invariantes IV-01..23 OK.
 
 **Produção não foi alterada.** A infraestrutura está na PR #124, aberta em
-04/09 e aguardando checks/aprovação do Gabriel. Pendências antes do corte:
-resolver/publicar o domínio ICP com TLS e limite de 300 MB; migrar os perfis
-Phase 0 da origem mais completa; testar catálogos reais (inclusive >100 MB) e
-o failover em preview; aprovar/mergear a PR; só então trocar o fallback do
-Vercel. O reboot completo da VPS já foi testado e aprovado em 04/09.
+04/09 e aguardando aprovação do Gabriel; todos os checks automáticos passaram.
+Pendências antes do corte: migrar os perfis Phase 0 da origem mais completa;
+testar catálogos reais (inclusive >100 MB) e o failover em preview;
+aprovar/mergear a PR; só então trocar o fallback do Vercel. O domínio, TLS,
+limite de 300 MB e reboot completo da VPS já foram testados e aprovados.
 
 ---
 

@@ -1,7 +1,25 @@
-# Modelo para o dominio criado no ICP. O TLS deve ser emitido pelo painel.
+# Modelo final para o dominio publico do backend.
 server {
     listen 80;
     server_name conversor-vps.metodoiqc.com.br;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /usr/share/nginx/html;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name conversor-vps.metodoiqc.com.br;
+
+    ssl_certificate /www/sites/conversor-vps.metodoiqc.com.br/ssl/fullchain.pem;
+    ssl_certificate_key /www/sites/conversor-vps.metodoiqc.com.br/ssl/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
 
     client_max_body_size 300m;
     client_body_timeout 300s;
@@ -16,6 +34,6 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto https;
     }
 }
