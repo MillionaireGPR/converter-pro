@@ -57,6 +57,10 @@ ICP Core para substituir o Render como reserva depois da homologação.
 - **Persistência:** dados fora do checkout em `/opt/converter-pro/data`;
   `supplier_profiles` nunca entra na limpeza; temporários com mais de 21 dias
   são removidos pelo timer `converter-pro-cleanup.timer`.
+- **Perfis Phase 0:** o Render tinha somente o perfil real `VAESO 2.0`; ele foi
+  copiado para a VPS e validado pela API. O servidor do Wesley retornou HTTP
+  530 e não pôde ser comparado. Regras compiladas ausentes são recriadas
+  automaticamente na primeira conversão com as regras enviadas pelo painel.
 - **Validações concluídas:** Supabase e Gemini responderam em leitura;
   OpenAPI contém os endpoints esperados; smoke AI com PDF sintético extraiu
   1/1 produto em 6,24s, confiança 100% e pico de 178,9 MB de RAM; CORS,
@@ -74,10 +78,11 @@ ICP Core para substituir o Render como reserva depois da homologação.
 
 **Produção não foi alterada.** A infraestrutura está na PR #124, aberta em
 04/09 e aguardando aprovação do Gabriel; todos os checks automáticos passaram.
-Pendências antes do corte: migrar os perfis Phase 0 da origem mais completa;
-testar catálogos reais (inclusive >100 MB) e o failover em preview;
-aprovar/mergear a PR; só então trocar o fallback do Vercel. O domínio, TLS,
-limite de 300 MB e reboot completo da VPS já foram testados e aprovados.
+Pendências antes do corte: quando o Wesley voltar, comparar se ele possui algum
+perfil Phase 0 adicional; testar catálogos reais (inclusive >100 MB) e o
+failover em preview; aprovar/mergear a PR; só então trocar o fallback do
+Vercel. O domínio, TLS, limite de 300 MB e reboot completo da VPS já foram
+testados e aprovados.
 
 ---
 
