@@ -1,7 +1,7 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 01/09/2026
+**Atualizado em:** 04/09/2026
 
 ---
 
@@ -62,10 +62,12 @@ ICP Core para substituir o Render como reserva depois da homologação.
   limpeza, modelo Nginx e runbook em `infra/integrator/`. `npm run verify`:
   420/420 testes e invariantes IV-01..23 OK.
 
-**Produção não foi alterada.** Pendências antes do corte: resolver/publicar o
-domínio ICP com TLS e limite de 300 MB; migrar os perfis Phase 0 da origem mais
-completa; testar catálogos reais (inclusive >100 MB), reboot e failover em
-preview; abrir/aprovar/mergear o PR; só então trocar o fallback do Vercel.
+**Produção não foi alterada.** A infraestrutura está na PR #124, aberta em
+04/09 e aguardando checks/aprovação do Gabriel. Pendências antes do corte:
+resolver/publicar o domínio ICP com TLS e limite de 300 MB; migrar os perfis
+Phase 0 da origem mais completa; testar catálogos reais (inclusive >100 MB) e
+o failover em preview; aprovar/mergear a PR; só então trocar o fallback do
+Vercel. O reboot completo da VPS já foi testado e aprovado em 04/09.
 
 ---
 
