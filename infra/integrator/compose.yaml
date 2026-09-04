@@ -13,11 +13,14 @@ services:
     environment:
       PORT: "8000"
       MAX_CONCURRENT_JOBS: "1"
+      ADMIN_TOKEN_FILE: /app/admin_config/admin_token
+      SERVER_ID: integrator
     ports:
       - "127.0.0.1:28081:8000"
     volumes:
       - ${CONVERTER_DATA_DIR:-/opt/converter-pro/data}/temp:/app/temp
       - ${CONVERTER_DATA_DIR:-/opt/converter-pro/data}/supplier_profiles:/app/supplier_profiles
+      - ${CONVERTER_ADMIN_DIR:-/opt/converter-pro/config/admin}:/app/admin_config
     healthcheck:
       test:
         - CMD

@@ -27,7 +27,7 @@ COPY static ./static
 
 RUN groupadd --gid 10001 converter \
     && useradd --uid 10001 --gid converter --no-create-home --shell /usr/sbin/nologin converter \
-    && mkdir -p /app/temp /app/supplier_profiles \
+    && mkdir -p /app/temp /app/supplier_profiles /app/admin_config \
     && chown -R converter:converter /app
 
 USER converter

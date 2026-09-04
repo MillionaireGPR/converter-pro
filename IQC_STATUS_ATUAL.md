@@ -72,6 +72,22 @@ ICP Core para substituir o Render como reserva depois da homologação.
   manual porque o hostname do Painel ICP fornecido pelo provedor ainda não
   resolve no DNS. A simulação de renovação e o restart isolado do Nginx foram
   aprovados; o endpoint HTTPS voltou sozinho e saudável.
+- **Painel central publicado na Integrator:**
+  `https://conversor-vps.metodoiqc.com.br/admin/dashboard` mostra, numa única
+  tela, a saúde do Servidor 1 Integrator, Servidor 2 Wesley e Servidor 3
+  Render. A Integrator já exibe CPU, RAM e fila; os outros dois exibem saúde e
+  latência. Métricas detalhadas remotas serão liberadas quando receberem a
+  mesma versão do backend e uma senha administrativa compatível.
+- **Senha editável no próprio painel:** o botão `Alterar senha` troca somente
+  a senha administrativa da Integrator e a grava fora do container em
+  `/opt/converter-pro/config/admin/admin_token`. Ela sobrevive a deploy/reboot,
+  exige 10–128 caracteres com letra+número e não aparece em URL/log do Nginx;
+  a autenticação passou a usar o header `X-Admin-Token`.
+- **Validação do painel central em 04/09:** acesso sem senha → 403; acesso com
+  senha → 200; tentativa de senha fraca → 400; Integrator saudável com
+  métricas; Render saudável (detalhes ainda indisponíveis); Wesley respondeu
+  403 e apareceu corretamente como fora do ar. Interface conferida ao vivo no
+  Chrome depois do deploy.
 - **Código:** branch `infra/integrator-vps`; Dockerfile, Compose, deploy,
   limpeza, modelo Nginx e runbook em `infra/integrator/`. `npm run verify`:
   420/420 testes e invariantes IV-01..23 OK.

@@ -152,6 +152,7 @@ describe('backendLabel — rótulo pra diagnóstico', () => {
     expect(backendLabel('https://x.onrender.com')).toBe('render');
     expect(backendLabel('https://y.trycloudflare.com')).toBe('proprio');
     expect(backendLabel('https://conversor-api.metodoiqc.com.br')).toBe('proprio');
+    expect(backendLabel('https://conversor-vps.metodoiqc.com.br')).toBe('integrator');
     expect(backendLabel('http://localhost:8000')).toBe('local');
     expect(backendLabel('')).toBe('desconhecido');
   });
