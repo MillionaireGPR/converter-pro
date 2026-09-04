@@ -113,19 +113,19 @@ _MONITORED_SERVERS = (
     {
         "id": "integrator",
         "name": "Servidor 1 — Integrator",
-        "role": "Principal em validação",
+        "role": "Principal",
         "url": "https://conversor-vps.metodoiqc.com.br",
     },
     {
         "id": "wesley",
         "name": "Servidor 2 — Wesley",
-        "role": "Reserva",
+        "role": "Monitorado — fora da rota enquanto instável",
         "url": "https://conversor-api.metodoiqc.com.br",
     },
     {
         "id": "render",
         "name": "Servidor 3 — Render",
-        "role": "Última reserva",
+        "role": "Reserva automática",
         "url": "https://converter-pro-image-extractor.onrender.com",
     },
 )

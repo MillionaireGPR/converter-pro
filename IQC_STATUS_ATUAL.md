@@ -88,6 +88,13 @@ ICP Core para substituir o Render como reserva depois da homologação.
   métricas; Render saudável (detalhes ainda indisponíveis); Wesley respondeu
   403 e apareceu corretamente como fora do ar. Interface conferida ao vivo no
   Chrome depois do deploy.
+- **Corte para produção autorizado por Gabriel em 04/09:** a rota `/servidor`
+  do painel do cliente passa a abrir sempre a Central dos Servidores da
+  Integrator, independentemente de qual backend processa o catálogo. A
+  Integrator será o backend principal e o Render permanecerá como reserva
+  automática durante os testes da próxima semana. O Wesley fica monitorado,
+  mas fora da rota de conversões enquanto estiver instável. Não desligar o
+  Render antes do fim desses testes.
 - **Código:** branch `infra/integrator-vps`; Dockerfile, Compose, deploy,
   limpeza, modelo Nginx e runbook em `infra/integrator/`. `npm run verify`:
   420/420 testes e invariantes IV-01..23 OK.
