@@ -1,7 +1,7 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 01/09/2026
+**Atualizado em:** 04/09/2026
 
 ---
 
@@ -29,6 +29,83 @@ Meta: cliente configura sozinho, uma vez por fornecedor.
 
 **Restrição comercial:** plano de R$259/mês (inclui IA + servidor). Não pode
 estourar esse escopo e precisa estar 100% funcional.
+
+---
+
+## 🟡 EM HOMOLOGAÇÃO em 04/09 — nova contingência na Integrator ICP
+
+Por causa das novas quedas do servidor do Wesley (em 04/09 o endpoint fixo
+retornou HTTP 530 enquanto o Render retornou 200), foi provisionada uma VPS
+ICP Core para substituir o Render como reserva depois da homologação.
+
+- **Host:** Integrator LAX-12, IP público `23.80.89.90`, Ubuntu 26.04 LTS,
+  4 vCPU, 6 GB RAM e 100 GB NVMe.
+- **Segurança aplicada:** SSH por chave; login remoto por senha bloqueado;
+  firewall ativo; 2 GB de swap; Fail2ban e atualizações automáticas ativos.
+  Portas 22/80/443/2090 preservadas; a porta FTP 21 que veio aberta foi
+  fechada porque não havia serviço nela (SFTP continua pela porta 22).
+- **Stack do provedor preservada:** ICP ativo em `:2090`; Nginx do ICP roda
+  no container `ic-nginx-vH9X`; Docker 29.8.0 e Compose 5.5.1.
+- **Backend de homologação:** container `converter-pro-backend` saudável,
+  restrito internamente a `127.0.0.1:28081` e publicado somente pelo Nginx em
+  `https://conversor-vps.metodoiqc.com.br`, mesma versão
+  `2026.08.25-v52-supplier-rules-column-mapping` do Render. O registro A está
+  em modo **Somente DNS**, evitando o limite de upload de 100 MB do proxy
+  Cloudflare.
+- **Proteção do Core:** `MAX_CONCURRENT_JOBS=1`, teto de 5 GB RAM / 6 GB com
+  swap, 3,5 vCPU, restart automático, healthcheck e rotação de logs.
+- **Persistência:** dados fora do checkout em `/opt/converter-pro/data`;
+  `supplier_profiles` nunca entra na limpeza; temporários com mais de 21 dias
+  são removidos pelo timer `converter-pro-cleanup.timer`.
+- **Perfis Phase 0:** o Render tinha somente o perfil real `VAESO 2.0`; ele foi
+  copiado para a VPS e validado pela API. O servidor do Wesley retornou HTTP
+  530 e não pôde ser comparado. Regras compiladas ausentes são recriadas
+  automaticamente na primeira conversão com as regras enviadas pelo painel.
+- **Validações concluídas:** Supabase e Gemini responderam em leitura;
+  OpenAPI contém os endpoints esperados; smoke AI com PDF sintético extraiu
+  1/1 produto em 6,24s, confiança 100% e pico de 178,9 MB de RAM; CORS,
+  persistência após restart e retorno automático após reboot completo OK.
+  O endpoint público redireciona HTTP para HTTPS, apresentou certificado
+  válido, retornou `/health` 200 e aceitou o CORS do painel Vercel.
+- **TLS:** Let's Encrypt emitido em 04/09, com renovação automática pelo
+  `certbot.timer` e deploy hook `converter-pro-renew-tls`. Foi usado o caminho
+  manual porque o hostname do Painel ICP fornecido pelo provedor ainda não
+  resolve no DNS. A simulação de renovação e o restart isolado do Nginx foram
+  aprovados; o endpoint HTTPS voltou sozinho e saudável.
+- **Painel central publicado na Integrator:**
+  `https://conversor-vps.metodoiqc.com.br/admin/dashboard` mostra, numa única
+  tela, a saúde do Servidor 1 Integrator, Servidor 2 Wesley e Servidor 3
+  Render. A Integrator já exibe CPU, RAM e fila; os outros dois exibem saúde e
+  latência. Métricas detalhadas remotas serão liberadas quando receberem a
+  mesma versão do backend e uma senha administrativa compatível.
+- **Senha editável no próprio painel:** o botão `Alterar senha` troca somente
+  a senha administrativa da Integrator e a grava fora do container em
+  `/opt/converter-pro/config/admin/admin_token`. Ela sobrevive a deploy/reboot,
+  exige 10–128 caracteres com letra+número e não aparece em URL/log do Nginx;
+  a autenticação passou a usar o header `X-Admin-Token`.
+- **Validação do painel central em 04/09:** acesso sem senha → 403; acesso com
+  senha → 200; tentativa de senha fraca → 400; Integrator saudável com
+  métricas; Render saudável (detalhes ainda indisponíveis); Wesley respondeu
+  403 e apareceu corretamente como fora do ar. Interface conferida ao vivo no
+  Chrome depois do deploy.
+- **Corte para produção autorizado por Gabriel em 04/09:** a rota `/servidor`
+  do painel do cliente passa a abrir sempre a Central dos Servidores da
+  Integrator, independentemente de qual backend processa o catálogo. A
+  Integrator será o backend principal e o Render permanecerá como reserva
+  automática durante os testes da próxima semana. O Wesley fica monitorado,
+  mas fora da rota de conversões enquanto estiver instável. Não desligar o
+  Render antes do fim desses testes.
+- **Código:** branch `infra/integrator-vps`; Dockerfile, Compose, deploy,
+  limpeza, modelo Nginx e runbook em `infra/integrator/`. `npm run verify`:
+  420/420 testes e invariantes IV-01..23 OK.
+
+**Produção não foi alterada.** A infraestrutura está na PR #124, aberta em
+04/09 e aguardando aprovação do Gabriel; todos os checks automáticos passaram.
+Pendências antes do corte: quando o Wesley voltar, comparar se ele possui algum
+perfil Phase 0 adicional; testar catálogos reais (inclusive >100 MB) e o
+failover em preview; aprovar/mergear a PR; só então trocar o fallback do
+Vercel. O domínio, TLS, limite de 300 MB e reboot completo da VPS já foram
+testados e aprovados.
 
 ---
 

@@ -10,15 +10,21 @@ import os
 import json
 import time
 import collections
+import asyncio
+import hmac
+import re
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 import zipfile
 import shutil
 import threading
 import uvicorn
 import fitz
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from cv_extractor import extract_cells_via_cv
 from storage import upload_file_to_supabase
@@ -100,43 +106,104 @@ async def health_check():
 # de clientes (produtos/preços) -- só operação do servidor.
 # ─────────────────────────────────────────────────────────────
 
+_ADMIN_TOKEN_FILE = os.environ.get("ADMIN_TOKEN_FILE", "").strip()
+_SERVER_ID = os.environ.get("SERVER_ID", "unknown").strip().lower()
+
+_MONITORED_SERVERS = (
+    {
+        "id": "integrator",
+        "name": "Servidor 1 — Integrator",
+        "role": "Principal",
+        "url": "https://conversor-vps.metodoiqc.com.br",
+    },
+    {
+        "id": "wesley",
+        "name": "Servidor 2 — Wesley",
+        "role": "Monitorado — fora da rota enquanto instável",
+        "url": "https://conversor-api.metodoiqc.com.br",
+    },
+    {
+        "id": "render",
+        "name": "Servidor 3 — Render",
+        "role": "Reserva automática",
+        "url": "https://converter-pro-image-extractor.onrender.com",
+    },
+)
+
+
+def _read_admin_token() -> str:
+    """Lê o token persistente quando configurado; env é o fallback legado."""
+    if _ADMIN_TOKEN_FILE and os.path.isfile(_ADMIN_TOKEN_FILE):
+        try:
+            with open(_ADMIN_TOKEN_FILE, "r", encoding="utf-8") as f:
+                token = f.read().strip()
+            if token:
+                return token
+        except OSError:
+            pass
+    return os.environ.get("ADMIN_TOKEN", "").strip()
+
+
 def _check_admin_token(token: str):
-    expected = os.environ.get("ADMIN_TOKEN", "")
-    if not expected or token != expected:
+    expected = _read_admin_token()
+    if not expected or not hmac.compare_digest(token or "", expected):
         raise HTTPException(status_code=403, detail="Acesso negado")
 
 
+def _require_admin(
+    token: str = "",
+    x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+) -> str:
+    """Aceita header seguro; query string continua só por compatibilidade."""
+    supplied = (x_admin_token or token or "").strip()
+    _check_admin_token(supplied)
+    return supplied
+
+
 @app.get("/admin/logs")
-async def admin_logs(token: str = "", lines: int = 200):
+async def admin_logs(lines: int = 200, admin_token: str = Depends(_require_admin)):
     """Últimas N linhas de log (stdout/stderr) capturadas em memória.
     Reseta a cada restart do processo (idle/deploy/OOM) -- é o "agora",
     não histórico permanente."""
-    _check_admin_token(token)
     lines = max(1, min(lines, 1000))
     return {"lines": list(_LOG_BUFFER)[-lines:], "bufferSize": len(_LOG_BUFFER)}
 
 
-@app.get("/admin/metrics")
-async def admin_metrics(token: str = ""):
-    """CPU, memória, disco e contagem de jobs -- snapshot atual do servidor."""
-    _check_admin_token(token)
+def _metrics_snapshot() -> dict:
+    """CPU, memória, disco, fila e jobs ativos deste servidor."""
     import psutil
 
     process = psutil.Process(os.getpid())
     vm = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
 
+    job_folders = 0
     active_jobs = 0
+    queued_jobs = 0
     try:
         if os.path.isdir(_STATUS_DIR):
-            active_jobs = sum(
-                1 for d in os.listdir(_STATUS_DIR)
-                if os.path.isdir(os.path.join(_STATUS_DIR, d))
-            )
+            for directory in os.listdir(_STATUS_DIR):
+                job_dir = os.path.join(_STATUS_DIR, directory)
+                if not os.path.isdir(job_dir):
+                    continue
+                job_folders += 1
+                status_path = os.path.join(job_dir, "status.json")
+                if not os.path.isfile(status_path):
+                    continue
+                try:
+                    with open(status_path, "r", encoding="utf-8") as f:
+                        status = json.load(f)
+                    if status.get("status") == "processing":
+                        active_jobs += 1
+                        if status.get("stage") == "queued":
+                            queued_jobs += 1
+                except Exception:
+                    continue
     except Exception:
         pass
 
     return {
+        "serverId": _SERVER_ID,
         "service": "image-extractor",
         "version": SERVICE_VERSION,
         "uptimeSeconds": round(time.time() - _SERVER_START_TIME),
@@ -152,15 +219,21 @@ async def admin_metrics(token: str = ""):
             "usedGb": round(disk.used / (1024 ** 3), 1),
             "percent": disk.percent,
         },
-        "jobFoldersOnDisk": active_jobs,
+        "jobFoldersOnDisk": job_folders,
+        "activeJobs": active_jobs,
+        "queuedJobs": queued_jobs,
         "maxConcurrentJobs": MAX_CONCURRENT_JOBS,
     }
 
 
+@app.get("/admin/metrics")
+async def admin_metrics(admin_token: str = Depends(_require_admin)):
+    return _metrics_snapshot()
+
+
 @app.get("/admin/jobs")
-async def admin_jobs(token: str = "", limit: int = 50):
+async def admin_jobs(limit: int = 50, admin_token: str = Depends(_require_admin)):
     """Últimos jobs processados (status, timing) lidos de temp/<jobId>/status.json."""
-    _check_admin_token(token)
     limit = max(1, min(limit, 200))
     results = []
     try:
@@ -179,6 +252,102 @@ async def admin_jobs(token: str = "", limit: int = 50):
         pass
     results.sort(key=lambda x: x.get("updatedAt", 0), reverse=True)
     return {"jobs": results[:limit], "total": len(results)}
+
+
+class AdminTokenChange(BaseModel):
+    newToken: str
+
+
+@app.post("/admin/token/change")
+async def change_admin_token(
+    payload: AdminTokenChange,
+    admin_token: str = Depends(_require_admin),
+):
+    """Troca a senha administrativa deste servidor e persiste no volume."""
+    if not _ADMIN_TOKEN_FILE:
+        raise HTTPException(
+            status_code=503,
+            detail="Alteração de senha persistente não configurada neste servidor",
+        )
+
+    new_token = payload.newToken.strip()
+    if len(new_token) < 10 or len(new_token) > 128:
+        raise HTTPException(status_code=400, detail="Use entre 10 e 128 caracteres")
+    if not re.search(r"[A-Za-zÀ-ÿ]", new_token) or not re.search(r"\d", new_token):
+        raise HTTPException(status_code=400, detail="Inclua pelo menos uma letra e um número")
+    if hmac.compare_digest(new_token, admin_token):
+        raise HTTPException(status_code=400, detail="A nova senha deve ser diferente da atual")
+
+    target_dir = os.path.dirname(_ADMIN_TOKEN_FILE)
+    temp_path = _ADMIN_TOKEN_FILE + ".tmp"
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+        with open(temp_path, "w", encoding="utf-8") as f:
+            f.write(new_token + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(temp_path, 0o600)
+        os.replace(temp_path, _ADMIN_TOKEN_FILE)
+    except OSError as exc:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+        raise HTTPException(status_code=500, detail="Não foi possível salvar a nova senha") from exc
+
+    return {"success": True, "message": "Senha alterada neste servidor"}
+
+
+def _probe_remote_server(server: dict, admin_token: str) -> dict:
+    started = time.perf_counter()
+    result = {**server, "online": False, "metricsAvailable": False}
+    try:
+        with urllib.request.urlopen(server["url"] + "/health", timeout=8) as response:
+            health = json.loads(response.read().decode("utf-8"))
+        result.update({
+            "online": health.get("status") == "healthy",
+            "version": health.get("version", "?"),
+            "responseMs": round((time.perf_counter() - started) * 1000),
+        })
+    except urllib.error.HTTPError as exc:
+        result.update({"error": f"HTTP {exc.code}", "responseMs": round((time.perf_counter() - started) * 1000)})
+        return result
+    except Exception as exc:
+        result.update({"error": type(exc).__name__, "responseMs": round((time.perf_counter() - started) * 1000)})
+        return result
+
+    try:
+        request = urllib.request.Request(
+            server["url"] + "/admin/metrics",
+            headers={"X-Admin-Token": admin_token},
+        )
+        with urllib.request.urlopen(request, timeout=8) as response:
+            result["metrics"] = json.loads(response.read().decode("utf-8"))
+        result["metricsAvailable"] = True
+    except Exception:
+        # Servidor antigo, senha diferente ou painel detalhado indisponível:
+        # a saúde pública continua aparecendo sem transformar isso em queda.
+        pass
+    return result
+
+
+@app.get("/admin/cluster")
+async def admin_cluster(admin_token: str = Depends(_require_admin)):
+    """Visão central dos três backends, sempre na ordem operacional."""
+    tasks = []
+    for server in _MONITORED_SERVERS:
+        if server["id"] == _SERVER_ID:
+            tasks.append(asyncio.sleep(0, result={
+                **server,
+                "online": True,
+                "version": SERVICE_VERSION,
+                "responseMs": 0,
+                "metricsAvailable": True,
+                "metrics": _metrics_snapshot(),
+            }))
+        else:
+            tasks.append(asyncio.to_thread(_probe_remote_server, server, admin_token))
+    return {"servers": await asyncio.gather(*tasks), "currentServerId": _SERVER_ID}
 
 
 @app.get("/admin/dashboard")

@@ -1,0 +1,6 @@
+[Unit]
+Description=Limpeza segura dos temporarios do Converter Pro
+
+[Service]
+Type=oneshot
+ExecStart=/opt/converter-pro/repo/infra/integrator/cleanup-temp.sh --apply

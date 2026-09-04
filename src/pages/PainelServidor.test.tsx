@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import PainelServidor from './PainelServidor';
 
 describe('PainelServidor (redirect fixo)', () => {
@@ -30,35 +30,28 @@ describe('PainelServidor (redirect fixo)', () => {
     window.location = originalLocation;
   });
 
-  it('redireciona para {backendUrl}/admin/dashboard', async () => {
-    render(<PainelServidor backendUrl="https://qualquer-url-do-tunel.trycloudflare.com" />);
+  it('redireciona sempre para o painel central da Integrator', async () => {
+    render(<PainelServidor />);
 
     await waitFor(() =>
       expect(replaceMock).toHaveBeenCalledWith(
-        'https://qualquer-url-do-tunel.trycloudflare.com/admin/dashboard'
+        'https://conversor-vps.metodoiqc.com.br/admin/dashboard'
       )
     );
   });
 
-  it('acompanha o backend atual mesmo que a URL do túnel mude', async () => {
-    render(<PainelServidor backendUrl="https://outra-url-diferente.trycloudflare.com" />);
-
-    await waitFor(() =>
-      expect(replaceMock).toHaveBeenCalledWith(
-        'https://outra-url-diferente.trycloudflare.com/admin/dashboard'
-      )
-    );
+  it('avisa que está abrindo a Central dos Servidores', () => {
+    render(<PainelServidor />);
+    expect(screen.getByText('Redirecionando para a Central dos Servidores...')).toBeTruthy();
   });
 
-  it('não tenta redirecionar sem backendUrl configurado', async () => {
-    render(<PainelServidor backendUrl="" />);
-
-    await new Promise((r) => setTimeout(r, 10));
-    expect(replaceMock).not.toHaveBeenCalled();
+  it('faz somente um redirecionamento por montagem', async () => {
+    render(<PainelServidor />);
+    await waitFor(() => expect(replaceMock).toHaveBeenCalledTimes(1));
   });
 
   it('nunca inclui token na URL de redirecionamento (VITE_ é público no bundle)', async () => {
-    render(<PainelServidor backendUrl="https://qualquer-url.trycloudflare.com" />);
+    render(<PainelServidor />);
 
     await waitFor(() => expect(replaceMock).toHaveBeenCalled());
     const urlChamada = replaceMock.mock.calls[0][0] as string;

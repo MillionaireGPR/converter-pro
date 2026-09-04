@@ -52,15 +52,17 @@ describe('Histórico — marcações estruturadas', () => {
     historicoFixture = [];
   });
 
-  it('mostra o badge do servidor usado (próprio vs render)', () => {
+  it('mostra o nome exato do servidor usado', () => {
     historicoFixture = [
+      { ...linhaBase, id: '0', servidor: 'integrator' },
       { ...linhaBase, id: '1', servidor: 'proprio' },
       { ...linhaBase, id: '2', servidor: 'render' },
     ];
     renderHistorico();
 
-    expect(screen.getByText('próprio')).toBeTruthy();
-    expect(screen.getByText('render (reserva)')).toBeTruthy();
+    expect(screen.getByText('Integrator (servidor 1)')).toBeTruthy();
+    expect(screen.getByText('Wesley (servidor 2)')).toBeTruthy();
+    expect(screen.getByText('Render (servidor 3)')).toBeTruthy();
   });
 
   it('mostra contagem de imagens associadas/encontradas e destaca falhas', () => {

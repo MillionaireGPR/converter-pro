@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { pickBackends } from "@/core/backendResolver";
+import { useEffect } from "react";
+
+const SERVER_DASHBOARD_URL = "https://conversor-vps.metodoiqc.com.br/admin/dashboard";
 
 /**
  * Endereço FIXO pro painel do servidor (/admin/dashboard).
@@ -11,11 +12,10 @@ import { pickBackends } from "@/core/backendResolver";
  * direto VITE_BACKEND_URL e redirecionava pro painel certo -- então o
  * bookmark de verdade seria SÓ este endereço, que nunca muda.
  *
- * Atualização (01/09/2026): usar `pickBackends()` em vez de ler
- * VITE_BACKEND_URL cru -- sem isso, com o Tunnel fixo pinado em
- * VITE_BACKEND_URL_PRIMARY, esta página continuaria mandando pro túnel
- * ANTIGO (a variável que o watcher ainda escreve), enquanto o resto do
- * site já usa o pin. Mesma fonte de verdade que o resolver do site usa.
+ * Atualização (04/09/2026): o painel central passou a morar na VPS
+ * Integrator e monitora Integrator, Wesley e Render ao mesmo tempo. Por isso
+ * esta rota NÃO acompanha mais o backend que processa conversões: se um
+ * servidor cair, o painel de diagnóstico precisa continuar abrindo.
  *
  * NÃO passa o token de admin na URL de propósito: qualquer variável com
  * prefixo VITE_ fica embutida em texto puro no bundle público do site --
@@ -25,27 +25,14 @@ import { pickBackends } from "@/core/backendResolver";
  * tem seu próprio portão (pede o token, lembra em sessionStorage do
  * domínio dele) -- deixamos ele cuidar disso.
  */
-export default function PainelServidor({ backendUrl }: { backendUrl?: string } = {}) {
-  const [erro, setErro] = useState<string | null>(null);
-
+export default function PainelServidor() {
   useEffect(() => {
-    const backend = backendUrl ?? pickBackends((import.meta as any).env ?? {}).primary;
-
-    if (!backend) {
-      setErro("VITE_BACKEND_URL não configurado neste ambiente.");
-      return;
-    }
-
-    window.location.replace(`${backend}/admin/dashboard`);
-  }, [backendUrl]);
+    window.location.replace(SERVER_DASHBOARD_URL);
+  }, []);
 
   return (
     <div style={{ padding: 32, fontFamily: "sans-serif" }}>
-      {erro ? (
-        <p style={{ color: "#c0392b" }}>{erro}</p>
-      ) : (
-        <p>Redirecionando para o painel do servidor...</p>
-      )}
+      <p>Redirecionando para a Central dos Servidores...</p>
     </div>
   );
 }

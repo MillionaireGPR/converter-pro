@@ -22,14 +22,12 @@ const routeMap: Record<string, string> = {
   'Exportação Excel': '/descontos',
 };
 
-/** Rótulo + cor por servidor — mesmos códigos de `backendLabel()`
- *  (src/core/backendResolver.ts). "render" em laranja porque é o fallback:
- *  ver um monte de linhas com essa cor é sinal de queda recorrente do
- *  servidor próprio, exatamente o tipo de padrão que o histórico devia
- *  deixar óbvio de bater o olho (27/08/2026). */
+/** Rótulo + cor por servidor — mesmos códigos de `backendLabel()`.
+ *  A ordem numérica acompanha o painel central de infraestrutura. */
 const servidorBadge: Record<string, { label: string; className: string }> = {
-  proprio: { label: 'próprio', className: 'bg-success/10 text-success border-success/20' },
-  render: { label: 'render (reserva)', className: 'bg-warning/10 text-warning border-warning/20' },
+  integrator: { label: 'Integrator (servidor 1)', className: 'bg-success/10 text-success border-success/20' },
+  proprio: { label: 'Wesley (servidor 2)', className: 'bg-warning/10 text-warning border-warning/20' },
+  render: { label: 'Render (servidor 3)', className: 'bg-muted text-muted-foreground border-border' },
   local: { label: 'local (dev)', className: 'bg-muted text-muted-foreground' },
   outro: { label: 'outro', className: 'bg-muted text-muted-foreground' },
 };

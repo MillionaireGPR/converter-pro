@@ -123,6 +123,40 @@
     background: var(--blue); color: #fff; font-weight: 600; cursor: pointer; font-size: 14px;
   }
   .refresh-note { color: var(--muted); font-size: 11px; }
+  button.action {
+    padding: 9px 14px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); cursor: pointer; font-weight: 600;
+  }
+  button.action.primary { background: var(--blue); border-color: var(--blue); color: white; }
+  .cluster-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 12px; margin-bottom: 24px;
+  }
+  .server-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .server-card.online { border-color: rgba(63,185,80,.55); }
+  .server-card.offline { border-color: rgba(248,81,73,.65); }
+  .server-head { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:12px; }
+  .server-name { font-weight:700; }
+  .server-role, .server-detail { color:var(--muted); font-size:12px; margin-top:4px; }
+  .server-status { font-size:12px; font-weight:700; }
+  .server-status.ok { color:var(--green); }
+  .server-status.bad { color:var(--red); }
+  .server-metrics { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-top:12px; }
+  .server-metric { background:#0d1117; border-radius:6px; padding:8px; }
+  .server-metric strong { display:block; font-size:16px; }
+  .server-metric span { color:var(--muted); font-size:10px; text-transform:uppercase; }
+  .modal-backdrop {
+    position:fixed; inset:0; z-index:20; background:rgba(0,0,0,.72);
+    display:none; align-items:center; justify-content:center; padding:20px;
+  }
+  .modal { width:min(440px, 100%); background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:22px; }
+  .modal h2 { color:var(--text); font-size:18px; text-transform:none; }
+  .modal input {
+    width:100%; padding:10px 12px; margin-top:10px; border-radius:6px;
+    border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:14px;
+  }
+  .modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
+  .message { min-height:18px; margin-top:10px; font-size:13px; color:var(--muted); }
 </style>
 </head>
 <body>
@@ -136,12 +170,35 @@
   <p id="gateError" style="color: var(--red); font-size: 13px; margin-top: 10px;"></p>
 </div>
 
+<div id="passwordModal" class="modal-backdrop">
+  <div class="modal">
+    <h2>Alterar senha do painel Integrator</h2>
+    <p class="meta">Use pelo menos 10 caracteres, com uma letra e um número.</p>
+    <input id="newToken" type="password" placeholder="Nova senha" autocomplete="new-password" />
+    <input id="confirmToken" type="password" placeholder="Repita a nova senha" autocomplete="new-password" />
+    <div id="passwordMessage" class="message"></div>
+    <div class="modal-actions">
+      <button class="action" onclick="closePasswordModal()">Cancelar</button>
+      <button class="action primary" onclick="changePassword()">Salvar nova senha</button>
+    </div>
+  </div>
+</div>
+
 <div id="app" style="display:none">
   <header>
-    <h1><span class="dot" id="statusDot"></span> Converter-Pro — Painel do Servidor</h1>
-    <span class="meta" id="lastUpdate">carregando...</span>
+    <div>
+      <h1><span class="dot" id="statusDot"></span> Converter-Pro — Central dos Servidores</h1>
+      <span class="meta" id="lastUpdate">carregando...</span>
+    </div>
+    <button class="action" onclick="openPasswordModal()">Alterar senha</button>
   </header>
 
+  <section>
+    <h2>Saúde dos três servidores <span class="refresh-note">atualiza a cada 5s</span></h2>
+    <div class="cluster-grid" id="clusterGrid"><div class="empty">Carregando...</div></div>
+  </section>
+
+  <h2 id="localDetailsTitle">Detalhes deste servidor</h2>
   <div class="grid" id="metricsGrid"></div>
 
   <section>
@@ -181,10 +238,22 @@ function showGate(msg) {
 }
 
 async function apiGet(path) {
-  const res = await fetch(`${path}?token=${encodeURIComponent(TOKEN)}`);
+  const res = await fetch(path, { headers: { 'X-Admin-Token': TOKEN } });
   if (res.status === 403) throw new Error('forbidden');
   if (!res.ok) throw new Error('http ' + res.status);
   return res.json();
+}
+
+async function apiPost(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Admin-Token': TOKEN },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 403) throw new Error('Senha atual inválida.');
+  if (!res.ok) throw new Error(data.detail || ('Erro HTTP ' + res.status));
+  return data;
 }
 
 function fmtBytesBar(percent) {
@@ -241,6 +310,33 @@ async function refreshMetrics() {
   `;
 }
 
+async function refreshCluster() {
+  const data = await apiGet('/admin/cluster');
+  const grid = document.getElementById('clusterGrid');
+  const current = data.servers.find(server => server.id === data.currentServerId);
+  document.getElementById('localDetailsTitle').textContent = current
+    ? `Detalhes do ${current.name}`
+    : 'Detalhes deste servidor';
+  grid.innerHTML = data.servers.map(server => {
+    const metrics = server.metrics;
+    const metricBlock = server.metricsAvailable && metrics ? `
+      <div class="server-metrics">
+        <div class="server-metric"><strong>${metrics.cpuPercent.toFixed(0)}%</strong><span>CPU</span></div>
+        <div class="server-metric"><strong>${metrics.memory.percent.toFixed(0)}%</strong><span>Memória</span></div>
+        <div class="server-metric"><strong>${metrics.activeJobs || 0}/${metrics.maxConcurrentJobs}</strong><span>Processando</span></div>
+      </div>` : `<div class="server-detail">Detalhes aguardando mesma senha e versão do painel.</div>`;
+    return `<div class="server-card ${server.online ? 'online' : 'offline'}">
+      <div class="server-head">
+        <div><div class="server-name">${escapeHtml(server.name)}</div><div class="server-role">${escapeHtml(server.role)}</div></div>
+        <div class="server-status ${server.online ? 'ok' : 'bad'}">${server.online ? '● Saudável' : '● Fora do ar'}</div>
+      </div>
+      <div class="server-detail">Resposta: ${server.responseMs ?? '-'} ms · Versão: ${escapeHtml(server.version || '-')}</div>
+      ${server.error ? `<div class="server-detail">Motivo: ${escapeHtml(server.error)}</div>` : ''}
+      ${metricBlock}
+    </div>`;
+  }).join('');
+}
+
 function badgeFor(status) {
   const s = (status || '').toLowerCase();
   if (s === 'success' || s === 'done' || s === 'completed') return 'success';
@@ -279,7 +375,7 @@ async function refreshJobs() {
 }
 
 async function refreshLogsProper() {
-  const res = await fetch(`/admin/logs?token=${encodeURIComponent(TOKEN)}&lines=300`);
+  const res = await fetch('/admin/logs?lines=300', { headers: { 'X-Admin-Token': TOKEN } });
   if (res.status === 403) throw new Error('forbidden');
   const r = await res.json();
   const box = document.getElementById('logs');
@@ -302,8 +398,10 @@ function escapeHtml(s) {
 }
 
 async function refreshAll() {
+  if (refreshing) return;
+  refreshing = true;
   try {
-    await Promise.all([refreshMetrics(), refreshJobs(), refreshLogsProper()]);
+    await Promise.all([refreshCluster(), refreshMetrics(), refreshJobs(), refreshLogsProper()]);
     document.getElementById('lastUpdate').textContent = 'atualizado às ' + new Date().toLocaleTimeString('pt-BR');
   } catch (e) {
     document.getElementById('statusDot').className = 'dot bad';
@@ -313,10 +411,49 @@ async function refreshAll() {
     } else {
       document.getElementById('lastUpdate').textContent = 'erro ao atualizar: ' + e.message;
     }
+  } finally {
+    refreshing = false;
+  }
+}
+
+function openPasswordModal() {
+  document.getElementById('newToken').value = '';
+  document.getElementById('confirmToken').value = '';
+  document.getElementById('passwordMessage').textContent = '';
+  document.getElementById('passwordModal').style.display = 'flex';
+  document.getElementById('newToken').focus();
+}
+
+function closePasswordModal() {
+  document.getElementById('passwordModal').style.display = 'none';
+}
+
+async function changePassword() {
+  const next = document.getElementById('newToken').value.trim();
+  const confirm = document.getElementById('confirmToken').value.trim();
+  const message = document.getElementById('passwordMessage');
+  if (next !== confirm) {
+    message.style.color = 'var(--red)';
+    message.textContent = 'As duas senhas estão diferentes.';
+    return;
+  }
+  try {
+    message.style.color = 'var(--muted)';
+    message.textContent = 'Salvando...';
+    await apiPost('/admin/token/change', { newToken: next });
+    TOKEN = next;
+    sessionStorage.setItem('adminToken', next);
+    message.style.color = 'var(--green)';
+    message.textContent = 'Senha alterada com sucesso neste servidor.';
+    setTimeout(closePasswordModal, 1000);
+  } catch (error) {
+    message.style.color = 'var(--red)';
+    message.textContent = error.message;
   }
 }
 
 let loopHandle = null;
+let refreshing = false;
 function startLoop() {
   if (loopHandle) clearInterval(loopHandle);
   loopHandle = setInterval(refreshAll, 5000);
