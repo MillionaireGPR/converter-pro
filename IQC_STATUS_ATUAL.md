@@ -32,7 +32,7 @@ estourar esse escopo e precisa estar 100% funcional.
 
 ---
 
-## 🟡 EM HOMOLOGAÇÃO em 04/09 — nova contingência na Integrator ICP
+## 🟢 EM PRODUÇÃO ASSISTIDA em 04/09 — Integrator ICP
 
 Por causa das novas quedas do servidor do Wesley (em 04/09 o endpoint fixo
 retornou HTTP 530 enquanto o Render retornou 200), foi provisionada uma VPS
@@ -99,13 +99,18 @@ ICP Core para substituir o Render como reserva depois da homologação.
   limpeza, modelo Nginx e runbook em `infra/integrator/`. `npm run verify`:
   420/420 testes e invariantes IV-01..23 OK.
 
-**Produção não foi alterada.** A infraestrutura está na PR #124, aberta em
-04/09 e aguardando aprovação do Gabriel; todos os checks automáticos passaram.
-Pendências antes do corte: quando o Wesley voltar, comparar se ele possui algum
-perfil Phase 0 adicional; testar catálogos reais (inclusive >100 MB) e o
-failover em preview; aprovar/mergear a PR; só então trocar o fallback do
-Vercel. O domínio, TLS, limite de 300 MB e reboot completo da VPS já foram
-testados e aprovados.
+**Produção alterada com autorização explícita do Gabriel em 04/09.** A PR #124
+foi mergeada no `main`; a publicação oficial da Vercel ficou pronta e a rota
+`/servidor` foi validada no navegador, redirecionando para a Central da
+Integrator. `VITE_BACKEND_URL_PRIMARY` aponta para a Integrator e
+`VITE_BACKEND_URL_FALLBACK` mantém o Render como reserva automática. Os checks
+do `main` e o health público da Integrator passaram.
+
+Pendências da produção assistida: executar catálogos reais (inclusive >100 MB)
+e testes de carga durante a próxima semana; quando o Wesley voltar, comparar se
+ele possui algum perfil Phase 0 adicional. **Não desligar o Render** até Gabriel
+encerrar esses testes. O domínio, TLS, limite de 300 MB e reboot completo da VPS
+já foram testados e aprovados.
 
 ---
 
