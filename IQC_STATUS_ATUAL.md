@@ -32,6 +32,43 @@ estourar esse escopo e precisa estar 100% funcional.
 
 ---
 
+## 🟡 EM HOMOLOGAÇÃO em 04/09 — nova contingência na Integrator ICP
+
+Por causa das novas quedas do servidor do Wesley (em 04/09 o endpoint fixo
+retornou HTTP 530 enquanto o Render retornou 200), foi provisionada uma VPS
+ICP Core para substituir o Render como reserva depois da homologação.
+
+- **Host:** Integrator LAX-12, IP público `23.80.89.90`, Ubuntu 26.04 LTS,
+  4 vCPU, 6 GB RAM e 100 GB NVMe.
+- **Segurança aplicada:** SSH por chave; login remoto por senha bloqueado;
+  firewall ativo; 2 GB de swap; Fail2ban e atualizações automáticas ativos.
+  Portas 22/80/443/2090 preservadas; a porta FTP 21 que veio aberta foi
+  fechada porque não havia serviço nela (SFTP continua pela porta 22).
+- **Stack do provedor preservada:** ICP ativo em `:2090`; Nginx do ICP roda
+  no container `ic-nginx-vH9X`; Docker 29.8.0 e Compose 5.5.1.
+- **Backend de homologação:** container `converter-pro-backend` saudável,
+  restrito a `127.0.0.1:28081` (ainda sem exposição pública), mesma versão
+  `2026.08.25-v52-supplier-rules-column-mapping` do Render.
+- **Proteção do Core:** `MAX_CONCURRENT_JOBS=1`, teto de 5 GB RAM / 6 GB com
+  swap, 3,5 vCPU, restart automático, healthcheck e rotação de logs.
+- **Persistência:** dados fora do checkout em `/opt/converter-pro/data`;
+  `supplier_profiles` nunca entra na limpeza; temporários com mais de 21 dias
+  são removidos pelo timer `converter-pro-cleanup.timer`.
+- **Validações concluídas:** Supabase e Gemini responderam em leitura;
+  OpenAPI contém os endpoints esperados; smoke AI com PDF sintético extraiu
+  1/1 produto em 6,24s, confiança 100% e pico de 178,9 MB de RAM; CORS,
+  persistência após restart e retorno automático após reboot completo OK.
+- **Código:** branch `infra/integrator-vps`; Dockerfile, Compose, deploy,
+  limpeza, modelo Nginx e runbook em `infra/integrator/`. `npm run verify`:
+  420/420 testes e invariantes IV-01..23 OK.
+
+**Produção não foi alterada.** Pendências antes do corte: resolver/publicar o
+domínio ICP com TLS e limite de 300 MB; migrar os perfis Phase 0 da origem mais
+completa; testar catálogos reais (inclusive >100 MB), reboot e failover em
+preview; abrir/aprovar/mergear o PR; só então trocar o fallback do Vercel.
+
+---
+
 ## ✅ ENTREGUE em 28/08–01/09 — domínio na Cloudflare + Tunnel fixo do backend (PR #120)
 
 Resolve de vez a Pendência #2 abaixo (estava aberta desde 25/08). Causa raiz
