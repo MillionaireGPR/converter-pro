@@ -132,7 +132,13 @@
     display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
     gap: 12px; margin-bottom: 24px;
   }
-  .server-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .server-card {
+    width:100%; text-align:left; color:var(--text); font:inherit; cursor:pointer;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px;
+    transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .server-card:hover { transform:translateY(-1px); box-shadow:0 0 0 2px rgba(88,166,255,.22); }
+  .server-card.selected { box-shadow:0 0 0 3px rgba(88,166,255,.65); }
   .server-card.online { border-color: rgba(63,185,80,.55); }
   .server-card.offline { border-color: rgba(248,81,73,.65); }
   .server-head { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:12px; }
@@ -157,6 +163,7 @@
   }
   .modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
   .message { min-height:18px; margin-top:10px; font-size:13px; color:var(--muted); }
+  .selection-note { color:var(--muted); font-size:12px; margin:-14px 0 20px; }
 </style>
 </head>
 <body>
@@ -196,20 +203,21 @@
   <section>
     <h2>Saúde dos três servidores <span class="refresh-note">atualiza a cada 5s</span></h2>
     <div class="cluster-grid" id="clusterGrid"><div class="empty">Carregando...</div></div>
+    <p class="selection-note">Clique em um servidor para ver os dados e o histórico dele abaixo.</p>
   </section>
 
-  <h2 id="localDetailsTitle">Detalhes deste servidor</h2>
+  <h2 id="selectedDetailsTitle">Detalhes do servidor selecionado</h2>
   <div class="grid" id="metricsGrid"></div>
 
   <section>
-    <h2>Jobs recentes</h2>
+    <h2>Histórico de trabalhos do servidor selecionado</h2>
     <div class="panel">
       <div id="jobsTableWrap"><div class="empty">Carregando...</div></div>
     </div>
   </section>
 
   <section>
-    <h2>Logs ao vivo <span class="refresh-note">atualiza a cada 5s</span></h2>
+    <h2>Logs do servidor selecionado <span class="refresh-note">atualiza a cada 5s</span></h2>
     <div class="panel">
       <div id="logs"><div class="empty">Carregando...</div></div>
     </div>
@@ -218,6 +226,8 @@
 
 <script>
 let TOKEN = new URLSearchParams(window.location.search).get('token') || sessionStorage.getItem('adminToken') || '';
+let SELECTED_SERVER_ID = 'integrator';
+let CLUSTER_SERVERS = [];
 if (TOKEN) sessionStorage.setItem('adminToken', TOKEN);
 
 function saveToken() {
@@ -270,8 +280,7 @@ function fmtUptime(sec) {
   return `${m}m`;
 }
 
-async function refreshMetrics() {
-  const m = await apiGet('/admin/metrics');
+function renderMetrics(m) {
   document.getElementById('statusDot').className = 'dot ok';
   const grid = document.getElementById('metricsGrid');
   grid.innerHTML = `
@@ -312,11 +321,8 @@ async function refreshMetrics() {
 
 async function refreshCluster() {
   const data = await apiGet('/admin/cluster');
+  CLUSTER_SERVERS = data.servers;
   const grid = document.getElementById('clusterGrid');
-  const current = data.servers.find(server => server.id === data.currentServerId);
-  document.getElementById('localDetailsTitle').textContent = current
-    ? `Detalhes do ${current.name}`
-    : 'Detalhes deste servidor';
   grid.innerHTML = data.servers.map(server => {
     const metrics = server.metrics;
     const metricBlock = server.metricsAvailable && metrics ? `
@@ -324,8 +330,8 @@ async function refreshCluster() {
         <div class="server-metric"><strong>${metrics.cpuPercent.toFixed(0)}%</strong><span>CPU</span></div>
         <div class="server-metric"><strong>${metrics.memory.percent.toFixed(0)}%</strong><span>Memória</span></div>
         <div class="server-metric"><strong>${metrics.activeJobs || 0}/${metrics.maxConcurrentJobs}</strong><span>Processando</span></div>
-      </div>` : `<div class="server-detail">Detalhes aguardando mesma senha e versão do painel.</div>`;
-    return `<div class="server-card ${server.online ? 'online' : 'offline'}">
+      </div>` : `<div class="server-detail">Clique para ver os detalhes. Conexão de histórico pendente.</div>`;
+    return `<button type="button" class="server-card ${server.online ? 'online' : 'offline'} ${server.id === SELECTED_SERVER_ID ? 'selected' : ''}" onclick="selectServer('${server.id}')">
       <div class="server-head">
         <div><div class="server-name">${escapeHtml(server.name)}</div><div class="server-role">${escapeHtml(server.role)}</div></div>
         <div class="server-status ${server.online ? 'ok' : 'bad'}">${server.online ? '● Saudável' : '● Fora do ar'}</div>
@@ -333,8 +339,20 @@ async function refreshCluster() {
       <div class="server-detail">Resposta: ${server.responseMs ?? '-'} ms · Versão: ${escapeHtml(server.version || '-')}</div>
       ${server.error ? `<div class="server-detail">Motivo: ${escapeHtml(server.error)}</div>` : ''}
       ${metricBlock}
-    </div>`;
+    </button>`;
   }).join('');
+}
+
+async function selectServer(serverId) {
+  SELECTED_SERVER_ID = serverId;
+  const server = CLUSTER_SERVERS.find(item => item.id === serverId);
+  document.getElementById('selectedDetailsTitle').textContent = server
+    ? `Detalhes do ${server.name}`
+    : 'Detalhes do servidor selecionado';
+  document.querySelectorAll('.server-card').forEach(card => card.classList.remove('selected'));
+  const selected = document.querySelector(`.server-card[onclick="selectServer('${serverId}')"]`);
+  if (selected) selected.classList.add('selected');
+  await refreshSelectedDetails();
 }
 
 function badgeFor(status) {
@@ -345,8 +363,7 @@ function badgeFor(status) {
   return 'other';
 }
 
-async function refreshJobs() {
-  const r = await apiGet('/admin/jobs');
+function renderJobs(r) {
   const wrap = document.getElementById('jobsTableWrap');
   if (!r.jobs.length) {
     wrap.innerHTML = '<div class="empty">Nenhum job registrado ainda.</div>';
@@ -374,10 +391,7 @@ async function refreshJobs() {
   </table>`;
 }
 
-async function refreshLogsProper() {
-  const res = await fetch('/admin/logs?lines=300', { headers: { 'X-Admin-Token': TOKEN } });
-  if (res.status === 403) throw new Error('forbidden');
-  const r = await res.json();
+function renderLogs(r) {
   const box = document.getElementById('logs');
   if (!r.lines.length) {
     box.innerHTML = '<div class="empty">Sem atividade recente (buffer reseta a cada reinício do serviço).</div>';
@@ -393,6 +407,30 @@ async function refreshLogsProper() {
   if (atBottom) box.scrollTop = box.scrollHeight;
 }
 
+function showDetailsUnavailable(reason) {
+  const message = escapeHtml(reason || 'Os detalhes deste servidor ainda não estão conectados.');
+  document.getElementById('metricsGrid').innerHTML = `<div class="card" style="grid-column:1/-1"><div class="empty">${message}</div></div>`;
+  document.getElementById('jobsTableWrap').innerHTML = `<div class="empty">${message}</div>`;
+  document.getElementById('logs').innerHTML = `<div class="empty">${message}</div>`;
+}
+
+async function refreshSelectedDetails() {
+  const requestedServerId = SELECTED_SERVER_ID;
+  const data = await apiGet(`/admin/server/${encodeURIComponent(requestedServerId)}/details`);
+  if (requestedServerId !== SELECTED_SERVER_ID) return;
+  const server = data.server || CLUSTER_SERVERS.find(item => item.id === requestedServerId);
+  document.getElementById('selectedDetailsTitle').textContent = server
+    ? `Detalhes do ${server.name}`
+    : 'Detalhes do servidor selecionado';
+  if (!data.detailsAvailable) {
+    showDetailsUnavailable(data.reason);
+    return;
+  }
+  renderMetrics(data.metrics);
+  renderJobs(data.jobs);
+  renderLogs(data.logs);
+}
+
 function escapeHtml(s) {
   return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
@@ -401,7 +439,8 @@ async function refreshAll() {
   if (refreshing) return;
   refreshing = true;
   try {
-    await Promise.all([refreshCluster(), refreshMetrics(), refreshJobs(), refreshLogsProper()]);
+    await refreshCluster();
+    await refreshSelectedDetails();
     document.getElementById('lastUpdate').textContent = 'atualizado às ' + new Date().toLocaleTimeString('pt-BR');
   } catch (e) {
     document.getElementById('statusDot').className = 'dot bad';

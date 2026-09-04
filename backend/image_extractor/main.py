@@ -165,6 +165,10 @@ async def admin_logs(lines: int = 200, admin_token: str = Depends(_require_admin
     """Últimas N linhas de log (stdout/stderr) capturadas em memória.
     Reseta a cada restart do processo (idle/deploy/OOM) -- é o "agora",
     não histórico permanente."""
+    return _logs_snapshot(lines)
+
+
+def _logs_snapshot(lines: int = 200) -> dict:
     lines = max(1, min(lines, 1000))
     return {"lines": list(_LOG_BUFFER)[-lines:], "bufferSize": len(_LOG_BUFFER)}
 
@@ -234,6 +238,10 @@ async def admin_metrics(admin_token: str = Depends(_require_admin)):
 @app.get("/admin/jobs")
 async def admin_jobs(limit: int = 50, admin_token: str = Depends(_require_admin)):
     """Últimos jobs processados (status, timing) lidos de temp/<jobId>/status.json."""
+    return _jobs_snapshot(limit)
+
+
+def _jobs_snapshot(limit: int = 50) -> dict:
     limit = max(1, min(limit, 200))
     results = []
     try:
@@ -298,7 +306,7 @@ async def change_admin_token(
     return {"success": True, "message": "Senha alterada neste servidor"}
 
 
-def _probe_remote_server(server: dict, admin_token: str) -> dict:
+def _probe_remote_server(server: dict) -> dict:
     started = time.perf_counter()
     result = {**server, "online": False, "metricsAvailable": False}
     try:
@@ -316,10 +324,13 @@ def _probe_remote_server(server: dict, admin_token: str) -> dict:
         result.update({"error": type(exc).__name__, "responseMs": round((time.perf_counter() - started) * 1000)})
         return result
 
+    monitor_token = _read_monitor_token(server["id"])
     try:
+        if not monitor_token:
+            return result
         request = urllib.request.Request(
             server["url"] + "/admin/metrics",
-            headers={"X-Admin-Token": admin_token},
+            headers={"X-Admin-Token": monitor_token},
         )
         with urllib.request.urlopen(request, timeout=8) as response:
             result["metrics"] = json.loads(response.read().decode("utf-8"))
@@ -329,6 +340,86 @@ def _probe_remote_server(server: dict, admin_token: str) -> dict:
         # a saúde pública continua aparecendo sem transformar isso em queda.
         pass
     return result
+
+
+def _read_monitor_token(server_id: str) -> str:
+    """Lê a credencial exclusiva usada para consultar outro servidor.
+
+    A senha do painel Integrator nunca é encaminhada aos servidores remotos.
+    Cada credencial fica num arquivo 0600 dentro do volume administrativo.
+    """
+    if not _ADMIN_TOKEN_FILE:
+        return ""
+    path = os.path.join(os.path.dirname(_ADMIN_TOKEN_FILE), f"monitor_{server_id}_token")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def _remote_admin_get(server: dict, path: str, token: str) -> dict:
+    request = urllib.request.Request(
+        server["url"] + path,
+        headers={"X-Admin-Token": token},
+    )
+    with urllib.request.urlopen(request, timeout=12) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+@app.get("/admin/server/{server_id}/details")
+async def admin_server_details(
+    server_id: str,
+    admin_token: str = Depends(_require_admin),
+):
+    """Métricas, jobs e logs do servidor escolhido no painel central."""
+    server = next((item for item in _MONITORED_SERVERS if item["id"] == server_id), None)
+    if not server:
+        raise HTTPException(status_code=404, detail="Servidor não encontrado")
+
+    if server_id == _SERVER_ID:
+        return {
+            "server": server,
+            "detailsAvailable": True,
+            "metrics": _metrics_snapshot(),
+            "jobs": _jobs_snapshot(50),
+            "logs": _logs_snapshot(300),
+        }
+
+    monitor_token = _read_monitor_token(server_id)
+    if not monitor_token:
+        return {
+            "server": server,
+            "detailsAvailable": False,
+            "reason": "Credencial de monitoramento ainda não conectada neste servidor.",
+        }
+
+    try:
+        metrics, jobs, logs = await asyncio.gather(
+            asyncio.to_thread(_remote_admin_get, server, "/admin/metrics", monitor_token),
+            asyncio.to_thread(_remote_admin_get, server, "/admin/jobs?limit=50", monitor_token),
+            asyncio.to_thread(_remote_admin_get, server, "/admin/logs?lines=300", monitor_token),
+        )
+    except urllib.error.HTTPError as exc:
+        return {
+            "server": server,
+            "detailsAvailable": False,
+            "reason": f"Acesso remoto recusado (HTTP {exc.code}).",
+        }
+    except Exception as exc:
+        return {
+            "server": server,
+            "detailsAvailable": False,
+            "reason": f"Servidor remoto indisponível ({type(exc).__name__}).",
+        }
+
+    return {
+        "server": server,
+        "detailsAvailable": True,
+        "metrics": metrics,
+        "jobs": jobs,
+        "logs": logs,
+    }
 
 
 @app.get("/admin/cluster")
@@ -346,7 +437,7 @@ async def admin_cluster(admin_token: str = Depends(_require_admin)):
                 "metrics": _metrics_snapshot(),
             }))
         else:
-            tasks.append(asyncio.to_thread(_probe_remote_server, server, admin_token))
+            tasks.append(asyncio.to_thread(_probe_remote_server, server))
     return {"servers": await asyncio.gather(*tasks), "currentServerId": _SERVER_ID}
 
 
