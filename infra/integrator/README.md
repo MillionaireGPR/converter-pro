@@ -68,6 +68,20 @@ git pull --ff-only origin main
 
 O deploy recria apenas o container; os dados ficam fora do checkout.
 
+## Detalhes dos servidores no painel central
+
+Os cartões Integrator, Wesley e Render funcionam como abas. A Integrator é
+local e sempre mostra métricas, histórico de jobs e logs. Para habilitar os
+detalhes de um servidor remoto, grave a credencial administrativa exclusiva
+dele em um destes arquivos, nunca no Git:
+
+- `/opt/converter-pro/config/admin/monitor_wesley_token`
+- `/opt/converter-pro/config/admin/monitor_render_token`
+
+Os arquivos devem pertencer ao UID/GID `10001:10001` e usar permissão `0600`.
+A senha usada para entrar no painel da Integrator não é reutilizada nem enviada
+aos servidores remotos.
+
 ## Rollback
 
 Voltar o checkout para um commit previamente aprovado e executar novamente
