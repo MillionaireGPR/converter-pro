@@ -25,8 +25,11 @@
 // const local pela duração da operação.
 // ===================================================================
 
+/** Cadeia de backends, do mais pra menos prioritário. */
+type BackendChain = { primary: string; fallback: string; fallback2: string };
+
 /** Sobrescrita explícita das URLs — ver `setBackends()`. */
-let overrides: { primary: string; fallback: string } | null = null;
+let overrides: BackendChain | null = null;
 
 /**
  * Define as URLs manualmente e limpa a escolha memoizada.
@@ -37,55 +40,75 @@ let overrides: { primary: string; fallback: string } | null = null;
  * cai) ficaria sem cobertura. Usado pelos testes; em produção ninguém chama e
  * a config vem do ambiente normalmente.
  */
-export function setBackends(primary: string, fallback: string): void {
-  overrides = { primary, fallback };
+export function setBackends(primary: string, fallback: string, fallback2 = ''): void {
+  overrides = { primary, fallback, fallback2 };
   resolved = null;
   inFlight = null;
 }
 
 /**
- * Decide quem é primário e quem é reserva a partir das variáveis de ambiente.
+ * Decide a cadeia primário → reserva → última instância a partir das
+ * variáveis de ambiente.
  *
- * Três variáveis, porque o `VITE_BACKEND_URL` NÃO é confiável como primário:
- * ele é reescrito automaticamente pelo watcher do Cloudflare Tunnel no
- * servidor próprio (a URL do túnel gratuito muda a cada reinício) e o watcher
- * ainda dispara um redeploy. Ou seja: qualquer decisão de "qual servidor
- * atende o cliente" feita nessa variável é desfeita sozinha na próxima queda
- * do túnel — foi exatamente o que aconteceria com a troca para o Render em
- * 20/08/2026, feita enquanto o SSH do servidor próprio estava fechado e o
- * watcher não podia ser desligado.
+ * Arquitetura de 3 servidores (07/09/2026, decisão do Gabriel): Integrator
+ * (VPS própria, homologada 04/09) é o primário, Render a reserva automática,
+ * e o servidor do Wesley vira última instância — continua com porta fechada
+ * e sem atualização no momento desta decisão, então na prática o health
+ * check dele falha e ele nunca é escolhido enquanto isso não mudar. Ele fica
+ * na cadeia mesmo assim: existir estruturalmente como último recurso é
+ * melhor que site fora do ar caso Integrator E Render caiam juntos.
  *
- *   VITE_BACKEND_URL_PRIMARY   → trava o primário (o watcher não mexe nela).
- *                                Setada: o `VITE_BACKEND_URL` vira reserva.
- *   VITE_BACKEND_URL           → escrita pelo watcher (URL do túnel).
- *   VITE_BACKEND_URL_FALLBACK  → reserva quando não há pin. Vazio = failover
- *                                desligado.
+ * Quatro variáveis, porque o `VITE_BACKEND_URL` NÃO é confiável como
+ * primário: ele era reescrito automaticamente pelo watcher do Cloudflare
+ * Tunnel do servidor do Wesley (a URL do túnel gratuito mudava a cada
+ * reinício) e o watcher ainda disparava um redeploy. Ou seja: qualquer
+ * decisão de "qual servidor atende o cliente" feita nessa variável se desfaz
+ * sozinha na próxima queda do túnel — foi exatamente o que aconteceria com a
+ * troca para o Render em 20/08/2026, feita enquanto o SSH do servidor
+ * próprio estava fechado e o watcher não podia ser desligado. A variável
+ * segue existindo só por compatibilidade com essa história; hoje nada mais
+ * escreve nela.
  *
- * Sem o pin, o comportamento é idêntico ao de antes. Para voltar ao servidor
- * próprio como primário basta APAGAR `VITE_BACKEND_URL_PRIMARY` no Vercel.
+ *   VITE_BACKEND_URL_PRIMARY    → trava o primário (Integrator).
+ *   VITE_BACKEND_URL            → legado do watcher do túnel; ignorada como
+ *                                  candidata a reserva quando o pin existe.
+ *   VITE_BACKEND_URL_FALLBACK   → reserva automática (Render).
+ *   VITE_BACKEND_URL_FALLBACK_2 → última instância (Wesley).
+ *
+ * Sem o pin, o comportamento é o legado de 2 servidores (primário = watcher
+ * ou localhost, reserva = FALLBACK) — FALLBACK_2 nunca entra em jogo nesse
+ * caso, porque não existia essa variável antes do pin ser adotado.
  */
-export function pickBackends(env: Record<string, any>): { primary: string; fallback: string } {
+export function pickBackends(env: Record<string, any>): BackendChain {
   const pin = env.VITE_BACKEND_URL_PRIMARY || '';
   const doWatcher = env.VITE_BACKEND_URL || '';
   const reservaFixa = env.VITE_BACKEND_URL_FALLBACK || '';
+  const ultimaInstancia = env.VITE_BACKEND_URL_FALLBACK_2 || '';
 
   if (pin) {
-    // A reserva é a primeira URL que exista e seja DIFERENTE do pin. Sem esse
-    // cuidado a troca de 20/08 viraria "primário e reserva no mesmo servidor"
-    // (failover morto e ninguém percebe): enquanto o pin não está valendo em
-    // produção, o Render precisa estar em `VITE_BACKEND_URL`; quando passa a
-    // valer, essa mesma variável seria herdada como reserva.
-    const reserva = [doWatcher, reservaFixa].find(u => u && u !== pin) || '';
-    return { primary: pin, fallback: reserva };
+    // Cada posição da cadeia é a primeira URL candidata que exista, seja
+    // DIFERENTE do pin e ainda não tenha sido usada numa posição anterior —
+    // sem esse cuidado a troca de 20/08 viraria "primário e reserva no mesmo
+    // servidor" (failover morto e ninguém percebe).
+    const usados = new Set([pin]);
+    const proxima = (candidatos: string[]) => {
+      const achado = candidatos.find(u => u && !usados.has(u)) || '';
+      if (achado) usados.add(achado);
+      return achado;
+    };
+    const fallback = proxima([doWatcher, reservaFixa, ultimaInstancia]);
+    const fallback2 = proxima([reservaFixa, ultimaInstancia, doWatcher]);
+    return { primary: pin, fallback, fallback2 };
   }
 
   return {
     primary: doWatcher || 'http://localhost:8000',
     fallback: reservaFixa,
+    fallback2: '',
   };
 }
 
-function readBackends(): { primary: string; fallback: string } {
+function readBackends(): BackendChain {
   if (overrides) return overrides;
   return pickBackends((import.meta as any).env ?? {});
 }
@@ -111,7 +134,7 @@ async function isHealthy(url: string): Promise<boolean> {
 }
 
 async function probe(): Promise<string> {
-  const { primary, fallback } = readBackends();
+  const { primary, fallback, fallback2 } = readBackends();
 
   // Sem fallback configurado: comportamento idêntico ao de antes (nenhum
   // health check extra, nenhuma latência adicionada).
@@ -125,9 +148,17 @@ async function probe(): Promise<string> {
     return fallback;
   }
 
-  // Ambos fora: devolve o primário pra que o erro real (e sua mensagem)
+  if (fallback2) {
+    console.warn('[BackendResolver] Reserva não respondeu — testando última instância...');
+    if (await isHealthy(fallback2)) {
+      console.warn(`[BackendResolver] Usando backend de última instância: ${fallback2}`);
+      return fallback2;
+    }
+  }
+
+  // Todos fora: devolve o primário pra que o erro real (e sua mensagem)
   // apareça normalmente, em vez de mascarar como problema de fallback.
-  console.error('[BackendResolver] Primário E reserva fora do ar.');
+  console.error('[BackendResolver] Primário, reserva e última instância fora do ar.');
   return primary;
 }
 

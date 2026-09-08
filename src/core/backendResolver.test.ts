@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const PRIMARY = 'https://tunel-do-servidor.trycloudflare.com';
 const FALLBACK = 'https://converter-pro-image-extractor.onrender.com';
+const LAST_RESORT = 'https://conversor-api.metodoiqc.com.br';
 
 /**
  * Carrega o módulo com as URLs injetadas via `setBackends` (o Vite inlina
@@ -20,7 +21,11 @@ const FALLBACK = 'https://converter-pro-image-extractor.onrender.com';
 async function loadResolver(env: Record<string, string>) {
   vi.resetModules();
   const mod = await import('./backendResolver');
-  mod.setBackends(env.VITE_BACKEND_URL ?? '', env.VITE_BACKEND_URL_FALLBACK ?? '');
+  mod.setBackends(
+    env.VITE_BACKEND_URL ?? '',
+    env.VITE_BACKEND_URL_FALLBACK ?? '',
+    env.VITE_BACKEND_URL_FALLBACK_2 ?? ''
+  );
   return mod;
 }
 
@@ -144,6 +149,43 @@ describe('backendResolver — failover automático', () => {
 
     expect(await getBackendUrl()).toBe(PRIMARY);
   });
+
+  it('primário e reserva fora do ar: cai na última instância (arquitetura de 3 servidores, 07/09/2026)', async () => {
+    fetchMock.mockImplementation((url: string) =>
+      url.startsWith(LAST_RESORT) ? Promise.resolve(okResponse) : Promise.reject(new TypeError('Failed to fetch'))
+    );
+    const { getBackendUrl } = await loadResolver({
+      VITE_BACKEND_URL: PRIMARY,
+      VITE_BACKEND_URL_FALLBACK: FALLBACK,
+      VITE_BACKEND_URL_FALLBACK_2: LAST_RESORT,
+    });
+
+    expect(await getBackendUrl()).toBe(LAST_RESORT);
+  });
+
+  it('os três fora do ar: devolve o primário (erro real aparece)', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    const { getBackendUrl } = await loadResolver({
+      VITE_BACKEND_URL: PRIMARY,
+      VITE_BACKEND_URL_FALLBACK: FALLBACK,
+      VITE_BACKEND_URL_FALLBACK_2: LAST_RESORT,
+    });
+
+    expect(await getBackendUrl()).toBe(PRIMARY);
+  });
+
+  it('sem última instância configurada: para na reserva, nunca tenta um 3º health check', async () => {
+    fetchMock.mockImplementation((url: string) =>
+      url.startsWith(FALLBACK) ? Promise.resolve(okResponse) : Promise.reject(new TypeError('Failed to fetch'))
+    );
+    const { getBackendUrl } = await loadResolver({
+      VITE_BACKEND_URL: PRIMARY,
+      VITE_BACKEND_URL_FALLBACK: FALLBACK,
+    });
+
+    expect(await getBackendUrl()).toBe(FALLBACK);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('backendLabel — rótulo pra diagnóstico', () => {
@@ -174,7 +216,7 @@ describe('pickBackends — pin do primário contra o watcher do túnel', () => {
         VITE_BACKEND_URL: PRIMARY,
         VITE_BACKEND_URL_FALLBACK: 'https://ignorado.example',
       })
-    ).toEqual({ primary: FALLBACK, fallback: PRIMARY });
+    ).toEqual({ primary: FALLBACK, fallback: PRIMARY, fallback2: 'https://ignorado.example' });
   });
 
   it('nunca aponta primario e reserva pro MESMO servidor (failover morto)', async () => {
@@ -188,14 +230,14 @@ describe('pickBackends — pin do primário contra o watcher do túnel', () => {
         VITE_BACKEND_URL: FALLBACK,
         VITE_BACKEND_URL_FALLBACK: PRIMARY,
       })
-    ).toEqual({ primary: FALLBACK, fallback: PRIMARY });
+    ).toEqual({ primary: FALLBACK, fallback: PRIMARY, fallback2: '' });
   });
 
   it('pin sem nenhuma reserva diferente: failover desligado, sem duplicar', async () => {
     const { pickBackends } = await import('./backendResolver');
     expect(
       pickBackends({ VITE_BACKEND_URL_PRIMARY: FALLBACK, VITE_BACKEND_URL: FALLBACK })
-    ).toEqual({ primary: FALLBACK, fallback: '' });
+    ).toEqual({ primary: FALLBACK, fallback: '', fallback2: '' });
   });
 
   it('o watcher trocando a URL do túnel NÃO promove o túnel a primário', async () => {
@@ -212,18 +254,70 @@ describe('pickBackends — pin do primário contra o watcher do túnel', () => {
     const { pickBackends } = await import('./backendResolver');
     expect(
       pickBackends({ VITE_BACKEND_URL: PRIMARY, VITE_BACKEND_URL_FALLBACK: FALLBACK })
-    ).toEqual({ primary: PRIMARY, fallback: FALLBACK });
+    ).toEqual({ primary: PRIMARY, fallback: FALLBACK, fallback2: '' });
   });
 
   it('sem nenhuma variável: cai em localhost e failover desligado', async () => {
     const { pickBackends } = await import('./backendResolver');
-    expect(pickBackends({})).toEqual({ primary: 'http://localhost:8000', fallback: '' });
+    expect(pickBackends({})).toEqual({ primary: 'http://localhost:8000', fallback: '', fallback2: '' });
   });
 
   it('pin vazio é tratado como ausente (não zera o primário)', async () => {
     const { pickBackends } = await import('./backendResolver');
     expect(
       pickBackends({ VITE_BACKEND_URL_PRIMARY: '', VITE_BACKEND_URL: PRIMARY, VITE_BACKEND_URL_FALLBACK: FALLBACK })
-    ).toEqual({ primary: PRIMARY, fallback: FALLBACK });
+    ).toEqual({ primary: PRIMARY, fallback: FALLBACK, fallback2: '' });
+  });
+});
+
+/**
+ * Arquitetura de 3 servidores (07/09/2026, decisão do Gabriel): Integrator
+ * primário, Render reserva automática, Wesley última instância — pois o
+ * servidor do Wesley segue com porta fechada e sem atualização, mas ainda
+ * assim é melhor que site fora do ar se Integrator E Render caírem juntos.
+ */
+describe('pickBackends — última instância (Wesley, 3º servidor)', () => {
+  it('com os três configurados: cadeia Integrator → Render → Wesley', async () => {
+    const { pickBackends } = await import('./backendResolver');
+    expect(
+      pickBackends({
+        VITE_BACKEND_URL_PRIMARY: PRIMARY,
+        VITE_BACKEND_URL_FALLBACK: FALLBACK,
+        VITE_BACKEND_URL_FALLBACK_2: LAST_RESORT,
+      })
+    ).toEqual({ primary: PRIMARY, fallback: FALLBACK, fallback2: LAST_RESORT });
+  });
+
+  it('última instância igual à reserva: não duplica, fica de fora da cadeia', async () => {
+    const { pickBackends } = await import('./backendResolver');
+    expect(
+      pickBackends({
+        VITE_BACKEND_URL_PRIMARY: PRIMARY,
+        VITE_BACKEND_URL_FALLBACK: FALLBACK,
+        VITE_BACKEND_URL_FALLBACK_2: FALLBACK,
+      })
+    ).toEqual({ primary: PRIMARY, fallback: FALLBACK, fallback2: '' });
+  });
+
+  it('última instância igual ao pin: fica de fora da cadeia (nunca primário e reserva no mesmo servidor)', async () => {
+    const { pickBackends } = await import('./backendResolver');
+    expect(
+      pickBackends({
+        VITE_BACKEND_URL_PRIMARY: PRIMARY,
+        VITE_BACKEND_URL_FALLBACK: FALLBACK,
+        VITE_BACKEND_URL_FALLBACK_2: PRIMARY,
+      })
+    ).toEqual({ primary: PRIMARY, fallback: FALLBACK, fallback2: '' });
+  });
+
+  it('sem pin: última instância nunca entra em jogo (comportamento legado de 2 servidores)', async () => {
+    const { pickBackends } = await import('./backendResolver');
+    expect(
+      pickBackends({
+        VITE_BACKEND_URL: PRIMARY,
+        VITE_BACKEND_URL_FALLBACK: FALLBACK,
+        VITE_BACKEND_URL_FALLBACK_2: LAST_RESORT,
+      })
+    ).toEqual({ primary: PRIMARY, fallback: FALLBACK, fallback2: '' });
   });
 });
