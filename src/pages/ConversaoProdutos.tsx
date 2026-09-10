@@ -550,6 +550,16 @@ export default function ConversaoProdutos() {
       });
       toast.success(`Sucesso! ${result.stats.total} itens em ${fmtTempo(totalSec)} (${file.name}).`);
 
+      // A IA é o motor PRIMÁRIO de PDF; quando ela não roda, o regex assume e o
+      // resultado sai pior (menos produtos, nenhuma imagem casada) — mas o toast
+      // acima continua dizendo "Sucesso". Sem este aviso o cliente só descobre
+      // olhando o resultado e reporta como bug do casamento de imagens, que não
+      // é a causa (incidente 08/09/2026: FORTAL com upload estourando o prazo e
+      // TUKA TOYS acima do teto de upload — nos dois a IA nunca chegou a rodar).
+      if (result.avisoAiFallback) {
+        toast.warning(result.avisoAiFallback, { duration: 15000 });
+      }
+
       // Extração de imagens pode falhar silenciosamente (ex: servidor reiniciou
       // por OOM em catálogo grande) sem que o pipeline de texto/preço seja afetado.
       // Antes disso não havia feedback visual — parecia "sucesso" mesmo sem imagens.

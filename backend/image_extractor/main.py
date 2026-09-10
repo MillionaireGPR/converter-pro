@@ -762,16 +762,39 @@ class _ResourceMonitor:
     def _loop(self):
         import psutil
         proc = psutil.Process(os.getpid())
-        proc.cpu_percent()  # 1ª leitura sempre 0.0 (precisa de intervalo de referência) -- descarta
+        proc.cpu_percent()  # 1ª leitura sempre 0.0 (só arma o marcador) -- descarta
+
+        # TETO FÍSICO: um processo não passa de 100% por núcleo. Serve de rede
+        # de segurança pra qualquer leitura degenerada (relógio ajustado,
+        # thread starvada), pra nunca mais aparecer número impossível no painel.
+        teto_cpu = (psutil.cpu_count() or 1) * 100.0
+
+        # Memória não depende de intervalo -- registra já, pra job muito curto
+        # não terminar com pico zerado.
+        try:
+            self._peak_mem_mb = proc.memory_info().rss / (1024 * 1024)
+        except Exception:
+            pass
+
         while not self._stop.is_set():
+            # ESPERAR ANTES de medir, não depois (bug corrigido em 10/09/2026).
+            # cpu_percent() sem intervalo divide o tempo de CPU consumido pelo
+            # tempo de PAREDE desde a chamada anterior. Medindo logo após a
+            # leitura de arme, esse denominador era de microssegundos enquanto o
+            # numerador carrega a granularidade do clock tick do kernel (~10ms) --
+            # razão que explodia justamente na PRIMEIRA amostra, que é a que
+            # virava o "pico" do job inteiro. Sintoma real: job f5c61e48 marcou
+            # 18300,9% numa VPS de 4 núcleos (máximo físico 400%), e o painel
+            # passou a sugerir risco de estourar a política de CPU do provedor.
+            # Medição real do mesmo job via docker stats: pico 27%, média 2,2%.
+            self._stop.wait(self.interval)
             try:
-                cpu = proc.cpu_percent()
+                cpu = min(proc.cpu_percent(), teto_cpu)
                 mem_mb = proc.memory_info().rss / (1024 * 1024)
                 self._peak_cpu = max(self._peak_cpu, cpu)
                 self._peak_mem_mb = max(self._peak_mem_mb, mem_mb)
             except Exception:
                 pass
-            self._stop.wait(self.interval)
 
     def __enter__(self):
         self._thread = threading.Thread(target=self._loop, daemon=True)

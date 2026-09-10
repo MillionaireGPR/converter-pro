@@ -27,7 +27,8 @@ fi
 install -d -m 0750 "${APP_ROOT}/config" "${ADMIN_DIR}" "${DATA_DIR}"
 install -d -m 0750 \
   "${DATA_DIR}/temp" \
-  "${DATA_DIR}/supplier_profiles"
+  "${DATA_DIR}/supplier_profiles" \
+  "${DATA_DIR}/uploads_tmp"
 
 if [[ ! -s "${ADMIN_TOKEN_FILE}" ]]; then
   admin_token="$(sed -n 's/^ADMIN_TOKEN=//p' "${CONFIG_FILE}" | tail -n 1)"
@@ -43,7 +44,8 @@ chown 10001:10001 \
   "${ADMIN_DIR}" \
   "${ADMIN_TOKEN_FILE}" \
   "${DATA_DIR}/temp" \
-  "${DATA_DIR}/supplier_profiles"
+  "${DATA_DIR}/supplier_profiles" \
+  "${DATA_DIR}/uploads_tmp"
 chmod 0600 "${ADMIN_TOKEN_FILE}"
 chmod 0600 "${CONFIG_FILE}"
 

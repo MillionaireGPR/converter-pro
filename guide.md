@@ -475,12 +475,97 @@ antes do corte de nameserver: MX (Google Workspace), CNAME de
 `digitalcompany.metodoiqc.com.br` (GitHub Pages) e o TXT de verificação do
 Google em `pantoni.metodoiqc.com.br`.
 
+**VPS Integrator + arquitetura de 3 servidores (04/09–07/09/2026):** o
+servidor do Wesley seguiu instável (novas quedas de rede/energia locais,
+inclusive com SSH inacessível), então foi provisionada uma VPS própria — a
+**Integrator** (ICP Core, `conversor-vps.metodoiqc.com.br`, ver
+`infra/integrator/` pro runbook completo: Docker/Compose, Nginx, TLS via
+Certbot, timer de limpeza de 21 dias, senha administrativa persistida fora
+do container). Homologada e cortada pra produção em 04/09 com autorização
+do Gabriel — hoje é o backend PRINCIPAL, substituindo o servidor do Wesley
+nesse papel.
+
+A arquitetura de failover virou **3 níveis** (decisão de 07/09, depois de
+mais uma queda do Wesley coincidindo com a criação de um túnel Cloudflare
+separado num sistema totalmente diferente — investigado e descartado como
+causa: eram máquinas diferentes, só coincidência de horário):
+
+1. **Integrator** (primário, `VITE_BACKEND_URL_PRIMARY`) — VPS própria.
+2. **Render** (reserva automática, `VITE_BACKEND_URL_FALLBACK`) — mais
+   fraco, porém o mais estável historicamente.
+3. **Wesley** (última instância, `VITE_BACKEND_URL_FALLBACK_2`) — continua
+   com porta fechada e sem atualização; existe estruturalmente na cadeia
+   mesmo assim, porque é melhor que o site fique fora do ar só se
+   Integrator E Render caírem ao mesmo tempo.
+
+`pickBackends()`/`probe()` (`backendResolver.ts`) testam os três em ordem
+via `/health`, com a mesma lógica de dedup contra o pin que já existia entre
+primário/reserva estendida pra 3 posições — nunca dois níveis apontando pro
+mesmo servidor. O painel de monitoramento (`_MONITORED_SERVERS` em
+`main.py`, servido pela própria Integrator) segue a mesma ordem.
+
 ### 14.4 Painel do servidor e observabilidade
-`/admin/dashboard` (backend) + `/servidor` (frontend, redireciona pro
-backend ativo): CPU/RAM em tempo real, pico por conversão, jobs recentes.
+`/admin/dashboard` (backend) mostra CPU/RAM em tempo real, pico por
+conversão e jobs recentes. Desde 04/09 o painel central mora na Integrator
+e monitora os 3 servidores ao mesmo tempo (métricas completas da própria
+Integrator; saúde/latência de Render e Wesley) — por isso `/servidor`
+(frontend) hoje é um endereço FIXO pra essa Central dos Servidores, e não
+mais um redirecionamento condicional pro backend que processou a última
+conversão (comportamento antigo, de quando só existiam 2 servidores).
 Histórico de conversões (`/historico`) registra servidor usado, tempo de
 processamento e se a extração foi via Gemini ou regex — auditoria sem
 precisar pedir print pro cliente.
+
+### 14.5 Upload é o gargalo real do AI-first (incidente 08–10/09/2026)
+
+O Josef reportou "a FORTAL não extraiu as imagens" e "a TUKA TOYS não extraiu
+basicamente nada". Os dois casos tinham a MESMA natureza, e nenhuma relação com
+casamento de imagem: **a IA nunca chegou a rodar** — o catálogo não chegou ao
+Gemini. O fallback pro regex é silencioso, então a tela dizia "Concluído" com
+menos produtos e zero imagens, sem explicar nada.
+
+Como o regex nunca casou imagem (só o pipeline de IA faz isso), `0/0 imagens` +
+`sem IA` no histórico é a assinatura desse problema — não é bug de imagem.
+
+Três causas independentes, todas confirmadas com evidência e corrigidas:
+
+1. **Prazo fixo de 180s no upload** (`aiFirstExtractionApi.ts`). O log do Nginx
+   registrou 10 POSTs abortados pelo cliente, espaçados de 183/186/192/204s —
+   180s + o backoff exponencial 3/6/12/24s, assinatura exata do
+   `AbortController`, não de erro do servidor. A FORTAL (96,4MB) não subia nesse
+   prazo no link do Josef; o mesmo arquivo, de um link rápido, subiu em 18,6s e
+   a IA devolveu **950 produtos em 47s**. Agora o prazo é proporcional ao
+   tamanho (`uploadTimeoutMs`, piso de 300 KB/s, teto de 20min pra manter IV-08).
+2. **`/tmp` do container é tmpfs de 256MB (RAM)**. O Starlette grava o corpo do
+   upload em arquivo temporário, então a TUKA TOYS (435,7MB) morria com
+   `400 There was an error parsing the body` por volta dos 272MB. Corrigido com
+   `TMPDIR=/app/uploads_tmp`, em disco (ver `infra/integrator/README.md`).
+3. **`client_max_body_size` de 300MB no Nginx**, abaixo dos 435,7MB da TUKA →
+   `413`. Subiu pra 600MB, espelhado em `MAX_UPLOAD_MB` no frontend, que agora
+   recusa CEDO e com mensagem clara em vez de subir pra tomar 413 no meio.
+
+Resultado depois dos três: TUKA TOYS **335 produtos em 25s** (era 26 sem IA).
+
+**A falha deixou de ser silenciosa:** `extractProductsViaAI` devolve
+`{ resultado, falha }` com motivo tipado, o engine propaga em
+`avisoAiFallback` e `/conversao` mostra um toast de aviso. Sem isso o cliente
+não tem como distinguir "IA rodou e o catálogo é ruim" de "a IA nem rodou".
+
+### 14.6 `peakCpuPercent` do painel era inflado (corrigido 10/09/2026)
+
+O painel chegou a exibir **18300,9% de CPU** num job — impossível numa VPS de 4
+núcleos (teto físico 400%) — e isso levantou receio de estourar a política de
+uso de CPU do provedor. Era bug de medição, não consumo real.
+
+`psutil.Process.cpu_percent()` sem argumento divide o tempo de CPU consumido
+pelo tempo de PAREDE desde a chamada anterior. O `_ResourceMonitor` media
+imediatamente após a leitura de arme, então o denominador era de microssegundos
+enquanto o numerador carrega a granularidade do clock tick do kernel (~10ms) —
+e essa primeira amostra degenerada virava o "pico" do job inteiro.
+
+Correção: esperar o intervalo ANTES de medir, e limitar ao teto físico
+(`n_núcleos × 100`) como rede de segurança. Medição real do mesmo job via
+`docker stats`: **pico 27%, média 2,2%**, load 0,11 num servidor de 4 núcleos.
 
 ---
 

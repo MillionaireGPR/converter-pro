@@ -30,6 +30,9 @@ export interface ConversionResultV2 {
     duplicados: number;
   };
   imageResults?: import('./images/imageTypes').ResultadoExtracaoImagens | null;
+  /** Preenchido quando a IA não pôde ser usada e o regex assumiu — a tela
+   *  avisa o cliente em vez de entregar um resultado pior em silêncio. */
+  avisoAiFallback?: string;
 }
 
 /**
@@ -86,20 +89,35 @@ export const processarArquivoV2 = async (
   if (isPdfFile && isBlocked) {
     console.log(`[Engine] AI-first PULADO para ${supplierUpper} (blocklist — regex já validado)`);
   }
+
+  // Motivo do fallback pro regex, quando houver. Sobe até a tela: sem isso o
+  // cliente recebe "Concluído" com menos produtos e zero imagens casadas, sem
+  // nada indicando que o motor principal falhou (incidente 08/09/2026 — FORTAL
+  // e TUKA TOYS reportados como "não extraiu as imagens", quando na verdade a
+  // IA nunca chegou a rodar: upload estourando o prazo e arquivo acima do teto).
+  let avisoAiFallback: string | undefined;
+
   if (isPdfFile && !isBlocked) {
     try {
       const { extractProductsViaAI, mapAiProductsToBrutos } = await import('./pipeline/aiFirstExtractionApi');
-      const aiResult = await extractProductsViaAI(file, supplierName || supplierId || '', 5, supplierRules || '');
+      const { resultado: aiResult, falha } = await extractProductsViaAI(
+        file, supplierName || supplierId || '', 5, supplierRules || ''
+      );
       if (aiResult && aiResult.success && aiResult.produtos.length > 0) {
         const aiBrutos = mapAiProductsToBrutos(aiResult.produtos);
         if (aiBrutos.length > 0) {
           options.aiBrutos = aiBrutos;
           console.log(`[Engine] AI-FIRST ativo: ${aiBrutos.length} produtos extraídos pela IA (${aiResult.model})`);
+        } else {
+          avisoAiFallback = 'A IA leu o catálogo mas nenhum produto tinha código. Foi usado o leitor antigo (sem IA e sem casamento de imagens).';
         }
       } else {
-        console.warn('[Engine] AI-first indisponível — fallback para pipeline regex');
+        avisoAiFallback = falha?.mensagem
+          || 'A leitura por IA não pôde ser usada. Foi usado o leitor antigo (sem IA e sem casamento de imagens).';
+        console.warn(`[Engine] AI-first indisponível (${falha?.motivo || 'motivo desconhecido'}) — fallback regex`);
       }
     } catch (e) {
+      avisoAiFallback = 'A leitura por IA falhou de forma inesperada. Foi usado o leitor antigo (sem IA e sem casamento de imagens).';
       console.warn('[Engine] AI-first falhou (não-crítico, fallback regex):', e);
     }
   }
@@ -222,6 +240,7 @@ export const processarArquivoV2 = async (
       duplicados: result.stats.duplicados,
     },
     imageResults,
+    avisoAiFallback,
   };
 };
 

@@ -1,7 +1,7 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 04/09/2026
+**Atualizado em:** 10/09/2026
 
 ---
 
@@ -29,6 +29,63 @@ Meta: cliente configura sozinho, uma vez por fornecedor.
 
 **Restrição comercial:** plano de R$259/mês (inclui IA + servidor). Não pode
 estourar esse escopo e precisa estar 100% funcional.
+
+---
+
+## ✅ ENTREGUE em 10/09 — FORTAL e TUKA TOYS: a IA nunca rodava (PR #129)
+
+Josef reportou "FORTAL não extraiu as imagens" e "TUKA TOYS não extraiu
+basicamente nada". **Não era bug de casamento de imagem** — em ambos a IA nem
+chegou a ser chamada, e o fallback silencioso pro regex entregava "Concluído"
+com menos produtos e zero imagens, sem avisar nada. Assinatura do problema no
+histórico: `sem IA` + `0/0 imagens`.
+
+Três causas independentes, cada uma provada com evidência (detalhe técnico em
+`guide.md #14.5`):
+
+1. **Prazo fixo de 180s no upload** — log do Nginx com 10 POSTs abortados
+   espaçados de 183/186/192/204s (180s + backoff 3/6/12/24s). O link do Josef
+   não subia os 96,4MB da FORTAL nesse prazo. Agora é proporcional ao tamanho.
+2. **`/tmp` do container é tmpfs de 256MB (RAM)** — a TUKA (435,7MB) morria em
+   `400 error parsing the body` aos ~272MB. `TMPDIR` agora aponta pra disco.
+3. **`client_max_body_size` de 300MB** — abaixo dos 435,7MB da TUKA → `413`.
+   Subiu pra 600MB, espelhado em `MAX_UPLOAD_MB` no frontend.
+
+**Provado em produção, com API Gemini real:** FORTAL **950 produtos em 47s**;
+TUKA TOYS **335 produtos em 25s** (era 26 sem IA, e 435,7MB nunca tinham
+subido antes). Falha de IA deixou de ser silenciosa: motivo tipado sobe até um
+toast de aviso em `/conversao`.
+
+**Bônus — alarme falso de CPU resolvido:** o painel exibia `18300,9%` de CPU
+(impossível: 4 núcleos = 400% no máximo) e isso preocupava quanto à política de
+uso do provedor. Era bug de medição no `_ResourceMonitor` (`psutil` medindo com
+denominador de microssegundos). Consumo REAL do mesmo job via `docker stats`:
+**pico 27%, média 2,2%**, load 0,11 — folga enorme. Ver `guide.md #14.6`.
+
+---
+
+## ✅ ENTREGUE em 07/09 — arquitetura de failover em 3 níveis (PR #127)
+
+Depois de mais quedas do Wesley (porta fechada, SSH inacessível por dias) —
+incluindo um episódio investigado e descartado como falso conflito com o
+túnel do IQC Machine, que roda numa máquina totalmente diferente, só
+coincidência de horário — o Gabriel decidiu formalizar a ordem dos 3
+servidores em vez de manter o Wesley totalmente fora da rota:
+
+1. **Integrator** — primário (`VITE_BACKEND_URL_PRIMARY`)
+2. **Render** — reserva automática (`VITE_BACKEND_URL_FALLBACK`)
+3. **Wesley** — última instância (`VITE_BACKEND_URL_FALLBACK_2`, variável
+   nova) — continua com porta fechada/sem atualização, então na prática
+   nunca é escolhido agora, mas existe estruturalmente pra quando Integrator
+   E Render caírem juntos.
+
+- `pickBackends()`/`probe()` (`backendResolver.ts`) ganharam a 3ª posição na
+  cadeia, com a mesma lógica de dedup contra o pin (nunca dois níveis no
+  mesmo servidor) estendida de 2 pra 3 posições.
+- `_MONITORED_SERVERS` (`main.py`, painel da Integrator) reordenado pra
+  bater: Servidor 2 = Render, Servidor 3 = Wesley.
+- `VITE_BACKEND_URL_FALLBACK_2` setado em produção na Vercel.
+- 23/23 testes do resolver (7 novos), 430/430 no total + invariantes OK.
 
 ---
 
@@ -433,25 +490,32 @@ arquivos de backend e devolver o servidor próprio ao papel de primário.
 ## Infraestrutura
 
 - **Frontend:** Vercel (deploy automático do `main`)
-- **Backend:** dois ambientes
-  - **Primário:** servidor próprio (7,7GB) via **Cloudflare Tunnel nomeado e
-    fixo** (`https://conversor-api.metodoiqc.com.br`, desde 01/09) —
-    ⚠️ **não puxa do GitHub**, exige `scp` manual a cada correção de backend
-  - **Reserva:** Render Starter (512MB) — puxa do `main` sozinho
+- **Backend:** arquitetura de **3 servidores** (decisão de 07/09), cadeia de
+  failover automático via `pickBackends()`/`probe()` (`backendResolver.ts`):
+  1. **Integrator** (`VITE_BACKEND_URL_PRIMARY`) — VPS própria (ICP Core,
+     `https://conversor-vps.metodoiqc.com.br`), homologada e cortada pra
+     produção em 04/09. Backend principal hoje.
+  2. **Render** (`VITE_BACKEND_URL_FALLBACK`) — Render Starter (512MB),
+     reserva automática, puxa do `main` sozinho.
+  3. **Wesley** (`VITE_BACKEND_URL_FALLBACK_2`) — servidor próprio original
+     (`https://conversor-api.metodoiqc.com.br`, Cloudflare Tunnel nomeado e
+     fixo desde 01/09), última instância. ⚠️ **Continua com porta fechada e
+     sem atualização** (07/09) — não puxa do GitHub, exige `scp` manual a
+     cada correção; health check falha e ele não é escolhido enquanto isso
+     não mudar, mas segue estruturalmente na cadeia como último recurso.
 - **Banco:** Supabase (`suppliers` já tem `column_mappings`,
   `extraction_rules`, `extraction_rules_compiled`)
 - **Domínio:** `metodoiqc.com.br` (Registro.br, nameservers na Cloudflare
-  desde 01/09) — zona Cloudflare tem também `pirralhos` (Central Pirralhos),
-  `digitalcompany` (GitHub Pages) e o TXT de verificação do Google.
+  desde 01/09) — zona Cloudflare também tem `pirralhos` (Central Pirralhos)
+  e o TXT de verificação do Google; `digitalcompany` passou a apontar pro
+  Tunnel do IQC Machine (antes era GitHub Pages).
 
-**Sobre a instabilidade (histórico, resolvido em 01/09):** boa parte das
-quedas era o **túnel gratuito (Quick Tunnel)**, que o próprio Cloudflare
-avisa não ter garantia de disponibilidade e cuja URL mudava a cada
-reinício — coberto até então por uma automação que atualizava o Vercel e
-disparava redeploy a cada troca. Migrado pro Tunnel nomeado/fixo (ver
-entrega de 01/09 acima), que não tem esse problema. Do servidor em si, só 2
-incidentes confirmados: fibra rompida (12/08) e bloqueio de segurança
-(13/08) — ambos externos e resolvidos pelo Wesley.
+**Sobre a instabilidade do Wesley (histórico):** túnel gratuito (Quick
+Tunnel) resolvido em 01/09 (virou Tunnel nomeado/fixo). Depois disso, novas
+quedas de rede/energia local (inclusive SSH inacessível em 01–07/09) —
+sempre externas ao código, nunca configuração. Por isso ele saiu do papel de
+backend principal (04/09, substituído pela Integrator) e virou última
+instância (07/09) em vez de sair completamente da rota.
 
 ---
 
