@@ -1,7 +1,7 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 07/09/2026
+**Atualizado em:** 10/09/2026
 
 ---
 
@@ -29,6 +29,38 @@ Meta: cliente configura sozinho, uma vez por fornecedor.
 
 **Restrição comercial:** plano de R$259/mês (inclui IA + servidor). Não pode
 estourar esse escopo e precisa estar 100% funcional.
+
+---
+
+## ✅ ENTREGUE em 10/09 — FORTAL e TUKA TOYS: a IA nunca rodava (PR #129)
+
+Josef reportou "FORTAL não extraiu as imagens" e "TUKA TOYS não extraiu
+basicamente nada". **Não era bug de casamento de imagem** — em ambos a IA nem
+chegou a ser chamada, e o fallback silencioso pro regex entregava "Concluído"
+com menos produtos e zero imagens, sem avisar nada. Assinatura do problema no
+histórico: `sem IA` + `0/0 imagens`.
+
+Três causas independentes, cada uma provada com evidência (detalhe técnico em
+`guide.md #14.5`):
+
+1. **Prazo fixo de 180s no upload** — log do Nginx com 10 POSTs abortados
+   espaçados de 183/186/192/204s (180s + backoff 3/6/12/24s). O link do Josef
+   não subia os 96,4MB da FORTAL nesse prazo. Agora é proporcional ao tamanho.
+2. **`/tmp` do container é tmpfs de 256MB (RAM)** — a TUKA (435,7MB) morria em
+   `400 error parsing the body` aos ~272MB. `TMPDIR` agora aponta pra disco.
+3. **`client_max_body_size` de 300MB** — abaixo dos 435,7MB da TUKA → `413`.
+   Subiu pra 600MB, espelhado em `MAX_UPLOAD_MB` no frontend.
+
+**Provado em produção, com API Gemini real:** FORTAL **950 produtos em 47s**;
+TUKA TOYS **335 produtos em 25s** (era 26 sem IA, e 435,7MB nunca tinham
+subido antes). Falha de IA deixou de ser silenciosa: motivo tipado sobe até um
+toast de aviso em `/conversao`.
+
+**Bônus — alarme falso de CPU resolvido:** o painel exibia `18300,9%` de CPU
+(impossível: 4 núcleos = 400% no máximo) e isso preocupava quanto à política de
+uso do provedor. Era bug de medição no `_ResourceMonitor` (`psutil` medindo com
+denominador de microssegundos). Consumo REAL do mesmo job via `docker stats`:
+**pico 27%, média 2,2%**, load 0,11 — folga enorme. Ver `guide.md #14.6`.
 
 ---
 

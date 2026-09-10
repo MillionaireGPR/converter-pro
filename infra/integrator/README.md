@@ -8,6 +8,9 @@ Esta pasta empacota o backend atual sem alterar a logica das conversoes.
 - `/opt/converter-pro/config/backend.env`: segredos, fora do Git e modo 600.
 - `/opt/converter-pro/data/temp`: jobs temporarios.
 - `/opt/converter-pro/data/supplier_profiles`: perfis Phase 0 persistentes.
+- `/opt/converter-pro/data/uploads_tmp`: `TMPDIR` do container (upload em disco).
+  Fica FORA de `data/temp` de proposito -- a limpeza de 21 dias varre `data/temp`
+  na profundidade 1 e apagaria este diretorio, quebrando todo upload seguinte.
 - `127.0.0.1:28081`: backend local, publicado somente pelo Nginx/ICP.
 
 ## Primeira instalacao
@@ -27,8 +30,26 @@ Esta pasta empacota o backend atual sem alterar a logica das conversoes.
 
 - `MAX_CONCURRENT_JOBS=1` durante toda a homologacao.
 - Container limitado a 5 GB de RAM, 6 GB contando swap e 3,5 vCPU.
-- Upload publicado pelo proxy: ate 300 MB.
-- Temporarios removidos depois de 21 dias; `supplier_profiles` nunca entra nessa limpeza.
+- Upload publicado pelo proxy: ate 600 MB (`client_max_body_size`). Subiu de
+  300 MB em 10/09/2026 por causa do catalogo TUKA TOYS, de 435,7 MB.
+  **Tem que andar junto com `MAX_UPLOAD_MB`** em
+  `src/core/pipeline/aiFirstExtractionApi.ts`: se o front achar que cabe e o
+  proxy recusar, o cliente cai no leitor regex sem IA e sem imagem.
+- Temporarios removidos depois de 21 dias; `supplier_profiles` nunca entra nessa
+  limpeza. Sobras em `uploads_tmp` (so acontecem se o processo morrer no meio de
+  um upload) saem depois de 1 dia.
+
+### Por que `TMPDIR` aponta pra disco
+
+`/tmp` do container e um **tmpfs de 256 MB (RAM)**. O Starlette grava o corpo do
+upload num arquivo temporario, entao qualquer catalogo acima de ~256 MB morria
+com `400 There was an error parsing the body` no meio do envio -- a IA nunca
+rodava e o cliente recebia o resultado do regex, sem imagens e sem aviso alugm.
+Achado real em 10/09/2026 com o TUKA TOYS: o upload parava em ~272 MB.
+
+`TMPDIR=/app/uploads_tmp` (volume em disco, 87 GB livres) resolve sem gastar o
+limite de 5 GB de RAM do container. Nao troque por um tmpfs maior: seriam
+centenas de MB de RAM por upload simultaneo.
 
 ## TLS sem o painel ICP
 
