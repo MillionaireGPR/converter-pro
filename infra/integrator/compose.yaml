@@ -15,11 +15,20 @@ services:
       MAX_CONCURRENT_JOBS: "1"
       ADMIN_TOKEN_FILE: /app/admin_config/admin_token
       SERVER_ID: integrator
+      # Upload do Starlette vai pra DISCO, nao pro /tmp (que e tmpfs em RAM,
+      # 256m). Sem isso o catalogo TUKA TOYS (435,7MB) morria em
+      # "error parsing the body" ao encher o tmpfs por volta dos 272MB --
+      # e a IA nunca rodava (achado real 10/09/2026). Disco tem 87GB livres;
+      # manter em RAM ainda comeria o limite de 5g do container.
+      TMPDIR: /app/uploads_tmp
     ports:
       - "127.0.0.1:28081:8000"
     volumes:
       - ${CONVERTER_DATA_DIR:-/opt/converter-pro/data}/temp:/app/temp
       - ${CONVERTER_DATA_DIR:-/opt/converter-pro/data}/supplier_profiles:/app/supplier_profiles
+      # Fora de data/temp de proposito: a limpeza de 21 dias varre data/temp na
+      # profundidade 1 e apagaria este diretorio, quebrando todo upload seguinte.
+      - ${CONVERTER_DATA_DIR:-/opt/converter-pro/data}/uploads_tmp:/app/uploads_tmp
       - ${CONVERTER_ADMIN_DIR:-/opt/converter-pro/config/admin}:/app/admin_config
     healthcheck:
       test:

@@ -21,7 +21,13 @@ server {
     ssl_certificate_key /www/sites/conversor-vps.metodoiqc.com.br/ssl/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
 
-    client_max_body_size 300m;
+    # 600m (era 300m ate 10/09/2026): o catalogo TUKA TOYS tem 435,7MB e vinha
+    # sendo recusado com 413 antes de qualquer byte util subir -- a IA nunca
+    # rodava e o cliente recebia o resultado do regex, sem imagens e sem aviso.
+    # PRECISA acompanhar MAX_UPLOAD_MB em src/core/pipeline/aiFirstExtractionApi.ts.
+    client_max_body_size 600m;
+    # Vale por LEITURA do corpo, nao pelo upload inteiro: link lento nao estoura
+    # enquanto os bytes seguem chegando.
     client_body_timeout 300s;
 
     location / {
