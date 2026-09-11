@@ -17,7 +17,21 @@ Josef testou e relatou 6 problemas. Causa raiz encontrada e provada em cada um
 | "Tuka Toys tá rodando até agora sem retorno" (39min) | Mesma coisa: 5 uploads natimortos × ~3min antes de desistir | Mesma assinatura no log |
 | "Pegou alguns códigos errados" / 68 de 89 sem preço | A IA recebia o texto em ordem de leitura, SEM posição — num catálogo em grade o preço fica solto no fim da página | API real do Gemini: Dute 12/24 → **24/24**; TUKA 0/4 → **4/4**; FORTAL 24/24 sem regressão |
 | "Saí da tela e os catálogos que estavam carregando sumiram" | A fila morava em `useState` da página; sair desmontava o componente | Fila movida pra fora do React + aviso flutuante com clique de volta |
-| "Capturou um elemento só da imagem em vários casos" | **AINDA ABERTO** — recorte do `last-resort Y-proximity` no `cv_extractor` | — |
+| "Capturou um elemento só da imagem em vários casos" | Composição só agrupa imagens com centro a <15pt de distância vertical; no Dute a composição é alta e sobra uma peça só | **AINDA ABERTO** |
+
+### Rodada 2 do mesmo dia — teste do Josef após o deploy
+
+| Relato | Resultado |
+|---|---|
+| TUKA TOYS | ✅ **335 produtos, 335 importados, 326 imagens associadas** (era "rodando sem retorno") |
+| FOLIA BRINQUEDOS: "testei o PDF para pegar as imagens e ele não capturou" | ❌ era **18 produtos / 0 ok / 18 erros** — os "códigos" eram os NÚMEROS DE PÁGINA. O PDF não tem produto na camada de texto (só marca d'água). Corrigido com rota de VISÃO — ver `guide.md #14.9` |
+
+**Atenção pra quem pegar daqui:** o perfil Phase 0 da FOLIA tinha sido gravado
+a partir da marca d'água (definia "código = número inteiro sozinho na linha").
+Está em quarentena no servidor como
+`supplier_profiles/FOLIA_BRINQUEDOS.json.envenenado-20260911.bak`. Se algum
+fornecedor novo apresentar sintoma parecido (códigos que são números de
+página), o primeiro lugar a olhar é o perfil em cache.
 
 ---
 

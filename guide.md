@@ -638,6 +638,65 @@ dele foi sintetizado nesse formato e ele tem porta de cobertura própria
 (`TEMPLATE_MIN_COVERAGE`), que reprova o catálogo em grade e manda pro
 text-chunked — que é o caminho corrigido aqui.
 
+### 14.9 Catálogo sem produtos na camada de texto — FOLIA (11/09/2026)
+
+Josef: *"esse da Folia aqui eu testei o PDF para pegar as imagens e ele não
+capturou"*. A tela mostrou **18 produtos / 0 importados com sucesso / 18
+erros** em 8min36.
+
+Os 18 "códigos" eram `18, 19, 20, 30, 31, 32, 35…` — **os números de página**.
+O PDF da FOLIA tem camada de texto, mas ela contém APENAS a marca d'água de
+fundo ("FOLIA IMPORTS · UTILIDADES E BRINQUEDOS", ladrilhada) mais o número da
+página. Código, nome e preço fazem parte da ARTE. O texto das páginas 5, 10 e
+20 é byte a byte o mesmo. A IA não alucinou: não havia o que ler.
+
+Pior: a Phase 0 analisou essa mesma marca d'água e gravou em cache um perfil
+que definia *"código: número inteiro de 1 ou mais dígitos sozinho numa linha"*
+— um perfil errado que contaminaria toda conversão futura da FOLIA. O arquivo
+foi posto em quarentena no servidor
+(`supplier_profiles/FOLIA_BRINQUEDOS.json.envenenado-20260911.bak`) e a Phase 0
+agora se recusa a analisar catálogo sem texto útil.
+
+**Detecção** (`camada_de_texto_inutil`): tira a moldura — linha presente em
+≥60% das páginas — e mede em quantas páginas sobra SINAL de produto (um preço
+ou um código). O critério NÃO pode ser volume de texto: o TUKA tem ~100 chars
+úteis por página e extrai 335 produtos sem problema.
+
+| Catálogo | Páginas com sinal | Rota |
+|---|---|---|
+| FOLIA | 0/45 (0%) | **visão** |
+| FORTAL | 86/108 (80%) | texto |
+| DUTE | 191/197 (97%) | texto |
+| TUKA | 177/178 (99%) | texto |
+
+O limite é 25% — bem longe dos dois lados.
+
+**Extração** (`extract_with_vision_chunked`): renderiza a página e manda a
+imagem pro mesmo prompt de sempre. Dois números foram medidos contra gabarito
+lido à mão (pág 17, 9 produtos):
+
+- **1 página por chamada, não 4.** Com 4 páginas juntas o modelo acertava os
+  preços mas **inventava os códigos** (0/9: vinha `JRF-10.0161` no lugar de
+  `JRF-10.0581`). Com 1 página, 8/9. Como as chamadas correm em paralelo, o
+  wall-time não muda. E a página de origem deixa de ser palpite do modelo:
+  numa chamada de página única ela é fato conhecido e o código a preenche.
+- **160 DPI.** A 110 o modelo lia `JRF-10.3090` onde estava `JRF-10.1090` — um
+  dígito e o produto vira outro. A 160 fecha 9/9; a 200 não melhora e só
+  engorda o JPEG.
+
+**Resultado ponta a ponta no catálogo real da FOLIA:**
+
+```
+ANTES:  18 produtos | 0 importados com sucesso | 18 erros | 8min36
+AGORA: 288 produtos | 288 com preço (100%)     | 43/45 págs | ~2min
+```
+
+**Limitação conhecida:** o casamento de FOTOS depende de localizar o texto do
+SKU dentro do PDF, e num catálogo sem camada de texto isso não existe. A
+extração de produto/preço está resolvida; a captação de imagem da FOLIA ainda
+precisa de medição própria (na rodada do Josef casou 10 de 18 SKUs, mas os 18
+eram falsos — com 288 SKUs reais o número precisa ser medido de novo).
+
 ---
 
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)

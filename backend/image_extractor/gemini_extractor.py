@@ -510,6 +510,18 @@ def _ensure_supplier_profile(pdf_path: str, supplier: str) -> None:
         from supplier_profile import get_cached_hints
         if get_cached_hints(supplier):
             return  # já cacheado, nada a fazer
+        # A Phase 0 lê o TEXTO das páginas. Num PDF cujo texto é só marca
+        # d'água (FOLIA), ela analisa a moldura e grava um perfil errado em
+        # cache — que depois contamina TODAS as conversões futuras desse
+        # fornecedor. Melhor não ter hints do que ter hints inventados.
+        doc = fitz.open(pdf_path)
+        try:
+            if camada_de_texto_inutil(doc):
+                print(f"[Phase0] '{supplier}' sem produtos na camada de texto — "
+                      f"análise pulada (evita perfil baseado na marca d'água)")
+                return
+        finally:
+            doc.close()
         from supplier_analyzer import analyze_and_cache
         analyze_and_cache(pdf_path, supplier)
     except Exception as e:
@@ -1041,6 +1053,88 @@ def page_text_for_ai(page) -> str:
     return "\n".join(f"[{int(r[0])},{int(r[1])}] {r[3]}" for r in runs)
 
 
+# ─────────────────────────────────────────────────────────────
+# CATÁLOGO SEM DADOS EM TEXTO (11/09/2026) — FOLIA BRINQUEDOS
+# ─────────────────────────────────────────────────────────────
+# O caminho text-chunked pressupõe que os produtos estejam no texto do PDF.
+# A FOLIA quebrou essa premissa: as 45 páginas têm camada de texto, mas ela
+# contém APENAS a marca d'água de fundo ("FOLIA IMPORTS · UTILIDADES E
+# BRINQUEDOS", repetida) — código, nome e preço fazem parte da ARTE, são
+# pixels. O texto das páginas 5, 10 e 20 é byte a byte o mesmo.
+#
+# Sem essa checagem a IA recebia só a marca d'água, "achava" 18 produtos com
+# códigos que eram números de página (18, 19, 20, 30, 31…) e o cliente via
+# "18 produtos / 0 importados com sucesso / 18 erros" em 8min36. O catálogo
+# não é ruim nem o modelo alucinou: não havia o que ler.
+#
+# Detectar isso é obrigação do sistema, não do cliente — ele não tem como
+# saber se um PDF tem camada de texto útil.
+BOILERPLATE_MIN_PAGES_FRAC = 0.6   # linha em >= 60% das páginas = moldura/marca d'água
+# O critério NÃO pode ser "pouco texto": o TUKA TOYS tem ~100 chars úteis por
+# página (1-2 produtos, só código, caixa e preço) e extrai 335 produtos
+# perfeitamente. O que separa os dois casos é a PRESENÇA de informação de
+# produto — preço ou código — e não o volume. Na FOLIA sobram 7 chars de ruído.
+MIN_PAGINAS_COM_SINAL_FRAC = 0.25  # < 25% das páginas com preço/código = sem texto útil
+RX_SINAL_PRECO = re.compile(r"\d+[.,]\d{2}\b")
+RX_SINAL_CODIGO = re.compile(r"\b(?:[A-Z]{2,}[\-.]?\d{2,}|\d{4,})\b")
+# UMA página por chamada. Medido na FOLIA contra gabarito lido à mão:
+# com 4 páginas na mesma chamada o modelo INVENTAVA os códigos (pág 17:
+# 0/9 certos — vinham JRF-10.0161, JRF-10.0159… no lugar de JRF-10.0581,
+# JRF-10.0528…), embora os preços saíssem certos. Com 1 página por chamada:
+# 8/9. O wall-time não piora, porque as chamadas correm em paralelo.
+VISION_CHUNK_PAGES = 1
+VISION_CHUNK_WORKERS = 8           # cada chamada é pequena; o gargalo é a rede
+# 160 DPI: a 110 o modelo lia "JRF-10.3090" onde estava "JRF-10.1090" — um
+# dígito, e o produto inteiro vira outro. A 160 o gabarito fecha 9/9; a 200
+# não melhora mais e só engorda o JPEG (970KB contra 728KB).
+VISION_DPI = 160
+
+
+def texto_util_por_pagina(doc) -> List[str]:
+    """
+    Texto de cada página SEM a moldura que se repete no catálogo inteiro.
+
+    Cabeçalho, rodapé, índice lateral e marca d'água aparecem em quase toda
+    página e não dizem nada sobre o produto. Removê-los é o que separa
+    "página com pouco texto" de "página sem informação nenhuma".
+    """
+    paginas = [doc[i].get_text() for i in range(len(doc))]
+    if not paginas:
+        return []
+    ocorrencias: Dict[str, int] = {}
+    for texto in paginas:
+        for linha in {l.strip() for l in texto.splitlines() if l.strip()}:
+            ocorrencias[linha] = ocorrencias.get(linha, 0) + 1
+    limite = max(2, int(len(paginas) * BOILERPLATE_MIN_PAGES_FRAC))
+    boilerplate = {l for l, n in ocorrencias.items() if n >= limite}
+    return [
+        "\n".join(l for l in t.splitlines() if l.strip() and l.strip() not in boilerplate)
+        for t in paginas
+    ]
+
+
+def camada_de_texto_inutil(doc) -> bool:
+    """
+    True quando o PDF não tem os produtos em texto — só arte e moldura.
+
+    Mede em quantas páginas sobra algum SINAL de produto (um preço ou um
+    código) depois de tirar a moldura. Uma página de catálogo real sempre tem
+    pelo menos um dos dois; a página da FOLIA não tem nenhum, porque tudo isso
+    está desenhado na arte.
+
+    Medido nos catálogos do cliente: FOLIA 0% das páginas com sinal, TUKA 100%,
+    Dute 100%, FORTAL 100% — mesmo o TUKA tendo só ~100 chars úteis por página.
+    """
+    uteis = texto_util_por_pagina(doc)
+    if not uteis:
+        return True
+    com_sinal = sum(
+        1 for t in uteis
+        if RX_SINAL_PRECO.search(t) or RX_SINAL_CODIGO.search(t)
+    )
+    return (com_sinal / len(uteis)) < MIN_PAGINAS_COM_SINAL_FRAC
+
+
 LARGE_CATALOG_MB = 15          # acima disso, vision do PDF inteiro falha
 LARGE_CATALOG_PAGES = 30       # ou muitas páginas → modo texto-chunked
 # Chunk de 6 págs (v31): catálogos DENSOS como NEO FESTAS têm ~15 produtos/pág;
@@ -1108,6 +1202,130 @@ def _extract_text_chunk(
         return left + right, (lok and rok)
     print(f"[Gemini Chunk] ❌ PÁGINA {first_page} PERDIDA após retries: {str(last_err)[:120]}")
     return [], False
+
+
+def _extract_vision_chunk(
+    jpegs: List[Tuple[int, bytes]], supplier_hints: str, model_name: str
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """
+    Lê um lote de páginas RENDERIZADAS. Mesmo prompt do texto — o que muda é
+    que o modelo enxerga a página em vez de ler o texto dela.
+    """
+    if not _ensure_initialized() or not jpegs:
+        return [], False
+    prompt = EXTRACTION_PROMPT
+    if supplier_hints:
+        prompt += f"\n\n{supplier_hints}"
+    prompt += (
+        "\n\nAs imagens a seguir são as PÁGINAS do catálogo, na ordem. "
+        "Os números de página correspondentes são: "
+        + ", ".join(str(pn) for pn, _ in jpegs)
+        + ". Use esses números em paginaOrigem."
+    )
+    partes: List[Any] = [{"mime_type": "image/jpeg", "data": b} for _, b in jpegs]
+    partes.append(prompt)
+    for tentativa in range(2):
+        try:
+            modelo = genai.GenerativeModel(model_name)
+            resposta = modelo.generate_content(
+                partes,
+                generation_config=genai.GenerationConfig(
+                    temperature=0.0,
+                    response_mime_type="application/json",
+                    max_output_tokens=32768,
+                ),
+                request_options={"timeout": 180},
+            )
+            raw = (resposta.text or "").strip()
+            if raw.startswith("```"):
+                raw = raw.strip("`")
+                if raw.startswith("json"):
+                    raw = raw[4:].strip()
+            produtos = json.loads(raw).get("produtos", [])
+            # Numa chamada de página única, a página de origem é FATO conhecido
+            # aqui — não precisa (nem deve) depender do modelo acertar.
+            if len(jpegs) == 1:
+                for p in produtos:
+                    p["paginaOrigem"] = jpegs[0][0]
+            return produtos, True
+        except Exception as e:
+            pgs = f"{jpegs[0][0]}-{jpegs[-1][0]}"
+            print(f"[Gemini Vision] pgs {pgs} tentativa {tentativa+1}: {str(e)[:120]}")
+            time.sleep(2)
+    return [], False
+
+
+def extract_with_vision_chunked(pdf_path: str, supplier: str = "", client_rules: str = "") -> Dict[str, Any]:
+    """
+    Extração lendo a IMAGEM das páginas — para catálogos cujos produtos não
+    estão na camada de texto (ver `camada_de_texto_inutil`). Mesmo shape de
+    retorno dos outros caminhos.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    if not _ensure_initialized():
+        return {"success": False, "produtos": [], "error": f"Gemini não configurado: {_init_error}", "model": MODEL_FLASH}
+
+    supplier_hints = get_supplier_hints(supplier, client_rules)
+    inicio = time.time()
+    try:
+        doc = fitz.open(pdf_path)
+        n_pages = len(doc)
+        doc.close()
+    except Exception as e:
+        return {"success": False, "produtos": [], "error": f"Falha ao ler PDF: {e}", "model": MODEL_FLASH}
+
+    lotes = [
+        list(range(i + 1, min(i + 1 + VISION_CHUNK_PAGES, n_pages + 1)))
+        for i in range(0, n_pages, VISION_CHUNK_PAGES)
+    ]
+    print(f"[Gemini Vision] {n_pages} págs → {len(lotes)} lotes de {VISION_CHUNK_PAGES} "
+          f"(paralelo={VISION_CHUNK_WORKERS}, {VISION_DPI}dpi)")
+
+    todos: List[Dict[str, Any]] = []
+    lotes_ok = 0
+    lotes_parciais = 0
+    with ThreadPoolExecutor(max_workers=VISION_CHUNK_WORKERS) as pool:
+        futuros = {}
+        for paginas in lotes:
+            # Renderiza NA HORA de submeter: segurar 45 JPEGs de uma vez seria
+            # RAM à toa, e o render é serial de propósito (ver _render_pages_batch).
+            jpegs = _render_pages_batch(pdf_path, paginas, dpi=VISION_DPI)
+            lote = [(pn, jpegs[pn]) for pn in paginas if pn in jpegs]
+            if lote:
+                futuros[pool.submit(_extract_vision_chunk, lote, supplier_hints, MODEL_FLASH)] = paginas
+        for fut in as_completed(futuros):
+            produtos, ok = fut.result()
+            if produtos:
+                todos.extend(produtos)
+            if ok:
+                lotes_ok += 1
+            else:
+                lotes_parciais += 1
+
+    vistos, deduped = set(), []
+    for p in todos:
+        cod = str(p.get("codigo", "")).strip().upper()
+        if not cod or cod in vistos:
+            continue
+        vistos.add(cod)
+        deduped.append(p)
+
+    decorrido = time.time() - inicio
+    print(f"[Gemini Vision] ✓ {len(deduped)} produtos ({lotes_ok}/{len(lotes)} lotes OK, "
+          f"{lotes_parciais} parciais) em {decorrido:.1f}s")
+    return {
+        "success": len(deduped) > 0,
+        "model": f"{MODEL_FLASH} (vision-chunked)",
+        "produtos": deduped,
+        "fornecedor_detectado": supplier,
+        "total_paginas": n_pages,
+        "chunks_total": len(lotes),
+        "chunks_ok": lotes_ok,
+        "chunks_parciais": lotes_parciais,
+        "elapsed": decorrido,
+        "confianca": (sum(1 for p in deduped if p.get("codigo") and p.get("preco")) / len(deduped)) if deduped else 0,
+        "error": None if deduped else "Nenhum produto extraído nas páginas renderizadas",
+    }
 
 
 def extract_with_fallback_text_chunked(pdf_path: str, supplier: str = "", client_rules: str = "") -> Dict[str, Any]:
@@ -1657,7 +1875,19 @@ def _extract_with_fallback_impl(pdf_path: str, supplier: str = "", client_rules:
         size_mb = os.path.getsize(pdf_path) / 1024 / 1024
         doc = fitz.open(pdf_path)
         n_pages = len(doc)
+        # ANTES de qualquer caminho de TEXTO: o PDF tem os produtos em texto?
+        # A FOLIA tem camada de texto, mas só com a marca d'água — o
+        # text-chunked devolvia 18 "produtos" que eram números de página.
+        # Ver camada_de_texto_inutil().
+        sem_texto = camada_de_texto_inutil(doc)
         doc.close()
+        if sem_texto:
+            print(f"[Gemini] Catálogo sem produtos na camada de texto ({n_pages} págs) "
+                  f"→ lendo as PÁGINAS (vision-chunked)")
+            vis = extract_with_vision_chunked(pdf_path, supplier, client_rules)
+            if vis.get("success"):
+                return vis
+            print("[Gemini] vision-chunked não achou produtos → segue cadeia normal")
         if size_mb > LARGE_CATALOG_MB or n_pages > LARGE_CATALOG_PAGES:
             print(f"[Gemini] Catálogo grande ({size_mb:.0f}MB, {n_pages} págs) → v33 TEMPLATE-synth (fallback text-chunked)")
             tpl_result = extract_via_template(pdf_path, supplier, client_rules)
