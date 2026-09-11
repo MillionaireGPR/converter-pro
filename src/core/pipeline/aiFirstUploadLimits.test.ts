@@ -27,14 +27,21 @@ describe('uploadTimeoutMs — prazo proporcional ao tamanho do arquivo', () => {
 
   it('dá tempo real ao FORTAL (96,4MB) — o prazo fixo de 180s era a causa da falha', () => {
     const prazo = uploadTimeoutMs(96.4 * MB);
-    // Com o piso de 300 KB/s: ~5,5min. O ponto é ser MAIOR que os 180s antigos,
+    // Com o piso de 120 KB/s: ~13,7min. O ponto é ser MAIOR que os 180s antigos,
     // que abortavam o upload do Josef no meio.
     expect(prazo).toBeGreaterThan(180_000);
-    expect(prazo).toBeCloseTo(329_000, -4);
+    expect(prazo).toBeCloseTo(822_000, -4);
   });
 
-  it('nunca é infinito — teto de 20min preserva o IV-08 (prazo finito)', () => {
-    expect(uploadTimeoutMs(10_000 * MB)).toBe(20 * 60 * 1000);
+  it('cobre o Dute (68MB) com folga sobre os 242s que ele levou de verdade', () => {
+    // Medido no log do Nginx em 11/09/2026: a única tentativa que passou levou
+    // 242s. O piso antigo de 300 KB/s dava 232s — ABAIXO do tempo real, que é
+    // por que o upload morria por um triz e virava IMG-GEN.
+    expect(uploadTimeoutMs(68 * MB)).toBeGreaterThan(242_000);
+  });
+
+  it('nunca é infinito — teto de 30min preserva o IV-08 (prazo finito)', () => {
+    expect(uploadTimeoutMs(10_000 * MB)).toBe(30 * 60 * 1000);
   });
 
   it('cresce junto com o arquivo', () => {

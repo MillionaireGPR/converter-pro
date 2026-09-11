@@ -974,6 +974,73 @@ TEMPLATE_SAMPLE_PAGES = 3
 # abaixo disso, faz fallback pro AI-first text-chunked.
 TEMPLATE_MIN_COVERAGE = 0.80
 
+# ─────────────────────────────────────────────────────────────
+# TEXTO COM COORDENADAS (11/09/2026) — corrige preço trocado/ausente
+# ─────────────────────────────────────────────────────────────
+# `page.get_text()` devolve o texto em ORDEM DE LEITURA, e num catálogo em
+# grade isso destrói a relação preço↔produto: no Dute Toys a página traz os 4
+# códigos em sequência e SÓ DEPOIS os 4 selos de preço, todos soltos no fim:
+#
+#     DT10032 / DT10019 / DT10020 / DT10021
+#     EM BREVE / DISPONÍVEL / DISPONÍVEL / DISPONÍVEL
+#     R$ 5,00 / R$ 5,50 / R$ 5,50
+#
+# Nem o Gemini nem regex nenhum tem como saber de quem é cada preço — a única
+# informação que resolve (a POSIÇÃO do selo na página) tinha sido jogada fora
+# antes da IA ver o texto. Medido no catálogo real (A/B com API de verdade,
+# págs 5-10 do Dute): texto puro acertou 12/24 preços; com coordenada, 24/24.
+#
+# O cliente não configura nada para isso funcionar: a posição já está no PDF.
+COORD_GAP_COL = 30.0  # distância horizontal que separa COLUNAS diferentes (pt)
+
+COORD_PROMPT_HINT = """
+FORMATO DO TEXTO: cada linha vem como [X,Y] seguido do conteúdo, onde X,Y são as
+coordenadas do canto superior esquerdo daquele trecho NA PÁGINA (X cresce para a
+direita, Y cresce para baixo). Use as coordenadas para saber QUAL preço/selo
+pertence a QUAL produto: numa página em grade, o preço e o selo ("DISPONÍVEL",
+"EM BREVE") de um produto ficam no MESMO X aproximado (mesma coluna) e logo
+ACIMA do código dele. NUNCA associe a um produto um preço de outra coluna
+(X muito diferente) nem de outra linha da grade (Y distante).
+As coordenadas são só para você raciocinar — não as copie para o JSON.
+"""
+
+
+def page_text_for_ai(page) -> str:
+    """
+    Texto da página anotado com a coordenada de cada trecho.
+
+    Cada span do PDF vira uma linha `[x,y] conteúdo`. Spans vizinhos na mesma
+    linha são colados (um rótulo e seu valor), mas um vão horizontal maior que
+    `COORD_GAP_COL` quebra o trecho — é o que impede dois preços de colunas
+    diferentes de virarem um texto só (o bug que trocava os preços do Dute).
+    A saída sai ordenada por faixa de Y e depois por X, ou seja, na ordem em
+    que a página é LIDA de verdade, e não na ordem em que o PDF guardou.
+    """
+    runs = []
+    for bloco in page.get_text("dict")["blocks"]:
+        if bloco.get("type") != 0:  # 0 = texto (1 = imagem)
+            continue
+        for linha in bloco["lines"]:
+            atual = None
+            for span in linha["spans"]:
+                texto = " ".join(span["text"].split())
+                if not texto:
+                    continue
+                x0, y0, x1, _ = span["bbox"]
+                if atual and x0 - atual[2] <= COORD_GAP_COL:
+                    atual = [atual[0], atual[1], x1, atual[3] + " " + texto]
+                else:
+                    if atual:
+                        runs.append(atual)
+                    atual = [x0, y0, x1, texto]
+            if atual:
+                runs.append(atual)
+    # Faixa de 8pt no Y: itens da mesma linha da grade ficam juntos mesmo com
+    # o baseline levemente diferente (selo e código nunca alinham no pixel).
+    runs.sort(key=lambda r: (round(r[1] / 8), r[0]))
+    return "\n".join(f"[{int(r[0])},{int(r[1])}] {r[3]}" for r in runs)
+
+
 LARGE_CATALOG_MB = 15          # acima disso, vision do PDF inteiro falha
 LARGE_CATALOG_PAGES = 30       # ou muitas páginas → modo texto-chunked
 # Chunk de 6 págs (v31): catálogos DENSOS como NEO FESTAS têm ~15 produtos/pág;
@@ -996,7 +1063,7 @@ def _extract_text_chunk_once(
     bloco = "\n".join(
         f"--- PG {first_page + i} ---\n{t}" for i, t in enumerate(page_texts)
     )
-    prompt = EXTRACTION_PROMPT
+    prompt = EXTRACTION_PROMPT + COORD_PROMPT_HINT
     if supplier_hints:
         prompt += f"\n\n{supplier_hints}"
     prompt += f"\n\nTEXTO DO CATÁLOGO (extraído por página):\n{bloco}"
@@ -1060,7 +1127,9 @@ def extract_with_fallback_text_chunked(pdf_path: str, supplier: str = "", client
     try:
         doc = fitz.open(pdf_path)
         for i in range(len(doc)):
-            page_texts.append(doc[i].get_text())
+            # Com COORDENADA: sem ela o preço de um produto vira o preço do
+            # vizinho em catálogo de grade. Ver page_text_for_ai().
+            page_texts.append(page_text_for_ai(doc[i]))
         doc.close()
     except Exception as e:
         return {"success": False, "produtos": [], "error": f"Falha ao ler PDF: {e}", "model": MODEL_FLASH}

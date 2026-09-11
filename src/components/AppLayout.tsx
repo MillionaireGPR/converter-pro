@@ -3,6 +3,7 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { Outlet, useLocation } from "react-router-dom";
 import { Bell, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { ConversoesEmAndamento } from "@/components/ConversoesEmAndamento";
 
 export function AppLayout() {
   const location = useLocation();
@@ -39,6 +40,10 @@ export function AppLayout() {
             </div>
           </main>
         </div>
+        {/* Some sozinho quando nada está convertendo. Fica FORA do <main>
+            porque o `key={location.pathname}` ali remonta o conteúdo a cada
+            navegação, e este aviso precisa justamente atravessar as telas. */}
+        <ConversoesEmAndamento />
       </div>
     </SidebarProvider>
   );

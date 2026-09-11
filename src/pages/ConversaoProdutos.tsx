@@ -27,6 +27,10 @@ import { classifyImageError } from "@/core/images/imageErrorClassifier";
 import { ConferenciaColunas } from "@/components/ConferenciaColunas";
 import type { ColumnMappings } from "@/core/supplierRules/applyColumnMappings";
 import { getBackendUrl, backendLabel } from "@/core/backendResolver";
+import {
+  useConversionJobs, adicionarJob, atualizarJobStore, mapearJobs,
+  type CatalogJob,
+} from "@/core/jobs/conversionJobsStore";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 
@@ -37,31 +41,11 @@ import { saveAs } from "file-saver";
  * servidor do Wesley, 1 no fallback Render), então o frontend só precisa
  * disparar cada job e acompanhar seu próprio estado, sem gerenciar fila
  * aqui também.
+ *
+ * O tipo `CatalogJob` e a fila em si moram em `core/jobs/conversionJobsStore`
+ * — fora do React, pra que sair desta tela não apague os catálogos que ainda
+ * estão convertendo (ver o comentário do store).
  */
-interface CatalogJob {
-  id: string;
-  file: File;
-  // Snapshot do formulário no momento em que o job foi criado — o
-  // formulário é limpo e reaproveitado pro próximo catálogo logo em
-  // seguida, então o job não pode depender do estado do componente.
-  fornecedorSelecionado: string; // id do fornecedor ou 'novo'
-  novoFornecedorNome: string;
-  regrasNovoFornecedor: string;
-  mappingsNovoFornecedor: ColumnMappings;
-  tipoArquivo: string; // só decorativo (ícone do painel)
-  fornecedorNome: string;
-  status: 'processing' | 'done' | 'error';
-  progress: number;
-  progressMsg: string;
-  startedAt: number;
-  elapsedSec: number;
-  finalElapsedSec: number | null;
-  errorMsg: string | null;
-  resultData: { total: number; ok: number; pendentes: number; erros: number; duplicados: number; fileName: string; fornNome: string } | null;
-  importMeta: ImportMetadata | null;
-  imageResult: ResultadoExtracaoImagens | null;
-  isZipping: boolean;
-}
 
 /** Mesmo formato do .txt baixável no painel — usado tanto no download local
  *  quanto no texto persistido em `export_history.failure_report` (27/08/2026),
@@ -107,14 +91,16 @@ export default function ConversaoProdutos() {
   //
   // Um único array de estado (não N state hooks) porque o número de
   // catálogos é dinâmico — não dá pra ter useState fixo por catálogo.
-  const [jobs, setJobs] = useState<CatalogJob[]>([]);
+  // A fila vive FORA do React (core/jobs/conversionJobsStore): sair desta tela
+  // desmonta o componente, e enquanto o estado morava aqui isso apagava os
+  // catálogos em andamento da vista — o trabalho seguia no servidor, mas o
+  // cliente voltava e não achava mais nada. Aqui a tela só LÊ a fila.
+  const jobs = useConversionJobs();
   // Handles de setInterval por job, fora do React state (senão cada patch
   // teria que carregar o handle junto pra não perdê-lo).
   const jobTimersRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
 
-  const atualizarJob = (id: string, patch: Partial<CatalogJob>) => {
-    setJobs(prev => prev.map(j => (j.id === id ? { ...j, ...patch } : j)));
-  };
+  const atualizarJob = atualizarJobStore;
 
   // Ao trocar de fornecedor selecionado (existente), recarrega as
   // particularidades já salvas dele — senão a caixa mostraria o texto do
@@ -398,7 +384,7 @@ export default function ConversaoProdutos() {
       // catálogo cair na fila do servidor (além do limite de jobs simultâneos),
       // essa barra sobe até ~90% e para ali até o resultado chegar de verdade.
       const imgProgressInterval = setInterval(() => {
-        setJobs(prev => prev.map(j => {
+        mapearJobs(j => {
           if (j.id !== job.id) return j;
           if (j.progress >= 90) return j;
           let msg = j.progressMsg;
@@ -407,7 +393,7 @@ export default function ConversaoProdutos() {
           if (j.progress === 70) msg = 'Extraindo imagens (pode levar alguns minutos)...';
           if (j.progress === 80) msg = 'Finalizando extração de imagens...';
           return { ...j, progress: j.progress + 1, progressMsg: msg };
-        }));
+        });
       }, 2000); // Avança 1% a cada 2 segundos
 
       // Pipeline V2: aceita File diretamente (Excel, CSV ou PDF).
@@ -611,7 +597,7 @@ export default function ConversaoProdutos() {
       imageResult: null,
       isZipping: false,
     };
-    setJobs(prev => [job, ...prev]);
+    adicionarJob(job);
     void processarCatalogo(job);
 
     // Limpa o formulário pro próximo catálogo — cada job já levou consigo

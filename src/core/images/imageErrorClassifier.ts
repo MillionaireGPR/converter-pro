@@ -13,6 +13,8 @@
 //                 "Cortar PDF" (catálogo menor) ou upgrade de RAM.
 //   IMG-TIMEOUT → backend não concluiu no tempo — catálogo muito grande
 //                 ou lento. Cortar PDF / investigar performance.
+//   IMG-UPLOAD  → o arquivo não terminou de subir (navegador abortou o POST).
+//                 Ver core/net/uploadTimeout.ts — prazo x banda do cliente.
 //   IMG-GEN     → não classificado. Ver o "detalhe técnico" logado no
 //                 console com esse código.
 // ===================================================================
@@ -46,6 +48,18 @@ export function classifyImageError(raw: string): ImageErrorInfo {
     return {
       code: 'IMG-SRV',
       friendly: 'O servidor não conseguiu processar as fotos deste catálogo (muito grande). Tente usar "Cortar PDF" para processar só as páginas necessárias.',
+      technical,
+    };
+  }
+
+  // Upload não chegou ao servidor (arquivo grande + link lento). Precisa vir
+  // ANTES do timeout: o erro do navegador nesse caso é um abort, e cair no
+  // genérico IMG-GEN foi o que escondeu a causa real do Dute/FORTAL em
+  // 11/09/2026 — o servidor estava bem, o arquivo é que não subia inteiro.
+  if (t.includes('upload') || t.includes('abort')) {
+    return {
+      code: 'IMG-UPLOAD',
+      friendly: 'O catálogo não terminou de subir para o servidor (arquivo grande ou internet lenta), então as fotos não puderam ser captadas. Os preços e produtos foram extraídos normalmente. Tente de novo numa conexão melhor ou use "Cortar PDF".',
       technical,
     };
   }

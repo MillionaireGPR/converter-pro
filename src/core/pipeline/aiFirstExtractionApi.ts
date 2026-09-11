@@ -75,28 +75,14 @@ export const AI_FIRST_MAX_PAGES = 200;
 export const MAX_UPLOAD_MB = 600;
 
 /**
- * Piso de banda de upload assumido pra dimensionar o timeout (KB/s).
- *
- * O teto FIXO de 180s derrubava catálogos grandes em links lentos: o Josef
- * (186.227.233.84) tentou o FORTAL (96,4MB) em 08/09/2026 e o log do Nginx
- * registrou 10 POSTs abortados, espaçados de 180s + o backoff exponencial
- * (183s, 186s, 192s, 204s) — assinatura exata do `AbortController` estourando
- * o prazo, não de erro do servidor. Cada rodada de 5 tentativas gastou ~16min
- * e terminou no regex. O mesmo arquivo, subido de um link rápido, levou 18,6s
- * pra subir e a IA devolveu 950 produtos em 47s.
- *
- * 300 KB/s (~2,4 Mbps) cobre um link de escritório ruim sem tornar o timeout
- * infinito; o teto de 20min mantém o prazo finito (IV-08).
+ * O prazo de upload mora em `core/net/uploadTimeout` porque a captação de
+ * fotos sobe o MESMO arquivo e precisa do MESMO prazo — quando só este
+ * caminho foi corrigido (10/09/2026), o outro continuou morrendo aos 180s e
+ * o cliente recebeu "as fotos não funcionaram" (IMG-GEN) com o servidor
+ * tendo concluído o trabalho. Reexportado pra não quebrar quem já importa.
  */
-const UPLOAD_FLOOR_KBPS = 300;
-const UPLOAD_TIMEOUT_MIN_MS = 180_000;  // IV-07 exige >= 120s por tentativa
-const UPLOAD_TIMEOUT_MAX_MS = 20 * 60 * 1000;
-
-/** Prazo do upload proporcional ao tamanho do arquivo. Ver `UPLOAD_FLOOR_KBPS`. */
-export const uploadTimeoutMs = (fileSizeBytes: number): number => {
-  const estimado = (fileSizeBytes / 1024 / UPLOAD_FLOOR_KBPS) * 1000;
-  return Math.round(Math.min(Math.max(UPLOAD_TIMEOUT_MIN_MS, estimado), UPLOAD_TIMEOUT_MAX_MS));
-};
+import { uploadTimeoutMs, uploadTimeoutForAttempt } from '../net/uploadTimeout';
+export { uploadTimeoutMs };
 
 /**
  * Por que a IA não foi usada nesta conversão.
@@ -170,8 +156,9 @@ export const extractProductsViaAI = async (
       if (supplierRules) fd.append('supplierRules', supplierRules);
 
       const ctrl = new AbortController();
-      // Prazo proporcional ao tamanho (IV-07 exige >= 120s) — ver uploadTimeoutMs.
-      const tid = setTimeout(() => ctrl.abort(), uploadTimeoutMs(file.size));
+      // Prazo proporcional ao tamanho, e MAIOR a cada tentativa: repetir o
+      // upload com o mesmo prazo que acabou de estourar só repete a derrota.
+      const tid = setTimeout(() => ctrl.abort(), uploadTimeoutForAttempt(file.size, attempt));
 
       const response = await fetch(`${BACKEND_URL}/extract_products_ai`, {
         method: 'POST',
