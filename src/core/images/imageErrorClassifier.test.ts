@@ -18,6 +18,16 @@ describe('classifyImageError', () => {
     expect(classifyImageError('Timeout: extração de imagens não concluiu em 360s').code).toBe('IMG-TIMEOUT');
   });
 
+  it('upload cortado no meio → IMG-UPLOAD, não o genérico IMG-GEN', () => {
+    // Era isto que o Josef via como "não capturou as imagens" (11/09/2026):
+    // o navegador abortava o POST do catálogo de 68MB aos 180s e a mensagem
+    // final não dizia nem que o problema tinha sido o envio do arquivo.
+    const info = classifyImageError('Upload do catálogo não completou: The user aborted a request.');
+    expect(info.code).toBe('IMG-UPLOAD');
+    expect(info.friendly.toLowerCase()).toContain('subir');
+    expect(classifyImageError('Falha na extração: signal is aborted without reason').code).toBe('IMG-UPLOAD');
+  });
+
   it('erro desconhecido → IMG-GEN, sem vazar termo técnico na mensagem', () => {
     const info = classifyImageError('erro bizarro qualquer 0xDEADBEEF');
     expect(info.code).toBe('IMG-GEN');

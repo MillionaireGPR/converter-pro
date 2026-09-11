@@ -1,7 +1,23 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 10/09/2026
+**Atualizado em:** 11/09/2026
+
+---
+
+## ✅ ENTREGUE em 11/09 — o relatório do Josef, item a item
+
+Josef testou e relatou 6 problemas. Causa raiz encontrada e provada em cada um
+(detalhe técnico em `guide.md #14.7`, `#14.8` e `#15`):
+
+| Relato do Josef | Causa raiz | Prova |
+|---|---|---|
+| "Petrin: a tabela de preços é a 2ª aba e o sistema identifica só o bloco" (idem Dute) | `readSpreadsheet` ancorava sempre em `SheetNames[0]`; os dois fornecedores trocaram a 1ª aba por um formulário de pedido | Nos arquivos reais: Petrin `Pedido`→`Tabela` **831 produtos**; Dute `BLOCO`→`TABELA ATUAL` **729** |
+| "Fortal/Dute: não capturou as imagens" (`IMG-GEN`) | Upload das fotos com teto FIXO de 180s, enquanto 68MB levam 242s no link do cliente | Nginx: 5 POSTs cortados a cada ~3min (180s + backoff 3/6/12/24s); a tentativa que passou deu `611 matches` + ZIP |
+| "Tuka Toys tá rodando até agora sem retorno" (39min) | Mesma coisa: 5 uploads natimortos × ~3min antes de desistir | Mesma assinatura no log |
+| "Pegou alguns códigos errados" / 68 de 89 sem preço | A IA recebia o texto em ordem de leitura, SEM posição — num catálogo em grade o preço fica solto no fim da página | API real do Gemini: Dute 12/24 → **24/24**; TUKA 0/4 → **4/4**; FORTAL 24/24 sem regressão |
+| "Saí da tela e os catálogos que estavam carregando sumiram" | A fila morava em `useState` da página; sair desmontava o componente | Fila movida pra fora do React + aviso flutuante com clique de volta |
+| "Capturou um elemento só da imagem em vários casos" | **AINDA ABERTO** — recorte do `last-resort Y-proximity` no `cv_extractor` | — |
 
 ---
 

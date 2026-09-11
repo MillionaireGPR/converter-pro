@@ -535,7 +535,8 @@ Três causas independentes, todas confirmadas com evidência e corrigidas:
    `AbortController`, não de erro do servidor. A FORTAL (96,4MB) não subia nesse
    prazo no link do Josef; o mesmo arquivo, de um link rápido, subiu em 18,6s e
    a IA devolveu **950 produtos em 47s**. Agora o prazo é proporcional ao
-   tamanho (`uploadTimeoutMs`, piso de 300 KB/s, teto de 20min pra manter IV-08).
+   tamanho (`uploadTimeoutMs`, teto de 30min pra manter IV-08) — ver 14.7, que
+   corrigiu o piso de banda e estendeu a regra ao upload das fotos.
 2. **`/tmp` do container é tmpfs de 256MB (RAM)**. O Starlette grava o corpo do
    upload em arquivo temporário, então a TUKA TOYS (435,7MB) morria com
    `400 There was an error parsing the body` por volta dos 272MB. Corrigido com
@@ -567,6 +568,76 @@ Correção: esperar o intervalo ANTES de medir, e limitar ao teto físico
 (`n_núcleos × 100`) como rede de segurança. Medição real do mesmo job via
 `docker stats`: **pico 27%, média 2,2%**, load 0,11 num servidor de 4 núcleos.
 
+### 14.7 `IMG-GEN` era o upload das fotos morrendo aos 180s (11/09/2026)
+
+O 14.5 corrigiu o prazo do upload **só no caminho da IA**. O caminho das FOTOS
+(`imageExtractionApi.ts`) ficou com o teto fixo de 180s, e o cliente passou a
+receber "a captação de fotos não funcionou neste catálogo" (`IMG-GEN`) em
+catálogo grande — enquanto o servidor estava perfeitamente saudável.
+
+Evidência no Nginx (Dute Toys, 68MB, IP do Josef, 11/09/2026):
+
+```
+10:37:38  POST /process → 400          (upload cortado pelo navegador)
+10:40:43  POST /process → 400          ← 3min04 depois (180s + backoff 3s)
+10:43:51  POST /process → 400          ← 3min08          (180s + 6s)
+10:47:04  POST /process → 400          ← 3min13          (180s + 12s)
+10:50:28  POST /process → 400          ← 3min24          (180s + 24s)
+```
+
+A única tentativa que passou levou **242s** (10:24:34 → 10:28:36) e terminou em
+`[CV] Total: 611 matches`, com o ZIP inteiro no Supabase. Ou seja: o arquivo
+precisava de 242s e o navegador desistia aos 180s.
+
+Correções:
+
+- O prazo virou módulo próprio (`src/core/net/uploadTimeout.ts`) usado pelos
+  **dois** caminhos — era a duplicação que deixava um corrigido e o outro não.
+- Piso de banda de 300 → **120 KB/s**: os 242s medidos em 68MB dão ~288 KB/s
+  reais, então o piso antigo prometia mais banda do que o cliente tem e o prazo
+  calculado caía logo ABAIXO do tempo necessário.
+- A retentativa agora ganha **+50% de prazo** a cada tentativa
+  (`uploadTimeoutForAttempt`): repetir com o mesmo prazo que acabou de estourar
+  é repetir a derrota — foram 16min gastos em 5 uploads natimortos.
+- Novo código **`IMG-UPLOAD`** no classificador, com instrução de verdade pro
+  cliente. Cair no genérico `IMG-GEN` foi o que escondeu a causa por dois dias.
+
+### 14.8 Preço trocado/ausente: a IA lia o texto SEM a posição (11/09/2026)
+
+Josef: "pegou alguns códigos errados", e a exportação do Dute acusava **68 de 89
+produtos sem preço**. Não era alucinação do modelo — era informação destruída
+antes de ele ver o texto.
+
+`page.get_text()` devolve a página em ORDEM DE LEITURA. Num catálogo em grade
+isso separa o preço do produto:
+
+```
+DT10032 / DT10019 / DT10020 / DT10021          ← os 4 códigos
+EM BREVE / DISPONÍVEL / DISPONÍVEL / DISPONÍVEL ← os 4 selos, soltos
+R$ 5,00 / R$ 5,50 / R$ 5,50                     ← os 3 preços, soltos
+```
+
+Nada nesse texto diz de quem é cada preço. A única informação que resolve — a
+POSIÇÃO do selo na página — estava sendo jogada fora.
+
+Correção: `page_text_for_ai()` (em `gemini_extractor.py`) anota cada trecho com
+sua coordenada (`[x,y] conteúdo`), separando colunas por vão horizontal, e o
+prompt ensina o modelo a usar isso. Custo: +69% de caracteres no texto; nenhum
+passo a mais e nada pra o cliente configurar — a posição já está no PDF.
+
+Medido com a **API real do Gemini** (págs 5-10 do catálogo do cliente):
+
+| Catálogo | Texto puro | Com coordenada |
+|---|---|---|
+| Dute Toys | 12/24 preços | **24/24** |
+| TUKA TOYS | 0/4 (todos trocados entre si) | **4/4** |
+| FORTAL    | 24/24 | 24/24 (sem regressão) |
+
+O caminho `extract_via_template` continua no texto puro de propósito: o regex
+dele foi sintetizado nesse formato e ele tem porta de cobertura própria
+(`TEMPLATE_MIN_COVERAGE`), que reprova o catálogo em grade e manda pro
+text-chunked — que é o caminho corrigido aqui.
+
 ---
 
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
@@ -590,6 +661,20 @@ isolado.
 - **Render:** a coluna de resultado virou uma lista de mini-painéis
   (`jobs.map(...)`), um por catálogo, cada um com seu próprio cronômetro/
   progresso/resultado/download de imagens.
+- **A fila vive FORA do React (11/09/2026):** `src/core/jobs/conversionJobsStore.ts`,
+  lido por `useSyncExternalStore`. Enquanto ela morava em `useState` dentro da
+  página, sair de `/conversao` desmontava o componente e os catálogos em
+  andamento sumiam da vista — o trabalho seguia no servidor, mas o cliente não
+  tinha como voltar e acompanhar. Josef: *"fui ver a exportação e os catálogos
+  que estavam carregando sumiram; a gente consegue deixar rodando em segundo
+  plano e voltar nessa mesma tela?"*. O componente
+  `ConversoesEmAndamento` (no `AppLayout`, fora do `<main>`, que é remontado a
+  cada navegação) mostra o aviso flutuante em qualquer outra tela e leva de
+  volta com um clique.
+  **Não persiste em disco de propósito:** um job carrega o `File` escolhido
+  pelo cliente, e `File` não sobrevive a um recarregamento de página — salvar
+  no localStorage devolveria um job fantasma, sem arquivo, impossível de
+  continuar.
 - **Limitação conhecida:** a barra de progresso de cada job continua
   sendo uma ESTIMATIVA animada (nunca foi o status real do backend, isso
   já era assim antes) — se um catálogo cair na fila real do servidor

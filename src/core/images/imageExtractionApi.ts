@@ -1,6 +1,7 @@
 import { ResultadoExtracaoImagens } from './imageTypes';
 import { ProdutoNormalizadoV2 } from '../types/productPipeline';
 import { getBackendUrl, invalidateBackend } from '../backendResolver';
+import { uploadTimeoutForAttempt } from '../net/uploadTimeout';
 
 /**
  * Extrai imagens de PDF usando o backend Python (PyMuPDF)
@@ -66,8 +67,14 @@ export const extractImagesViaBackend = async (
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
         const ctrl = new AbortController();
-        // 180s: PDFs ~13MB em conexão lenta podem levar 60-90s só pra upload
-        const tid = setTimeout(() => ctrl.abort(), 180_000);
+        // Prazo PROPORCIONAL ao tamanho do arquivo, crescendo a cada tentativa.
+        // Era 180s fixo, e um catálogo de 68MB no link do cliente precisa de
+        // ~242s só pra subir: o navegador cortava o upload 5 vezes seguidas
+        // (Nginx registrou 400 a cada ~3min em 11/09/2026), o job nunca era
+        // criado e o cliente via "a captação de fotos não funcionou" (IMG-GEN)
+        // — mesmo quando o servidor, na tentativa que passava, entregava as
+        // 611 fotos e o ZIP inteiro. Ver core/net/uploadTimeout.
+        const tid = setTimeout(() => ctrl.abort(), uploadTimeoutForAttempt(file.size, attempt));
 
         response = await fetch(`${BACKEND_URL}/process`, {
           method: 'POST',
@@ -237,6 +244,12 @@ export const extractImagesViaBackend = async (
 
   } catch (error: any) {
     console.error('[ImageExtractionApi] Erro:', error);
+    // Upload cortado no meio (arquivo grande + link lento) tem conserto e
+    // instrução própria — sem isto vira "IMG-GEN: não funcionou", que não diz
+    // nada ao cliente nem a quem for investigar. Ver classifyImageError.
+    const abortou = error?.name === 'AbortError' ||
+      /abort/i.test(error?.message || '') ||
+      /não respondeu após retentativas/i.test(error?.message || '');
     // O backend escolhido pode ter caído no meio da sessão — descarta a
     // memoização pra que a PRÓXIMA tentativa refaça o health check e possa
     // cair na reserva (sem isso, ficaria preso no servidor morto).
@@ -248,7 +261,9 @@ export const extractImagesViaBackend = async (
       images: [],
       unmatchedImages: [],
       warnings: [],
-      errors: [`Falha na extração: ${error.message}`]
+      errors: [abortou
+        ? `Upload do catálogo não completou: ${error.message}`
+        : `Falha na extração: ${error.message}`]
     };
   }
 };
