@@ -4,7 +4,10 @@ Esta pasta empacota o backend atual sem alterar a logica das conversoes.
 
 ## Layout no servidor
 
-- `/opt/converter-pro/repo`: checkout do Git.
+- `/opt/converter-pro/repo`: copia do codigo (`backend/` e `infra/`). NAO e um
+  checkout do Git -- nao existe `.git` ali, entao `git pull` falha com
+  "not a git repository". A atualizacao e por copia de arquivo; ver
+  "Atualizacao" abaixo.
 - `/opt/converter-pro/config/backend.env`: segredos, fora do Git e modo 600.
 - `/opt/converter-pro/data/temp`: jobs temporarios.
 - `/opt/converter-pro/data/supplier_profiles`: perfis Phase 0 persistentes.
@@ -79,15 +82,31 @@ confirmar que a configuracao manual nao foi sobrescrita.
 
 ## Atualizacao
 
-Sempre atualizar por branch e PR. Depois do merge aprovado:
+Sempre atualizar por branch e PR. Depois do merge aprovado, copie os arquivos
+alterados da maquina local para o servidor e recrie o container:
 
 ```bash
-cd /opt/converter-pro/repo
-git pull --ff-only origin main
-./infra/integrator/deploy.sh
+scp -i ~/.ssh/converter_pro_integrator_ed25519 \
+  backend/image_extractor/*.py \
+  root@23.80.89.90:/opt/converter-pro/repo/backend/image_extractor/
 ```
 
-O deploy recria apenas o container; os dados ficam fora do checkout.
+```bash
+ssh -i ~/.ssh/converter_pro_integrator_ed25519 root@23.80.89.90 \
+  "cd /opt/converter-pro/repo/backend/image_extractor && sed -i 's/\r$//' *.py"
+```
+
+O `sed` e obrigatorio: o Git desta maquina faz checkout com CRLF e um shell
+script copiado assim morre com `env: bash\r: No such file or directory`.
+
+```bash
+ssh -i ~/.ssh/converter_pro_integrator_ed25519 root@23.80.89.90 \
+  "cd /opt/converter-pro/repo && CONVERTER_DATA_DIR=/opt/converter-pro/data \
+   docker compose -f infra/integrator/compose.yaml \
+   --env-file /opt/converter-pro/config/backend.env up -d --build"
+```
+
+O deploy recria apenas o container; os dados ficam fora da copia do codigo.
 
 ## Detalhes dos servidores no painel central
 
