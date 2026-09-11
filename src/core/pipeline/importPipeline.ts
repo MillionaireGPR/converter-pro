@@ -18,7 +18,7 @@ import { detectFileType, classifyPDF } from './fileDetector';
 import { extractTextFromPDF, scorePdfPages, splitIntoProductBlocks, parseTabularPDF } from './pdfParser';
 import { detectTemplate } from '../pdfTemplates/templateRegistry';
 import { interpretPdfSemantically } from './smartPdfInterpreter';
-import { findHeaderRowIndex } from '../autoMapper';
+import { findHeaderRowIndex, normalizeHeader } from '../autoMapper';
 import { SupplierAdapter } from '../supplierRules/types';
 import { getAdapterById, getGenericAdapter, detectSupplier } from '../supplierRules/registry';
 import { extractProducts } from '../supplierRules/extractor';
@@ -653,6 +653,49 @@ const readSheet = (worksheet: XLSX.WorkSheet) => {
   return { headers, rows, rows2D, headerRowIndex, headerRowRaw: headerRow };
 };
 
+// ===================================================================
+// QUAL ABA TEM OS PRODUTOS? (11/09/2026)
+// ===================================================================
+// Até aqui a 1ª aba era SEMPRE a âncora (`SheetNames[0]`) e as demais só
+// entravam se o cabeçalho batesse com o dela. Petrin e Dute trocaram o
+// formato do arquivo: a 1ª aba virou o FORMULÁRIO de pedido ("Pedido" /
+// "BLOCO", com Razão Social/CNPJ/IE) e o catálogo foi para a 2ª aba
+// ("Tabela", 832 linhas / "TABELA ATUAL", 2198 linhas). Resultado: a âncora
+// não tinha cabeçalho de produto, NENHUMA outra aba batia com ela, e o
+// sistema lia o formulário — exatamente o que o Josef reportou em 11/09
+// ("identifica somente os campos do bloco, não da tabela").
+//
+// Escolher a aba não pode depender do cliente configurar: se ele não sabe
+// que o fornecedor mudou o arquivo, o sistema tem que se virar sozinho.
+const PRODUCT_SHEET_HINTS: string[][] = [
+  ['codigo', 'referencia', 'ref', 'sku', 'cod', 'codigodoproduto'],
+  ['descricao', 'produto', 'nome', 'descricaodoproduto'],
+  ['preco', 'valor', 'valorvenda', 'pvenda', 'precovenda'],
+  ['emb', 'embalagem', 'caixa', 'qtd', 'qtde', 'quantidade', 'qntdcaixa'],
+];
+
+/**
+ * Quanto uma aba PARECE uma tabela de produtos. 0 = não parece.
+ *
+ * Exige ao menos DOIS grupos de campos distintos (ex.: código + preço) e
+ * linhas de dado de verdade — um formulário de pedido tem rótulos soltos
+ * ("Razão Social", "CNPJ") que nunca formam esse conjunto.
+ *
+ * O desempate é por volume de linhas: entre abas igualmente "de produto"
+ * (Petrin tem "Tabela" com 831 e "Estoque" com 616), a maior é a tabela
+ * cheia — a outra costuma ser um recorte.
+ */
+const scoreProductSheet = (headers: string[], dataRows: number): number => {
+  if (dataRows < 2 || headers.length < 2) return 0;
+  const norm = headers.map(h => normalizeHeader(String(h || ''))).filter(Boolean);
+  let grupos = 0;
+  for (const aliases of PRODUCT_SHEET_HINTS) {
+    if (norm.some(h => aliases.some(a => h === a || h.startsWith(a)))) grupos++;
+  }
+  if (grupos < 2) return 0;
+  return grupos * 100_000 + Math.min(dataRows, 99_999);
+};
+
 // Pistas de que um header textual representa um campo NUMÉRICO (qtd/valor/preço).
 // Usado só para detectar abas SEM linha de cabeçalho (ver tryReadHeaderlessSheet).
 const NUMERIC_HEADER_HINTS = ['qtd', 'valor', 'preco', 'preço', 'estoque'];
@@ -724,9 +767,41 @@ const readSpreadsheet = async (
   const cellStyles = await extractCellStylesFromXML(data);
   console.log(`[ReadSpreadsheet] Extraídos ${cellStyles.size} estilos via XML`);
 
-  const first = readSheet(workbook.Sheets[workbook.SheetNames[0]]);
+  let first = readSheet(workbook.Sheets[workbook.SheetNames[0]]);
+  let ancoraTrocada = false;
 
-  if (!isMultiSheetSupplier(supplierHint) || workbook.SheetNames.length <= 1) {
+  // A 1ª aba nem sempre é o catálogo (ver scoreProductSheet). Só procuramos
+  // outra quando ela NÃO parece tabela de produto — assim nada muda para os
+  // fornecedores em que a 1ª aba já é a certa (VAESO, CLINK, MOMENT, FLASH...).
+  if (workbook.SheetNames.length > 1 && scoreProductSheet(first.headers, first.rows.length) === 0) {
+    let melhorScore = 0;
+    let melhorNome = '';
+    let melhorAba: ReturnType<typeof readSheet> | null = null;
+    for (const nome of workbook.SheetNames.slice(1)) {
+      const cand = readSheet(workbook.Sheets[nome]);
+      const s = scoreProductSheet(cand.headers, cand.rows.length);
+      if (s > melhorScore) {
+        melhorScore = s;
+        melhorNome = nome;
+        melhorAba = cand;
+      }
+    }
+    if (melhorAba) {
+      console.log(
+        `[ReadSpreadsheet] 1ª aba "${workbook.SheetNames[0]}" não parece tabela de produtos ` +
+        `— usando "${melhorNome}" (${melhorAba.rows.length} linhas)`
+      );
+      first = melhorAba;
+      ancoraTrocada = true;
+    }
+  }
+
+  // Âncora trocada = o arquivo não segue o layout que a concatenação multi-aba
+  // pressupõe (todas as abas com o MESMO cabeçalho de produto). Anexar as
+  // outras aqui arrastaria o formulário de pedido e a aba de estoque — que
+  // repete os mesmos códigos com outros valores — para dentro do catálogo.
+  // Ficar só na aba escolhida é o comportamento correto nesse formato.
+  if (ancoraTrocada || !isMultiSheetSupplier(supplierHint) || workbook.SheetNames.length <= 1) {
     console.log(`[ReadSpreadsheet] Headers: ${first.headers.length}, Rows: ${first.rows.length}, Styles: ${cellStyles.size}`);
     return { ...first, cellStyles };
   }
@@ -1270,3 +1345,6 @@ export const runImportPipeline = async (
     warnings: pipelineWarnings.length > 0 ? pipelineWarnings : undefined,
   };
 };
+
+/** Internos expostos só para teste (ver productSheetPicker.test.ts). */
+export const __testables = { scoreProductSheet };
