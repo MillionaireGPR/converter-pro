@@ -126,7 +126,8 @@ def extract_cells_via_cv(
         if 1 <= n_interior_v <= 10:
             print(f" → GRID ({len(h_coords)}H×{len(v_coords)}V)")
             pm, pu = _match_via_grid(doc, page, raster, h_coords, v_coords,
-                                     page_skus, page_imgs, scale, output_folder, page_num)
+                                     page_skus, page_imgs, scale, output_folder, page_num,
+                                     supplier_id=supplier_id)
         else:
             print(f" → EMBEDDED")
             pm, pu = _match_via_embedded(doc, raster, page_skus, page_imgs,
@@ -488,6 +489,221 @@ def _cluster_coords(coords: List[float], tolerance: float = 20.0) -> List[float]
         
     return clusters
 
+
+def _is_dute_supplier(supplier_id: Optional[str]) -> bool:
+    """Reconhece as variacoes de nome usadas para o fornecedor Dute Toys."""
+    compact = "".join(ch for ch in str(supplier_id or "").casefold() if ch.isalnum())
+    return "dute" in compact
+
+
+def _snap_partition_before_anchor(
+    previous_anchor: float,
+    anchor: float,
+    detected_lines: List[float],
+    previous_boundary: float,
+) -> float:
+    """Acha a divisoria visual imediatamente antes de uma nova coluna/linha.
+
+    O codigo do Dute fica perto do inicio de cada bloco. Por isso, a linha que
+    separa dois produtos costuma ficar perto do SEGUNDO codigo, e nao no meio
+    dos dois codigos. Se a grade nao trouxer uma linha confiavel, usamos o meio
+    como fallback seguro.
+    """
+    gap = anchor - previous_anchor
+    fallback = previous_anchor + gap / 2
+    if gap <= 0:
+        return max(previous_boundary, fallback)
+
+    max_snap = max(35.0, min(120.0, gap * 0.40))
+    # A divisoria precisa ficar ANTES do novo codigo. Toleramos somente 10pt
+    # depois dele porque o detector pode oscilar alguns pixels (pag. 141), mas
+    # nunca escolhemos uma linha muito abaixo: nas paginas 116/127/142/165 essa
+    # linha atravessa a propria foto e deixava o produto sem nenhum elemento.
+    candidates = [
+        line for line in detected_lines
+        if line > previous_boundary + 5.0
+        and previous_anchor < line <= anchor + 10.0
+    ]
+    if not candidates:
+        return fallback
+
+    nearest = min(candidates, key=lambda line: abs(line - anchor))
+    return nearest if abs(nearest - anchor) <= max_snap else fallback
+
+
+def _dute_axis_partitions(
+    anchors: List[float],
+    detected_lines: List[float],
+    axis_limit: float,
+    cluster_tolerance: float,
+) -> Tuple[List[float], List[Tuple[float, float]]]:
+    """Cria faixas logicas do catalogo Dute a partir dos codigos e da grade."""
+    centers = _cluster_coords(anchors, tolerance=cluster_tolerance)
+    if not centers:
+        return [], []
+
+    interior = sorted(line for line in detected_lines if 1.0 < line < axis_limit - 1.0)
+    boundaries = [0.0]
+    for index in range(1, len(centers)):
+        boundary = _snap_partition_before_anchor(
+            centers[index - 1], centers[index], interior, boundaries[-1]
+        )
+        # Uma deteccao imperfeita nunca pode inverter ou zerar uma faixa.
+        boundary = min(axis_limit - 1.0, max(boundaries[-1] + 1.0, boundary))
+        boundaries.append(boundary)
+    boundaries.append(axis_limit)
+
+    return centers, list(zip(boundaries[:-1], boundaries[1:]))
+
+
+def _match_dute_compositions(
+    doc: fitz.Document,
+    raster: np.ndarray,
+    h_coords: List[float],
+    v_coords: List[float],
+    valid_skus: list,
+    page_imgs: List[Dict],
+    scale: float,
+    output_folder: str,
+    page_num: int,
+    target_sku_codes: Optional[set] = None,
+) -> Tuple[List[Dict], List[Dict]]:
+    """Extrai a composicao completa de cada produto do catalogo Dute.
+
+    No PDF real, embalagem, brinquedo e acessorios sao objetos de imagem
+    separados. O casamento antigo escolhia apenas o objeto cujo centro ficava
+    mais perto do codigo. Aqui cada objeto e atribuido ao bloco visual do SKU e
+    o recorte final usa a uniao de todos os objetos desse bloco.
+    """
+    height, width = raster.shape[:2]
+    page_width = width / max(scale, 0.0001)
+    page_height = height / max(scale, 0.0001)
+    v_points = [value / max(scale, 0.0001) for value in v_coords]
+    h_points = [value / max(scale, 0.0001) for value in h_coords]
+
+    # O Dute alterna entre dois desenhos:
+    #   - grade comum (2x2, 2x1 etc.): ha dois ou mais SKUs na mesma linha;
+    #   - blocos laterais desencontrados (pag. 141): um SKU por linha visual,
+    #     mas cada produto ocupa uma coluna inteira.
+    # Nas grades comuns, dividir LINHAS primeiro resolve tambem as paginas em
+    # triangulo (1 produto em cima + 2 embaixo, ou o inverso). Nas laterais
+    # desencontradas, dividir COLUNAS primeiro evita cortar a composicao alta.
+    global_row_centers = _cluster_coords(
+        [sku["spatialContext"]["y"] for sku in valid_skus], tolerance=45.0
+    )
+    skus_by_global_row: Dict[int, list] = {
+        index: [] for index in range(len(global_row_centers))
+    }
+    for sku in valid_skus:
+        sku_y = sku["spatialContext"]["y"]
+        row_index = min(
+            range(len(global_row_centers)),
+            key=lambda idx: abs(global_row_centers[idx] - sku_y),
+        )
+        skus_by_global_row[row_index].append(sku)
+
+    cells: List[Tuple[Dict, float, float, float, float, int, int]] = []
+    use_row_first = any(len(row_skus) >= 2 for row_skus in skus_by_global_row.values())
+
+    if use_row_first:
+        row_centers, row_ranges = _dute_axis_partitions(
+            [sku["spatialContext"]["y"] for sku in valid_skus],
+            h_points,
+            page_height,
+            cluster_tolerance=45.0,
+        )
+        for row_index, row_skus in skus_by_global_row.items():
+            col_centers, col_ranges = _dute_axis_partitions(
+                [sku["spatialContext"]["x"] for sku in row_skus],
+                v_points,
+                page_width,
+                cluster_tolerance=80.0,
+            )
+            y_min, y_max = row_ranges[row_index]
+            for sku in row_skus:
+                sku_x = sku["spatialContext"]["x"]
+                col_index = min(
+                    range(len(col_centers)),
+                    key=lambda idx: abs(col_centers[idx] - sku_x),
+                )
+                x_min, x_max = col_ranges[col_index]
+                cells.append((sku, x_min, x_max, y_min, y_max, col_index, row_index))
+    else:
+        col_centers, col_ranges = _dute_axis_partitions(
+            [sku["spatialContext"]["x"] for sku in valid_skus],
+            v_points,
+            page_width,
+            cluster_tolerance=80.0,
+        )
+        skus_by_col: Dict[int, list] = {index: [] for index in range(len(col_centers))}
+        for sku in valid_skus:
+            sku_x = sku["spatialContext"]["x"]
+            col_index = min(
+                range(len(col_centers)), key=lambda idx: abs(col_centers[idx] - sku_x)
+            )
+            skus_by_col[col_index].append(sku)
+
+        for col_index, col_skus in skus_by_col.items():
+            row_centers, row_ranges = _dute_axis_partitions(
+                [sku["spatialContext"]["y"] for sku in col_skus],
+                h_points,
+                page_height,
+                cluster_tolerance=45.0,
+            )
+            x_min, x_max = col_ranges[col_index]
+            for sku in col_skus:
+                sku_y = sku["spatialContext"]["y"]
+                row_index = min(
+                    range(len(row_centers)),
+                    key=lambda idx: abs(row_centers[idx] - sku_y),
+                )
+                y_min, y_max = row_ranges[row_index]
+                cells.append((sku, x_min, x_max, y_min, y_max, col_index, row_index))
+
+    matches: List[Dict] = []
+    unmatched: List[Dict] = []
+    for sku, x_min, x_max, y_min, y_max, col_index, row_index in cells:
+        sku_code = sku.get("sku", "UNKNOWN")
+        if target_sku_codes is not None and sku_code not in target_sku_codes:
+            continue
+        grouped = [
+            image for image in page_imgs
+            if x_min <= image["cx"] < x_max
+            and y_min <= image["cy"] < y_max
+        ]
+
+        if not grouped:
+            unmatched.append({"sku": sku_code, "page": page_num, "reason": "no_img_in_dute_cell"})
+            continue
+
+        if len(grouped) == 1:
+            img_arr = _extract_perfect_image(
+                doc, grouped[0], raster, width, height, scale
+            )
+            match_type = "dute_cell"
+        else:
+            union = fitz.Rect(grouped[0]["rect"])
+            for image in grouped[1:]:
+                union |= image["rect"]
+            img_arr = _crop_raster_at_pdf_rect(
+                union, raster, width, height, scale
+            )
+            match_type = "dute_composition"
+
+        if img_arr is None or img_arr.size == 0:
+            unmatched.append({"sku": sku_code, "page": page_num, "reason": "extract_failed"})
+            continue
+
+        filepath = _save_image(img_arr, sku_code, output_folder)
+        matches.append(_make_match(sku, page_num, filepath, match_type))
+        print(
+            f"    [DuteCell] {sku_code}: {len(grouped)} elemento(s) "
+            f"no bloco col={col_index + 1}, row={row_index + 1}"
+        )
+
+    print(f"  [DuteCell] Resultado: {len(matches)} matches | {len(unmatched)} unmatched")
+    return matches, unmatched
+
 def _match_via_grid(
     doc: fitz.Document,
     page: fitz.Page,
@@ -498,7 +714,8 @@ def _match_via_grid(
     page_imgs: List[Dict],
     scale: float,
     output_folder: str,
-    page_num: int
+    page_num: int,
+    supplier_id: Optional[str] = None,
 ) -> Tuple[List[Dict], List[Dict]]:
     """
     Estratégia Column-First:
@@ -536,7 +753,47 @@ def _match_via_grid(
     # selo ~1.300px² (≈4%) — descartar tudo abaixo de 15% da maior imagem
     # da página elimina o selo com folga, sem risco de rejeitar foto real.
     # ═══════════════════════════════════════════════════════
+    raw_page_imgs = page_imgs
     page_imgs = _descartar_selos(page_imgs, "ColMatch")
+
+    # DUTE TOYS (catalogo real de 08/09/2026): uma unica foto comercial e
+    # montada por varios objetos independentes no PDF (caixa + brinquedo +
+    # acessorios). Agrupar so imagens com centro no mesmo Y salvava apenas um
+    # pedaco. O caminho fica restrito ao Dute para nao mudar fornecedores cuja
+    # regra correta continua sendo escolher uma unica foto.
+    if _is_dute_supplier(supplier_id):
+        coordinate_unmatched = list(unmatched)
+        matches, cell_unmatched = _match_dute_compositions(
+            doc, raster, h_coords, v_coords, valid_skus, page_imgs,
+            scale, output_folder, page_num,
+        )
+        # Pagina 142 do catalogo de 08/09: uma imagem gigante contem duas
+        # variacoes e envolve geometricamente os objetos menores. O filtro de
+        # selo, corretamente, protege os demais fornecedores, mas nesse caso
+        # tambem esconde duas fotos legitimas. Reabre SOMENTE as celulas Dute
+        # que ficaram vazias usando a lista original; as celulas ja corretas
+        # nao sao recalculadas nem substituidas.
+        missing_codes = {item.get("sku") for item in cell_unmatched if item.get("sku")}
+        if missing_codes and raw_page_imgs is not page_imgs:
+            recovered, still_unmatched = _match_dute_compositions(
+                doc, raster, h_coords, v_coords, valid_skus, raw_page_imgs,
+                scale, output_folder, page_num, target_sku_codes=missing_codes,
+            )
+            if recovered:
+                recovered_codes = {item.get("sku") for item in recovered}
+                matches.extend(recovered)
+                cell_unmatched = [
+                    item for item in cell_unmatched
+                    if item.get("sku") not in recovered_codes
+                ]
+                # Mantem um motivo novo apenas se o fallback tentou e falhou.
+                remaining_codes = {item.get("sku") for item in cell_unmatched}
+                cell_unmatched = [
+                    item for item in still_unmatched
+                    if item.get("sku") in remaining_codes
+                ]
+                print(f"  [DuteCell] fallback recuperou {len(recovered)} celula(s)")
+        return matches, coordinate_unmatched + cell_unmatched
 
     # ═══════════════════════════════════════════════════════
     # FASE 1.6: Legenda logo abaixo da foto grande (VAESO, 27/08/2026)
