@@ -38,6 +38,14 @@ export interface AiProduto {
   ncm?: string | null;
   categoria?: string | null;
   paginaOrigem?: number | null;
+  /** Centro visual do card, preenchido quando o PDF precisou ser lido por visão. */
+  spatialContext?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    page: number;
+  } | null;
   observacoes?: string | null;
   emBreve?: boolean;
   promocional?: boolean;  // item já com desconto aplicado (tag/selo) → bloqueia desconto
@@ -436,6 +444,7 @@ export const mapAiProductsToBrutos = (produtos: AiProduto[]): ProdutoBruto[] => 
       linhaOrigem: i,
       paginaOrigem: Number(p.paginaOrigem || 0) || 1,
       textoBruto: `${codigo} ${p.nome || ''} [ai-first]`,
+      spatialContext: p.spatialContext || undefined,
     });
   }
   return brutos;

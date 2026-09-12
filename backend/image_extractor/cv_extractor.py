@@ -78,6 +78,15 @@ def extract_cells_via_cv(
             deduped.append(sku)
     skus_list = deduped
 
+    # A Folia grava cada card como uma imagem quadrada, mas código/nome/preço
+    # viram curvas da arte e não existem na camada de texto. Quando a extração
+    # por visão ainda não trouxe coordenada, usamos a ordem visual devolvida
+    # pela IA para colocar cada SKU no centro do seu card real.
+    if _is_folia_supplier(supplier_id):
+        _assign_folia_card_positions(
+            doc, skus_list, logo_xrefs, logo_digests,
+        )
+
     skus_by_page: Dict[int, list] = {}
     for sku in skus_list:
         sc = sku.get("spatialContext")
@@ -123,7 +132,13 @@ def extract_cells_via_cv(
         pct = int((page_idx + 1) / total_pages * 100)
         print(f"[CV] [{page_idx+1}/{total_pages} {pct}%] Pág {page_num}: {n_interior_v} V-int | {len(page_imgs)} imgs", end="")
 
-        if 1 <= n_interior_v <= 10:
+        if _is_folia_supplier(supplier_id):
+            print(" → FOLIA CARDS")
+            pm, pu = _match_folia_cards(
+                doc, page, raster, page_skus, page_imgs,
+                scale, output_folder, page_num,
+            )
+        elif 1 <= n_interior_v <= 10:
             print(f" → GRID ({len(h_coords)}H×{len(v_coords)}V)")
             pm, pu = _match_via_grid(doc, page, raster, h_coords, v_coords,
                                      page_skus, page_imgs, scale, output_folder, page_num,
@@ -494,6 +509,164 @@ def _is_dute_supplier(supplier_id: Optional[str]) -> bool:
     """Reconhece as variacoes de nome usadas para o fornecedor Dute Toys."""
     compact = "".join(ch for ch in str(supplier_id or "").casefold() if ch.isalnum())
     return "dute" in compact
+
+
+def _is_folia_supplier(supplier_id: Optional[str]) -> bool:
+    """Reconhece as variações de nome usadas para Folia Brinquedos."""
+    compact = "".join(ch for ch in str(supplier_id or "").casefold() if ch.isalnum())
+    return "folia" in compact
+
+
+def _folia_card_candidates(page: fitz.Page, page_imgs: List[Dict]) -> List[Dict]:
+    """Seleciona e ordena os cards quadrados do catálogo Folia.
+
+    Medido no PDF real de 20/07/2026: cards têm ~184-192pt, ficam abaixo do
+    cabeçalho (Y>14% da página) e formam uma grade de três colunas. Os vários
+    pedaços do logotipo ficam no cabeçalho e são menores/retangulares.
+    """
+    page_w, page_h = page.rect.width, page.rect.height
+    cards = []
+    for image in page_imgs:
+        rect = image["rect"]
+        aspect = rect.width / max(rect.height, 1.0)
+        if (
+            rect.y0 > page_h * 0.14
+            and rect.width >= page_w * 0.18
+            and rect.height >= page_h * 0.10
+            and 0.70 <= aspect <= 1.45
+        ):
+            cards.append(image)
+
+    # Pequenas oscilações de 1-3pt no Y não podem trocar a ordem da linha.
+    row_band = max(10.0, page_h * 0.015)
+    return sorted(cards, key=lambda image: (
+        round(image["rect"].y0 / row_band), image["rect"].x0,
+    ))
+
+
+def _assign_folia_card_positions(
+    doc: fitz.Document,
+    skus_list: list,
+    logo_xrefs: set,
+    logo_digests: set,
+) -> int:
+    """Preenche coordenadas ausentes da Folia pela grade visual dos cards."""
+    missing_by_page: Dict[int, list] = {}
+    for sku in skus_list:
+        if sku.get("spatialContext"):
+            continue
+        page_number = sku.get("page")
+        if isinstance(page_number, int) and 1 <= page_number <= len(doc):
+            missing_by_page.setdefault(page_number, []).append(sku)
+
+    assigned = 0
+    for page_number, page_skus in missing_by_page.items():
+        page = doc.load_page(page_number - 1)
+        page_imgs = _get_page_embedded_images(page, logo_xrefs, logo_digests)
+        cards = _folia_card_candidates(page, page_imgs)
+        if len(cards) < len(page_skus):
+            print(
+                f"[FoliaCards] pág {page_number}: {len(page_skus)} SKUs, "
+                f"mas só {len(cards)} cards confiáveis; mantendo sem coordenada"
+            )
+            continue
+        for sku, card in zip(page_skus, cards):
+            rect = card["rect"]
+            sku["spatialContext"] = {
+                "x": card["cx"],
+                "y": card["cy"],
+                "width": rect.width,
+                "height": rect.height,
+                "page": page_number,
+            }
+            assigned += 1
+    if assigned:
+        print(f"[FoliaCards] coordenadas inferidas em {assigned} SKU(s)")
+    return assigned
+
+
+def _match_folia_cards(
+    doc: fitz.Document,
+    page: fitz.Page,
+    raster: np.ndarray,
+    page_skus: list,
+    page_imgs: List[Dict],
+    scale: float,
+    output_folder: str,
+    page_num: int,
+) -> Tuple[List[Dict], List[Dict]]:
+    """Casa cada SKU Folia diretamente com o card visual mais próximo.
+
+    As linhas do Illustrator variam entre páginas e faziam o algoritmo de
+    colunas rejeitar cards legítimos. No PDF real, porém, cada produto é uma
+    imagem quadrada independente; distância entre centros é a regra exata.
+    """
+    cards = _folia_card_candidates(page, page_imgs)
+    available = list(cards)
+    matches: List[Dict] = []
+    unmatched: List[Dict] = []
+    height, width = raster.shape[:2]
+
+    positioned = [sku for sku in page_skus if sku.get("spatialContext")]
+    # Resolve primeiro quem está mais perto de algum card. Isso evita que uma
+    # coordenada imprecisa pegue o card de outra coordenada quase perfeita.
+    ranked = []
+    for sku in positioned:
+        context = sku["spatialContext"]
+        if cards:
+            nearest_card = min(
+                cards,
+                key=lambda card: (
+                    (card["cx"] - context["x"]) ** 2
+                    + (card["cy"] - context["y"]) ** 2
+                ),
+            )
+            nearest_distance = (
+                (nearest_card["cx"] - context["x"]) ** 2
+                + (nearest_card["cy"] - context["y"]) ** 2
+            )
+        else:
+            nearest_distance = float("inf")
+        ranked.append((nearest_distance, sku))
+
+    for _, sku in sorted(ranked, key=lambda item: item[0]):
+        context = sku["spatialContext"]
+        if not available:
+            unmatched.append({
+                "sku": sku.get("sku"), "page": page_num,
+                "reason": "no_folia_card_available",
+            })
+            continue
+        chosen = min(
+            available,
+            key=lambda card: (
+                (card["cx"] - context["x"]) ** 2
+                + (card["cy"] - context["y"]) ** 2
+            ),
+        )
+        available.remove(chosen)
+        image = _extract_perfect_image(doc, chosen, raster, width, height, scale)
+        if image is None or image.size == 0:
+            unmatched.append({
+                "sku": sku.get("sku"), "page": page_num,
+                "reason": "folia_card_extract_failed",
+            })
+            continue
+        filepath = _save_image(image, sku["sku"], output_folder)
+        matches.append(_make_match(sku, page_num, filepath, "folia_card"))
+        del image
+
+    for sku in page_skus:
+        if not sku.get("spatialContext"):
+            unmatched.append({
+                "sku": sku.get("sku"), "page": page_num,
+                "reason": "no_coords",
+            })
+    print(
+        f"  [FoliaCards] {len(cards)} cards | {len(page_skus)} SKUs | "
+        f"{len(matches)} matches | {len(unmatched)} unmatched"
+    )
+    return matches, unmatched
 
 
 def _snap_partition_before_anchor(

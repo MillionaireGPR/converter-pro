@@ -120,6 +120,24 @@ describe('🔒 v23 AI-first — golden DAGIA (fixture real do Gemini)', () => {
     expect(lx!.paginaOrigem).toBe(14);
   });
 
+  it('preserva a posição visual retornada pela visão para casar a foto', () => {
+    const spatialContext = {
+      x: 297.5,
+      y: 421,
+      width: 0,
+      height: 0,
+      page: 17,
+    };
+    const brutos = mapAiProductsToBrutos([{
+      codigo: 'JRF-10.0581',
+      nome: 'KIT COZINHA',
+      preco: 26.9,
+      paginaOrigem: 17,
+      spatialContext,
+    }]);
+    expect(brutos[0].spatialContext).toEqual(spatialContext);
+  });
+
   it('quantidadeCaixa mapeada nas chaves "cx" E "quantidadecaixa" (compat aliases)', () => {
     const brutos = mapAiProductsToBrutos(produtos);
     const dxp1 = brutos.find(b => b.campos['codigo'] === 'DXP1');
