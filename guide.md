@@ -697,6 +697,40 @@ extração de produto/preço está resolvida; a captação de imagem da FOLIA ai
 precisa de medição própria (na rodada do Josef casou 10 de 18 SKUs, mas os 18
 eram falsos — com 288 SKUs reais o número precisa ser medido de novo).
 
+### 14.10 Imagem composta do Dute — um produto em vários objetos (12/09/2026)
+
+Josef: *"capturou um elemento só da imagem em vários casos"*. O PDF real do
+Dute monta a foto comercial com objetos independentes: embalagem, brinquedo,
+acessórios e, às vezes, variações. `_match_via_grid` escolhia a imagem de
+centro Y mais próximo do SKU e só acrescentava outra quando a diferença entre
+centros era menor que 15pt. Em composições altas, isso salvava um fragmento de
+39×59 ou 44×68px em vez do conjunto.
+
+**Correção em `cv_extractor.py`:** quando `supplier_id` identifica Dute Toys,
+os códigos e as linhas detectadas no PDF formam células lógicas. Cada elemento
+é atribuído à célula e o arquivo final usa o retângulo que reúne todos os
+elementos daquele produto. O caminho dos demais fornecedores não mudou.
+
+O catálogo alterna três desenhos, todos medidos no arquivo real:
+
+- grade comum: divide as linhas primeiro e depois as colunas;
+- triângulo (1 em cima + 2 embaixo, ou inverso): cada linha calcula suas
+  próprias colunas;
+- blocos laterais desencontrados: quando não há dois SKUs na mesma linha,
+  divide as colunas primeiro para não cortar uma composição alta.
+
+Na página 142, uma imagem muito grande contém duas variações e faz os objetos
+menores parecerem selos sobrepostos. O fallback reabre apenas células Dute que
+ficaram vazias com a lista original de elementos; produtos já associados não
+são recalculados.
+
+**Validação real:** os 651 códigos foram localizados nas 190 páginas úteis.
+Resultado novo: **651/651 imagens, 0 sem match, 0 imagens com lado menor que
+80px, 25,4s** na Integrator. Resultado anterior: 611 imagens, com fragmentos
+minúsculos. O teste `test_dute_composition.py` trava as geometrias reais das
+páginas 11, 12, 95, 116 e 142 e também confirma que outro fornecedor continua
+no algoritmo anterior.
+
 ---
 
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)

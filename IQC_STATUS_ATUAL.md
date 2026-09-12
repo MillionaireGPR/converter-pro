@@ -1,7 +1,34 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 11/09/2026
+**Atualizado em:** 12/09/2026
+
+---
+
+## ✅ ENTREGUE em 12/09 — imagens compostas do Dute
+
+O último item aberto do relatório do Josef foi corrigido no
+`cv_extractor.py`. O catálogo Dute não guarda sempre uma foto pronta: caixa,
+brinquedo, acessórios e variações podem ser objetos separados e distantes no
+PDF. A regra antiga agrupava apenas centros com menos de 15pt no mesmo eixo Y,
+por isso vários SKUs recebiam só um ícone ou uma peça.
+
+A nova regra, restrita ao fornecedor **Dute Toys**, divide a página pelos
+blocos visuais de cada SKU e recorta a união completa dos elementos do mesmo
+produto. Ela cobre grades 2×2, páginas triangulares (1 produto em cima e 2
+embaixo, ou o inverso) e blocos laterais desencontrados. Se o filtro de selo
+esconder uma imagem legítima contida em outra imagem gigante, somente a célula
+vazia é reaberta com os elementos originais; associações já corretas não são
+substituídas.
+
+**Prova no catálogo real `Catálogo dutetoys 08-09.pdf`:** 651 produtos com
+coordenada → **651 imagens associadas, 0 sem match e 0 recortes com lado menor
+que 80px**, em 25,4s na Integrator. Antes eram 611 imagens e havia saídas de
+39×59/44×68px. Páginas 11, 12, 95, 116, 141 e 142 também foram conferidas
+individualmente. `npm run verify`: **49 arquivos / 467 testes**, invariantes
+IV-01..23 e TypeScript sem erros; 6 testes Python de imagem passaram no Docker.
+O script antigo `test_page_text_coords.py`, não relacionado a esta mudança,
+não iniciou porque a imagem de produção não instala `pytest`.
 
 ---
 
@@ -17,7 +44,7 @@ Josef testou e relatou 6 problemas. Causa raiz encontrada e provada em cada um
 | "Tuka Toys tá rodando até agora sem retorno" (39min) | Mesma coisa: 5 uploads natimortos × ~3min antes de desistir | Mesma assinatura no log |
 | "Pegou alguns códigos errados" / 68 de 89 sem preço | A IA recebia o texto em ordem de leitura, SEM posição — num catálogo em grade o preço fica solto no fim da página | API real do Gemini: Dute 12/24 → **24/24**; TUKA 0/4 → **4/4**; FORTAL 24/24 sem regressão |
 | "Saí da tela e os catálogos que estavam carregando sumiram" | A fila morava em `useState` da página; sair desmontava o componente | Fila movida pra fora do React + aviso flutuante com clique de volta |
-| "Capturou um elemento só da imagem em vários casos" | Composição só agrupa imagens com centro a <15pt de distância vertical; no Dute a composição é alta e sobra uma peça só | **AINDA ABERTO** |
+| "Capturou um elemento só da imagem em vários casos" | Composição só agrupava imagens com centro a <15pt de distância vertical; no Dute a composição é alta e sobra uma peça só | ✅ **RESOLVIDO em 12/09:** 651/651 imagens, 0 sem match e 0 recortes minúsculos no catálogo real |
 
 ### Rodada 2 do mesmo dia — teste do Josef após o deploy
 
