@@ -688,14 +688,24 @@ lido à mão (pág 17, 9 produtos):
 
 ```
 ANTES:  18 produtos | 0 importados com sucesso | 18 erros | 8min36
-AGORA: 288 produtos | 288 com preço (100%)     | 43/45 págs | ~2min
+ETAPA 1: 288 produtos | 288 com preço (100%)  | 43/45 págs | ~2min
 ```
 
-**Limitação conhecida:** o casamento de FOTOS depende de localizar o texto do
-SKU dentro do PDF, e num catálogo sem camada de texto isso não existe. A
-extração de produto/preço está resolvida; a captação de imagem da FOLIA ainda
-precisa de medição própria (na rodada do Josef casou 10 de 18 SKUs, mas os 18
-eram falsos — com 288 SKUs reais o número precisa ser medido de novo).
+**Imagem resolvida em 12/09:** como não existe texto do SKU para localizar no
+PDF, a rota de visão passou a devolver também o centro visual de cada produto
+em coordenadas normalizadas. O frontend preserva essa posição e o extrator de
+imagens associa o SKU diretamente ao cartão visual mais próximo. Essa regra só
+é ativada para Folia.
+
+O número de cartões visuais da página também funciona como conferência. Se a
+primeira leitura retornar menos códigos únicos que a quantidade de cartões, o
+sistema relê apenas aquela página com a quantidade esperada e combina os SKUs
+únicos, sem repetir o catálogo inteiro.
+
+**Validação no arquivo real `Catálogo Folia Brinquedos - 20-07-2026.pdf`:**
+**367 produtos únicos, 367 imagens associadas, 0 sem match e 0 imagens com lado
+menor que 80px**. As páginas 9, 14, 32 e 40 acionaram a conferência seletiva;
+produtos repetidos em mais de uma página continuaram únicos no resultado.
 
 ### 14.10 Imagem composta do Dute — um produto em vários objetos (12/09/2026)
 
@@ -730,6 +740,29 @@ Resultado novo: **651/651 imagens, 0 sem match, 0 imagens com lado menor que
 minúsculos. O teste `test_dute_composition.py` trava as geometrias reais das
 páginas 11, 12, 95, 116 e 142 e também confirma que outro fornecedor continua
 no algoritmo anterior.
+
+### 14.11 Fortal — total da caixa no lugar do preço unitário (12/09/2026)
+
+Josef: *"quando tem o valor da caixa e a unidade, ele tá pegando o valor da
+caixa. Aí pra nós precisa ser unidade sempre"*. No catálogo real, alguns
+cartões mostram dois valores no mesmo bloco:
+
+```
+BDZ-2523
+UND: R$ 7,20
+R$ 72,00
+```
+
+O prompt foi reforçado para priorizar `UND:`, mas a garantia não depende só da
+IA. Depois da extração, `_fix_fortal_unit_prices` abre o texto posicionado do
+PDF, encontra o SKU e escolhe a linha `UND:` logo abaixo, na mesma coluna. A
+regra roda apenas quando o fornecedor é Fortal; se a linha não existir ou a
+geometria não for segura, mantém o preço original.
+
+**Validação no resultado real:** 949 produtos; 82 tinham rótulo `UND:`
+explícito; **81 valores que estavam como total da caixa foram corrigidos**.
+Exemplos: `BDZ-2523`, `BDZ-2524`, `BDZ-2525` e `BDZ-2526`, todos de `72,00`
+para `7,20`. Os demais produtos, com preço único, permaneceram inalterados.
 
 ---
 

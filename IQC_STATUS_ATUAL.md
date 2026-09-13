@@ -5,6 +5,29 @@
 
 ---
 
+## ✅ VALIDADO em 12/09 — imagens da Folia e preço unitário da Fortal
+
+As duas ocorrências da segunda rodada do Josef foram reproduzidas nos arquivos
+reais e corrigidas em uma branch isolada. **Este pacote ainda aguarda PR, merge
+e publicação; produção não foi alterada por esta validação.**
+
+- **Folia:** o PDF é uma arte visual, sem código/nome/preço pesquisáveis. A
+  visão agora devolve também a posição de cada produto; páginas incompletas
+  recebem uma segunda leitura seletiva e a foto é associada diretamente ao
+  cartão visual mais próximo. No arquivo real de 20/07/2026: **367 produtos
+  únicos, 367 imagens associadas, 0 sem imagem e 0 recortes minúsculos**.
+- **Fortal:** quando o cartão mostra `UND: R$ 7,20` e abaixo `R$ 72,00`, o
+  segundo valor é o total da caixa. Um pós-processamento por coordenada agora
+  escolhe o valor `UND:` do mesmo SKU. No resultado real com 949 produtos,
+  havia 82 rótulos unitários e **81 preços de caixa foram corrigidos**; por
+  exemplo, `BDZ-2523` passou de `72,00` para `7,20`.
+
+Validação: `npm run verify` com **49 arquivos / 468 testes**, TypeScript e
+invariantes IV-01..23 sem erros; 9 regressões Python de Folia, Fortal e imagens
+passaram no Docker da Integrator. Detalhes em `guide.md #14.9` e `#14.11`.
+
+---
+
 ## ✅ ENTREGUE em 12/09 — imagens compostas do Dute
 
 O último item aberto do relatório do Josef foi corrigido no
@@ -51,7 +74,7 @@ Josef testou e relatou 6 problemas. Causa raiz encontrada e provada em cada um
 | Relato | Resultado |
 |---|---|
 | TUKA TOYS | ✅ **335 produtos, 335 importados, 326 imagens associadas** (era "rodando sem retorno") |
-| FOLIA BRINQUEDOS: "testei o PDF para pegar as imagens e ele não capturou" | ❌ era **18 produtos / 0 ok / 18 erros** — os "códigos" eram os NÚMEROS DE PÁGINA. O PDF não tem produto na camada de texto (só marca d'água). Corrigido com rota de VISÃO — ver `guide.md #14.9` |
+| FOLIA BRINQUEDOS: "testei o PDF para pegar as imagens e ele não capturou" | ✅ era **18 produtos / 0 ok / 18 erros** porque os "códigos" eram números de página. A rota de visão e o casamento visual foram validados no arquivo real: **367 produtos / 367 imagens / 0 sem imagem**. Aguarda merge e publicação — ver `guide.md #14.9` |
 
 **Atenção pra quem pegar daqui:** o perfil Phase 0 da FOLIA tinha sido gravado
 a partir da marca d'água (definia "código = número inteiro sozinho na linha").

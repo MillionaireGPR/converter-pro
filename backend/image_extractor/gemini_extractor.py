@@ -271,12 +271,23 @@ SUPPLIER_HINTS: Dict[str, str] = {
         "- quantidadeCaixa = o N de 'Qtd. p/ Caixa: N UND'.\n"
         "- O código é variado (ex: SZ-01, SZ-02-08, JIN-2501, JXX-2502, ENS-01, HL100, UP012). "
         "Extraia EXATAMENTE como aparece, logo abaixo do nome.\n"
-        "- O preço 'R$ X,XX' já é o preço FINAL. Use como 'preco'.\n"
+        "- PREÇO UNITÁRIO (CRÍTICO): quando o card tiver 'UND: R$ X,XX' e logo abaixo "
+        "outro 'R$ Y,YY', use SEMPRE o valor escrito depois de 'UND:' como preco. "
+        "O segundo valor é o total da embalagem/caixa e NÃO pode ir para preco. "
+        "Exemplo real: 'UND: R$ 7,20' + 'R$ 72,00' → preco=7.20 (não 72.00).\n"
+        "- Se houver apenas um 'R$ X,XX' no card, ele já é o preço FINAL. Use como 'preco'.\n"
         "- PROMOÇÃO: quando houver 'OFF N%' e DOIS preços na linha (ex: 'R$ 61,60 R$ 77,00'), "
         "o preço FINAL é o MENOR (o PRIMEIRO: 61,60); o segundo (77,00) é o original riscado — IGNORE-O.\n"
         "- 'CORES SORTIDAS' / dimensões (ex: 40x40cm) / 'OFF N%' vão em observacoes, NÃO no nome. "
         "NUNCA junte o texto de mais de um produto no mesmo nome — cada bloco (nome→código→preço) é UM produto.\n"
         "- Ignore a página de ÍNDICE (lista de categorias com números de página)."
+    ),
+    "FOLIA": (
+        "DICAS ESPECÍFICAS DO FORNECEDOR FOLIA BRINQUEDOS:\n"
+        "- A página é uma arte: leia código, nome, preço e dados dentro de cada card visual.\n"
+        "- Retorne os produtos rigorosamente na ordem visual: linha de cima para baixo e, "
+        "dentro de cada linha, da esquerda para a direita. Essa ordem liga cada código à foto correta.\n"
+        "- O código costuma começar por JRF- e deve manter pontos, hífens e zeros exatamente como aparecem."
     ),
     "NEOTRENTINA": (
         "DICAS ESPECÍFICAS DO FORNECEDOR NEOTRENTINA (reunião 22/07/2026):\n"
@@ -1089,6 +1100,15 @@ VISION_CHUNK_WORKERS = 8           # cada chamada é pequena; o gargalo é a red
 # não melhora mais e só engorda o JPEG (970KB contra 728KB).
 VISION_DPI = 160
 
+VISION_POSITION_HINT = """
+Como esta entrada é uma IMAGEM da página, acrescente em CADA produto:
+"posicaoVisual": {"x": N, "y": N}, onde x e y são o CENTRO do card visual
+do produto numa escala de 0 a 1000 (0,0 = canto superior esquerdo; 1000,1000 =
+canto inferior direito). Meça o card daquele produto, não o cabeçalho nem o
+número da página. Mantenha também os produtos na ordem visual: de cima para
+baixo e, em cada linha, da esquerda para a direita.
+"""
+
 
 def texto_util_por_pagina(doc) -> List[str]:
     """
@@ -1205,7 +1225,8 @@ def _extract_text_chunk(
 
 
 def _extract_vision_chunk(
-    jpegs: List[Tuple[int, bytes]], supplier_hints: str, model_name: str
+    jpegs: List[Tuple[int, bytes]], supplier_hints: str, model_name: str,
+    page_sizes: Optional[Dict[int, Tuple[float, float]]] = None,
 ) -> Tuple[List[Dict[str, Any]], bool]:
     """
     Lê um lote de páginas RENDERIZADAS. Mesmo prompt do texto — o que muda é
@@ -1222,6 +1243,7 @@ def _extract_vision_chunk(
         + ", ".join(str(pn) for pn, _ in jpegs)
         + ". Use esses números em paginaOrigem."
     )
+    prompt += "\n\n" + VISION_POSITION_HINT
     partes: List[Any] = [{"mime_type": "image/jpeg", "data": b} for _, b in jpegs]
     partes.append(prompt)
     for tentativa in range(2):
@@ -1246,13 +1268,66 @@ def _extract_vision_chunk(
             # aqui — não precisa (nem deve) depender do modelo acertar.
             if len(jpegs) == 1:
                 for p in produtos:
-                    p["paginaOrigem"] = jpegs[0][0]
+                    page_number = jpegs[0][0]
+                    p["paginaOrigem"] = page_number
+                    pos = p.pop("posicaoVisual", None)
+                    page_size = (page_sizes or {}).get(page_number)
+                    if isinstance(pos, dict) and page_size:
+                        try:
+                            nx = float(pos.get("x"))
+                            ny = float(pos.get("y"))
+                            if 0 <= nx <= 1000 and 0 <= ny <= 1000:
+                                page_width, page_height = page_size
+                                # O restante do fluxo usa coordenada PDF.js:
+                                # X da esquerda e Y a partir de baixo. A visão
+                                # mede Y a partir de cima, então convertemos.
+                                p["spatialContext"] = {
+                                    "x": nx * page_width / 1000,
+                                    "y": page_height - (ny * page_height / 1000),
+                                    "width": 0,
+                                    "height": 0,
+                                    "page": page_number,
+                                }
+                        except (TypeError, ValueError):
+                            pass
             return produtos, True
         except Exception as e:
             pgs = f"{jpegs[0][0]}-{jpegs[-1][0]}"
             print(f"[Gemini Vision] pgs {pgs} tentativa {tentativa+1}: {str(e)[:120]}")
             time.sleep(2)
     return [], False
+
+
+def _folia_expected_card_count(page: fitz.Page) -> int:
+    """Conta os cards visuais da Folia sem depender do texto (que não existe)."""
+    count = 0
+    for info in page.get_image_info(xrefs=True):
+        bbox = info.get("bbox")
+        if not bbox:
+            continue
+        rect = fitz.Rect(bbox)
+        aspect = rect.width / max(rect.height, 1.0)
+        if (
+            rect.y0 > page.rect.height * 0.14
+            and rect.width >= page.rect.width * 0.18
+            and rect.height >= page.rect.height * 0.10
+            and 0.70 <= aspect <= 1.45
+        ):
+            count += 1
+    return count
+
+
+def _merge_vision_products(primary: list, retry: list, limit: int) -> list:
+    """Une uma releitura visual sem duplicar códigos nem exceder os cards."""
+    merged = []
+    seen = set()
+    for product in list(primary) + list(retry):
+        code = str(product.get("codigo") or "").strip().upper()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        merged.append(product)
+    return merged if len(merged) <= limit else list(primary)
 
 
 def extract_with_vision_chunked(pdf_path: str, supplier: str = "", client_rules: str = "") -> Dict[str, Any]:
@@ -1270,6 +1345,15 @@ def extract_with_vision_chunked(pdf_path: str, supplier: str = "", client_rules:
     try:
         doc = fitz.open(pdf_path)
         n_pages = len(doc)
+        page_sizes = {
+            index + 1: (float(page.rect.width), float(page.rect.height))
+            for index, page in enumerate(doc)
+        }
+        is_folia = "FOLIA" in (supplier or "").strip().upper()
+        expected_cards = {
+            index + 1: _folia_expected_card_count(page)
+            for index, page in enumerate(doc)
+        } if is_folia else {}
         doc.close()
     except Exception as e:
         return {"success": False, "produtos": [], "error": f"Falha ao ler PDF: {e}", "model": MODEL_FLASH}
@@ -1292,9 +1376,37 @@ def extract_with_vision_chunked(pdf_path: str, supplier: str = "", client_rules:
             jpegs = _render_pages_batch(pdf_path, paginas, dpi=VISION_DPI)
             lote = [(pn, jpegs[pn]) for pn in paginas if pn in jpegs]
             if lote:
-                futuros[pool.submit(_extract_vision_chunk, lote, supplier_hints, MODEL_FLASH)] = paginas
+                futuros[
+                    pool.submit(
+                        _extract_vision_chunk, lote, supplier_hints,
+                        MODEL_FLASH, page_sizes,
+                    )
+                ] = (paginas, lote)
         for fut in as_completed(futuros):
             produtos, ok = fut.result()
+            paginas, lote = futuros[fut]
+            if is_folia and len(paginas) == 1:
+                page_number = paginas[0]
+                expected = expected_cards.get(page_number, 0)
+                unique_count = len({
+                    str(product.get("codigo") or "").strip().upper()
+                    for product in produtos if product.get("codigo")
+                })
+                if expected and unique_count < expected:
+                    retry_hints = supplier_hints + (
+                        f"\n- ESTA PÁGINA TEM EXATAMENTE {expected} CARDS DE PRODUTO. "
+                        f"Revise todos e retorne os {expected} cards, inclusive os parecidos."
+                    )
+                    retried, retry_ok = _extract_vision_chunk(
+                        lote, retry_hints, MODEL_FLASH, page_sizes,
+                    )
+                    produtos = _merge_vision_products(produtos, retried, expected)
+                    ok = ok or retry_ok
+                    print(
+                        f"[Gemini Vision] Folia pág {page_number}: "
+                        f"{unique_count}/{expected} únicos → "
+                        f"{len(produtos)} após releitura"
+                    )
             if produtos:
                 todos.extend(produtos)
             if ok:
@@ -1840,6 +1952,92 @@ def _fix_supplier_code_prefix(produtos: list, supplier: str) -> list:
     return produtos
 
 
+FORTAL_UNIT_PRICE_LINE = re.compile(
+    r"^\[(?P<x>\d+),(?P<y>\d+)\]\s+UND\s*:\s*R\$\s*(?P<price>[\d.,]+)",
+    re.IGNORECASE,
+)
+
+
+def _fix_fortal_unit_prices(pdf_path: str, produtos: list, supplier: str) -> list:
+    """Troca deterministicamente o total da embalagem pelo preço `UND:`.
+
+    No catálogo Fortal há dois valores no mesmo card, por exemplo
+    `UND: R$ 7,20` e logo abaixo `R$ 72,00`. O modelo acertava o card, mas
+    devolvia o segundo valor. A posição do código e da linha `UND:` permite
+    corrigir isso sem adivinhar e sem alterar outros fornecedores.
+    """
+    if "FORTAL" not in (supplier or "").strip().upper() or not produtos:
+        return produtos
+
+    by_page: Dict[int, List[Dict[str, Any]]] = {}
+    for produto in produtos:
+        try:
+            page_number = int(produto.get("paginaOrigem") or 0)
+        except (TypeError, ValueError):
+            continue
+        if page_number > 0:
+            by_page.setdefault(page_number, []).append(produto)
+
+    fixed = 0
+    confirmed = 0
+    try:
+        doc = fitz.open(pdf_path)
+        for page_number, page_products in by_page.items():
+            if not 1 <= page_number <= len(doc):
+                continue
+            page = doc.load_page(page_number - 1)
+            candidates = []
+            for line in page_text_for_ai(page).splitlines():
+                match = FORTAL_UNIT_PRICE_LINE.match(line)
+                if not match:
+                    continue
+                price = _norm_price(match.group("price"), "BR")
+                if price:
+                    candidates.append((
+                        float(match.group("x")),
+                        float(match.group("y")),
+                        price,
+                    ))
+
+            for produto in page_products:
+                code = str(produto.get("codigo") or "").strip()
+                if not code or not candidates:
+                    continue
+                rects = page.search_for(code)
+                if not rects:
+                    continue
+                code_rect = rects[0]
+                nearby = [
+                    candidate for candidate in candidates
+                    if 0 <= candidate[1] - code_rect.y0 <= 120
+                    and abs(candidate[0] - code_rect.x0) <= page.rect.width * 0.20
+                ]
+                if not nearby:
+                    continue
+                _, _, unit_price = min(
+                    nearby,
+                    key=lambda candidate: (
+                        abs(candidate[0] - code_rect.x0)
+                        + abs(candidate[1] - code_rect.y0),
+                    ),
+                )
+                current = produto.get("preco")
+                if current != unit_price:
+                    produto["preco"] = unit_price
+                    fixed += 1
+                confirmed += 1
+        doc.close()
+    except Exception as error:
+        print(f"[FortalPrecoUND] falha segura, mantendo preços da IA: {error}")
+        return produtos
+
+    print(
+        f"[FortalPrecoUND] {confirmed} preços unitários confirmados; "
+        f"{fixed} corrigidos"
+    )
+    return produtos
+
+
 def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str = "") -> Dict[str, Any]:
     """Wrapper único: chama a extração real e aplica correções pós-processamento
     (ex: prefixo de código) independente de qual caminho interno foi usado
@@ -1847,6 +2045,9 @@ def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str =
     result = _extract_with_fallback_impl(pdf_path, supplier, client_rules)
     if result and result.get("produtos"):
         result["produtos"] = _fix_supplier_code_prefix(result["produtos"], supplier)
+        result["produtos"] = _fix_fortal_unit_prices(
+            pdf_path, result["produtos"], supplier,
+        )
     return result
 
 
