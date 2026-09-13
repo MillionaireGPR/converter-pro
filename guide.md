@@ -706,6 +706,8 @@ sistema relê apenas aquela página com a quantidade esperada e combina os SKUs
 **367 produtos únicos, 367 imagens associadas, 0 sem match e 0 imagens com lado
 menor que 80px**. As páginas 9, 14, 32 e 40 acionaram a conferência seletiva;
 produtos repetidos em mais de uma página continuaram únicos no resultado.
+Publicado na Integrator pela PR #135 em 12/09/2026; o mesmo resultado foi
+reconfirmado dentro do container novo após o deploy.
 
 ### 14.10 Imagem composta do Dute — um produto em vários objetos (12/09/2026)
 
@@ -763,6 +765,8 @@ geometria não for segura, mantém o preço original.
 explícito; **81 valores que estavam como total da caixa foram corrigidos**.
 Exemplos: `BDZ-2523`, `BDZ-2524`, `BDZ-2525` e `BDZ-2526`, todos de `72,00`
 para `7,20`. Os demais produtos, com preço único, permaneceram inalterados.
+Publicado na Integrator pela PR #135 em 12/09/2026 e reconfirmado no container
+novo com o resultado real armazenado.
 
 ---
 
