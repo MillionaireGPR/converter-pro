@@ -585,6 +585,69 @@ def _assign_folia_card_positions(
     return assigned
 
 
+def _crop_folia_price_band(img_rgb: np.ndarray) -> np.ndarray:
+    """Recorta a faixa de baixo (especificações + etiqueta de preço) do card
+    da Folia, devolvendo só a fotografia do produto.
+
+    Josef (15/09/2026): "as imagens estão capturando valor também, não pode.
+    Precisa ser somente a imagem pra não ter divergência nas alterações de
+    preço" — a foto trazia o preço IMPRESSO junto, e se o preço mudar depois
+    (desconto, reajuste), a imagem salva mostra um valor que já não é o real.
+
+    Cada card da Folia é UMA ÚNICA imagem rasterizada (não há texto nem preço
+    "por cima" via PDF — é tudo a mesma arte, ver `guide.md #14.9`), então não
+    dá pra excluir a faixa por xref: tem que recortar o PIXEL certo dentro da
+    própria imagem.
+
+    Como acha o corte: a faixa de baixo (specs + preço) usa a MESMA cor navy
+    da borda do card. Mede essa cor na própria imagem (não fixa um RGB —
+    catálogos futuros podem trocar a paleta) e varre de CIMA PRA BAIXO, a
+    partir do meio do card, procurando a transição NÍTIDA onde a linha vira
+    quase 100% navy (a borda superior da faixa é uma aresta reta — dá esse
+    salto abrupto de uma linha pra outra).
+
+    Por que de cima pra baixo, e não o inverso: a primeira versão procurava o
+    FIM da faixa varrendo de baixo pra cima, e falhava num card com nome de
+    produto mais largo — o texto branco cria linhas com pouco navy MESMO
+    DENTRO da faixa (uma palavra larga o suficiente derruba a fração abaixo do
+    limiar por 3-4 linhas seguidas), o que a varredura de baixo confundia com
+    "a foto recomeçou" e cortava tarde demais, sobrando o texto. A aresta de
+    CIMA da faixa não tem esse problema: ela é sempre uma transição reta e
+    limpa, então around 2 linhas consecutivas com fração de navy > 85% bastam
+    pra identificá-la com segurança — provado nas 298 imagens do catálogo
+    real (0 sobras de navy, 0 fallback pra "sem corte").
+
+    Só olha a METADE ESQUERDA de cada linha: a etiqueta de preço (clara) fica
+    na direita e, se entrar na conta, dilui a fração de navy da própria linha
+    da faixa.
+
+    Se a faixa não for encontrada numa proporção plausível (55%-97% da altura),
+    devolve a imagem ORIGINAL sem recortar — plano de segurança: card com
+    layout fora do padrão não pode ficar com a foto cortada ao meio.
+    """
+    h, w = img_rgb.shape[:2]
+    if h < 20 or w < 20:
+        return img_rgb
+    linha_borda = img_rgb[min(2, h - 1)]
+    navy = np.median(linha_borda[w // 3: 2 * w // 3], axis=0)
+    x0, x1 = 0, int(w * 0.52)  # só a metade esquerda — foge da etiqueta de preço
+
+    def fracao_navy(y: int) -> float:
+        trecho = img_rgb[y, x0:x1].astype(int)
+        dist = np.abs(trecho - navy).sum(axis=-1)
+        return float((dist < 45).mean())
+
+    topo_faixa = None
+    for y in range(int(h * 0.5), h - 2):
+        if fracao_navy(y) > 0.85 and fracao_navy(y + 1) > 0.85:
+            topo_faixa = y
+            break
+
+    if topo_faixa is None or not (0.55 * h <= topo_faixa <= 0.97 * h):
+        return img_rgb
+    return img_rgb[:topo_faixa, :, :]
+
+
 def _match_folia_cards(
     doc: fitz.Document,
     page: fitz.Page,
@@ -652,6 +715,10 @@ def _match_folia_cards(
                 "reason": "folia_card_extract_failed",
             })
             continue
+        # Tira a faixa de specs+preço do card antes de salvar — ver
+        # _crop_folia_price_band (Josef, 15/09/2026: preço não pode aparecer
+        # dentro da imagem, ele diverge quando o preço muda depois).
+        image = _crop_folia_price_band(image)
         filepath = _save_image(image, sku["sku"], output_folder)
         matches.append(_make_match(sku, page_num, filepath, "folia_card"))
         del image
