@@ -2,13 +2,13 @@
 
 ---
 
-## 📍 ONDE PARAMOS — 12/09/2026 (leia primeiro se está retomando)
+## 📍 ONDE PARAMOS — 15/09/2026 (leia primeiro se está retomando)
 
 > Para um agente NOVO assumir sem reler o histórico. Detalhe técnico em
-> `guide.md #14.5` a `#14.11`; estado operacional completo em
+> `guide.md #14.5` a `#14.12`; estado operacional completo em
 > `IQC_STATUS_ATUAL.md` (esse é a fonte de verdade — este resumo aponta pra ele).
 
-### Os 6 problemas que o Josef reportou estão TODOS resolvidos e em produção
+### Os 6 problemas que o Josef reportou, MAIS o que ele achou na retestagem — tudo resolvido e em produção
 
 | PR | O que resolveu | Prova no arquivo real |
 |---|---|---|
@@ -17,18 +17,20 @@
 | #132 | FOLIA: PDF sem produtos na camada de texto (só marca d'água) → rota de VISÃO | **18 produtos / 0 válidos → 288 produtos / 288 com preço**; gabarito lido à mão 9/9 |
 | #134 | Dute: composição de imagem pegava só uma peça do produto | **651/651 imagens associadas**, 0 sem match, 0 recorte com lado <80px (eram 611, com saídas de 39×59px) |
 | #135 | FOLIA: casamento de foto pelo cartão visual (não existe texto de SKU no PDF). FORTAL: `R$ 72,00` da caixa entrava como preço unitário no lugar do `UND: R$ 7,20` | Folia **367 produtos / 367 imagens / 0 sem imagem**; Fortal **81 preços de caixa corrigidos** em 949 produtos (ex.: `BDZ-2523` 72,00 → 7,20) |
+| #138 | FOLIA: a foto vinha com o PREÇO impresso dentro dela (card = 1 imagem só, arte e dado são a mesma coisa) — Josef: "não pode, gera divergência quando o preço muda" | Recorte por pixel pela cor da borda; **298/298 cards do catálogo real** cortados, 0 sobra de preço/texto |
 | #133, #136 | Documentação (deploy do Integrator é por `scp`, não `git pull`) | — |
 
-Confirmado pelo cliente após o deploy de 11/09: **TUKA TOYS 335/335 produtos,
-326 imagens** — era o catálogo que ficava 39min "rodando sem retorno".
+Confirmado pelo cliente:
+- 11/09: **TUKA TOYS 335/335 produtos, 326 imagens** (era "rodando sem retorno" 39min).
+- 15/09: **FORTAL "processou e rodou certinho com valor das unidades"** — ele mesmo retestou o #135 e aprovou.
 
 ### ⛔ O que está aberto (é por aqui que se retoma)
 
 **Nenhum bug conhecido em aberto.** O que resta é verificação e limpeza:
 
-1. **Josef ainda não retestou as correções de 12/09** (#134/#135) do lado dele.
-   Peça Folia, Dute e Fortal. É a validação que falta — a nossa foi contra os
-   arquivos reais, mas quem fecha o ciclo é ele.
+1. **Josef ainda não confirmou o #138** (preço fora da foto) nem o #134
+   (composição do Dute) do lado dele — só validou Fortal até agora. Peça
+   pra rodar Folia e Dute de novo.
 2. **LEVIVAN** — último dado conhecido: 73 imagens casadas contra 53 códigos e
    20 produtos excluídos por falta de preço. É anterior ao #131 (preço por
    coordenada) e ao #134, então **provavelmente já melhorou sozinho**.
@@ -50,12 +52,20 @@ Tem `GEMINI_API_KEY` no `.env` local (gitignored, nunca imprima).
 2. Renderize a página com PyMuPDF e **leia a imagem você mesmo** para montar um
    gabarito à mão.
 3. Rode A/B contra esse gabarito com a API real, e só então deploye.
+4. Sempre que der pra medir estruturalmente (não só amostra), rode contra o
+   catálogo INTEIRO — foi assim que o #138 achou seu próprio bug antes do
+   Josef: testar 47 cards escolhidos à mão deu 100% de acerto, mas rodar os
+   298 cards reais (as 45 páginas inteiras) achou 1 caso com nome de produto
+   mais largo que quebrava a lógica original. Amostra pequena esconde o
+   outlier; o catálogo inteiro não.
 
-Foi esse gabarito que revelou coisas que nenhum teste sintético pegaria: com 4
+Foi esse método que revelou coisas que nenhum teste sintético pegaria: com 4
 páginas por chamada de visão o modelo **inventava os códigos** (0/9) enquanto
-os preços saíam certos; e a 110 DPI ele lia `JRF-10.3090` onde estava
-`JRF-10.1090` — um dígito e o produto vira outro. Hoje: **1 página por chamada,
-160 DPI**.
+os preços saíam certos; a 110 DPI ele lia `JRF-10.3090` onde estava
+`JRF-10.1090` — um dígito e o produto vira outro; e um algoritmo de corte que
+procura o FIM de uma faixa de texto varrendo de baixo pra cima é frágil (texto
+largo cria falso-positivo), enquanto procurar a ARESTA de cima (sempre reta,
+sem ruído) não é. Hoje: **1 página por chamada de visão, 160 DPI**.
 
 ### Infra — o essencial que mudou
 
@@ -83,8 +93,9 @@ os preços saíam certos; e a 110 DPI ele lia `JRF-10.3090` onde estava
 > menor sentido."*
 
 Todas as correções acima seguem isso: o sistema descobre sozinho a aba certa, a
-posição do preço, se o PDF tem texto, e qual foto é do produto. Configuração do
-cliente é reforço, nunca pré-requisito.
+posição do preço, se o PDF tem texto, qual foto é do produto, e agora também
+onde a foto termina e a etiqueta de preço começa. Configuração do cliente é
+reforço, nunca pré-requisito.
 
 ---
 

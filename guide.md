@@ -770,6 +770,41 @@ novo com o resultado real armazenado.
 
 ---
 
+### 14.12 Folia: preço/specs impressos DENTRO da foto (15/09/2026)
+
+Depois do #14.9 (que resolveu o casamento foto↔SKU) e do #14.11 (Fortal), o
+Josef testou de novo e achou um problema novo, específico da Folia: *"as
+imagens estão capturando valor também, não pode. Precisa ser somente a imagem
+pra não ter divergência nas alterações de preço"*.
+
+Cada card da Folia é **uma única imagem rasterizada** (ver #14.9 — não existe
+texto/preço via PDF por cima, é tudo a mesma arte). O card inteiro — logo,
+foto, nome/specs, preço — é UM xref só, então não dá pra excluir a faixa de
+preço mantendo só o xref da foto; é preciso recortar o PIXEL certo dentro da
+própria imagem.
+
+`_crop_folia_price_band()` (`cv_extractor.py`) acha a faixa de baixo pela cor
+navy que ela compartilha com a borda do card (medida na própria imagem, nunca
+fixada em RGB), varrendo de CIMA pra BAIXO a partir do meio do card até achar
+a transição nítida onde a linha vira quase 100% navy — a aresta de cima da
+faixa é sempre reta, então 2 linhas seguidas acima de 85% de navy bastam.
+
+**Por que de cima pra baixo, e não o inverso:** a primeira versão testada
+procurava o FIM da faixa varrendo de baixo pra cima, e quebrou num card real
+(`JRF-10.1091`, "BRINQUEDO MUSICAL EDUCATIVO", 3 fileiras de foto) — o nome
+largo cria, DENTRO da própria faixa, várias linhas de texto branco com pouca
+fração de navy, e a varredura de baixo confundia isso com "a foto recomeçou",
+cortando tarde e deixando texto visível. A aresta de cima não sofre disso.
+Só olha a metade ESQUERDA de cada linha — a etiqueta de preço (clara) fica na
+direita e dilui a fração de navy da própria linha da faixa se entrar na conta.
+
+**Validado contra os 298 cards do catálogo real** (as 45 páginas inteiras):
+298/298 cortados, 0 com navy residual, 0 caindo no plano de segurança (devolver
+a imagem original sem corte quando a faixa não é encontrada numa proporção
+plausível). Faixa de corte convergiu pra 83.8%-84.0% da altura em todos.
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
