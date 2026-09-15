@@ -1,7 +1,26 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 12/09/2026
+**Atualizado em:** 15/09/2026
+
+---
+
+## ✅ ENTREGUE em 15/09 — Folia: preço não pode mais aparecer DENTRO da foto
+
+Josef testou de novo e achou algo novo: *"as imagens estão capturando valor
+também, não pode. Precisa ser somente a imagem pra não ter divergência nas
+alterações de preço"*. Fortal, na mesma rodada, confirmou OK ("processou e
+rodou certinho com valor das unidades").
+
+Cada card da Folia é uma única imagem rasterizada — preço/nome fazem parte da
+mesma arte (ver #14.9). PR **#138** (mergeada, publicada na Integrator):
+recorta a faixa de baixo por PIXEL, achando a transição de cor pela borda do
+card (sem cor fixa em código). Validado contra os **298 cards do catálogo
+real** (45 páginas inteiras): 298/298 cortados, 0 com preço/texto residual.
+Reconferido dentro do container em produção: mesmo resultado, 298/298.
+
+Detalhe técnico (inclui o card real que quebrou a primeira tentativa do
+algoritmo, e por que a segunda versão não tem esse problema): `guide.md #14.12`.
 
 ---
 
