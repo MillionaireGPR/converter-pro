@@ -1,5 +1,93 @@
 # Instruções para Claude (e qualquer agente assistente)
 
+---
+
+## 📍 ONDE PARAMOS — 12/09/2026 (leia primeiro se está retomando)
+
+> Para um agente NOVO assumir sem reler o histórico. Detalhe técnico em
+> `guide.md #14.5` a `#14.11`; estado operacional completo em
+> `IQC_STATUS_ATUAL.md` (esse é a fonte de verdade — este resumo aponta pra ele).
+
+### Os 6 problemas que o Josef reportou estão TODOS resolvidos e em produção
+
+| PR | O que resolveu | Prova no arquivo real |
+|---|---|---|
+| #130 | Petrin/Dute: o sistema escolhe sozinho a aba do Excel com o catálogo (os fornecedores trocaram a 1ª aba por formulário de pedido) | Petrin `Pedido`→`Tabela` = 831 produtos; Dute `BLOCO`→`TABELA ATUAL` = 729 |
+| #131 | (a) preço trocado/ausente — a IA lia o texto SEM a posição; (b) `IMG-GEN` — upload das fotos morria aos 180s fixos; (c) sair da tela apagava as conversões em andamento | Dute 12/24→**24/24** preços, TUKA 0/4→**4/4**, FORTAL 24/24 sem regressão. Catálogo Dute inteiro: 651 produtos, 557 preços, **0 erro de preço** (eram 353) |
+| #132 | FOLIA: PDF sem produtos na camada de texto (só marca d'água) → rota de VISÃO | **18 produtos / 0 válidos → 288 produtos / 288 com preço**; gabarito lido à mão 9/9 |
+| #134 | Dute: composição de imagem pegava só uma peça do produto | **651/651 imagens associadas**, 0 sem match, 0 recorte com lado <80px (eram 611, com saídas de 39×59px) |
+| #135 | FOLIA: casamento de foto pelo cartão visual (não existe texto de SKU no PDF). FORTAL: `R$ 72,00` da caixa entrava como preço unitário no lugar do `UND: R$ 7,20` | Folia **367 produtos / 367 imagens / 0 sem imagem**; Fortal **81 preços de caixa corrigidos** em 949 produtos (ex.: `BDZ-2523` 72,00 → 7,20) |
+| #133, #136 | Documentação (deploy do Integrator é por `scp`, não `git pull`) | — |
+
+Confirmado pelo cliente após o deploy de 11/09: **TUKA TOYS 335/335 produtos,
+326 imagens** — era o catálogo que ficava 39min "rodando sem retorno".
+
+### ⛔ O que está aberto (é por aqui que se retoma)
+
+**Nenhum bug conhecido em aberto.** O que resta é verificação e limpeza:
+
+1. **Josef ainda não retestou as correções de 12/09** (#134/#135) do lado dele.
+   Peça Folia, Dute e Fortal. É a validação que falta — a nossa foi contra os
+   arquivos reais, mas quem fecha o ciclo é ele.
+2. **LEVIVAN** — último dado conhecido: 73 imagens casadas contra 53 códigos e
+   20 produtos excluídos por falta de preço. É anterior ao #131 (preço por
+   coordenada) e ao #134, então **provavelmente já melhorou sozinho**.
+   **Meça antes de investigar** — não abra código sem número novo.
+3. **Produção assistida (combinado com o Gabriel):** rodar catálogos reais,
+   inclusive >100MB, e teste de carga. **Não desligar o Render** até ele
+   encerrar esses testes. Quando o servidor do Wesley voltar, comparar se tem
+   algum perfil Phase 0 a mais.
+4. **Limpeza não bloqueante:** matar o processo do Quick Tunnel antigo no
+   servidor e apagar `cf_tunnel_watcher.sh` + `update_vercel_backend_url.py`
+   (obsoletos desde o túnel nomeado do #120).
+
+### O método de validação que funcionou — repita, não invente outro
+
+Tem `GEMINI_API_KEY` no `.env` local (gitignored, nunca imprima).
+
+1. Baixe o PDF real do servidor — ficam 21 dias em
+   `/opt/converter-pro/data/temp/<job>/input.pdf`.
+2. Renderize a página com PyMuPDF e **leia a imagem você mesmo** para montar um
+   gabarito à mão.
+3. Rode A/B contra esse gabarito com a API real, e só então deploye.
+
+Foi esse gabarito que revelou coisas que nenhum teste sintético pegaria: com 4
+páginas por chamada de visão o modelo **inventava os códigos** (0/9) enquanto
+os preços saíam certos; e a 110 DPI ele lia `JRF-10.3090` onde estava
+`JRF-10.1090` — um dígito e o produto vira outro. Hoje: **1 página por chamada,
+160 DPI**.
+
+### Infra — o essencial que mudou
+
+- **O primário é o Integrator** (`conversor-vps.metodoiqc.com.br`), não o
+  Render. Failover: 1º Integrator → 2º Render → 3º Wesley (porta fechada).
+- **SSH:** `ssh -i ~/.ssh/converter_pro_integrator_ed25519 root@23.80.89.90`
+- **Deploy do backend é por `scp`**, não `git pull` — `/opt/converter-pro/repo`
+  NÃO é checkout Git. Passo a passo em `infra/integrator/README.md`. Sempre
+  rode `sed -i 's/$//'` no que copiar (checkout Windows grava CRLF).
+- **Frontend:** Vercel, deploy automático no merge em `main`.
+- **Domínio:** `metodoiqc.com.br` na Cloudflare com túnel nomeado permanente.
+- ⚠️ **Perfil Phase 0 pode envenenar um fornecedor.** O da FOLIA foi gravado a
+  partir da marca d'água (definia *"código = número inteiro sozinho na linha"*)
+  e está em quarentena no servidor como
+  `supplier_profiles/FOLIA_BRINQUEDOS.json.envenenado-20260911.bak`.
+  **Sintoma:** códigos extraídos que são números de página. Primeiro lugar a
+  olhar: o perfil em cache.
+
+### Princípio que o Gabriel fixou e vale pra tudo aqui
+
+> *"Se o cliente não colocar nenhum dado novo sobre onde estariam os dados
+> corretos, o certo seria que o próprio sistema fizesse a identificação. A
+> diferença entre ele colocar é que daríamos uma direção a mais pra IA. Agora
+> se ele não preencheu e o sistema simplesmente falhar e quebrar, não tem o
+> menor sentido."*
+
+Todas as correções acima seguem isso: o sistema descobre sozinho a aba certa, a
+posição do preço, se o PDF tem texto, e qual foto é do produto. Configuração do
+cliente é reforço, nunca pré-requisito.
+
+---
+
 ## ⚠️ ANTES DE QUALQUER MUDANÇA — LEIA
 
 Este projeto teve uma sessão difícil de debug em 27/05/2026 que afetou
@@ -13,7 +101,7 @@ em sequência (PRs #7 a #11). A entrega NIX HOUSE finalmente funcionou:
 
 Antes de tocar qualquer arquivo, leia:
 
-1. **`ARCHITECTURE.md`** — invariantes IV-01 a IV-20 que NÃO podem mudar
+1. **`ARCHITECTURE.md`** — invariantes IV-01 a IV-23 que NÃO podem mudar
 2. **`scripts/verify-invariants.mjs`** — o verificador LOCAL (`npm run verify`) que trava tudo
 3. **`src/core/__tests__/regression-locks.test.ts`** — testes que travam esses invariantes
 
@@ -27,6 +115,10 @@ Se sua mudança vai tocar:
 - `src/core/pipeline/aiFirstExtractionApi.ts` → IV-15
 - `src/core/pipeline/importPipeline.ts` (`aiBrutos`) → IV-15
 - `src/core/images/imageExtractionApi.ts` → IV-07, IV-08, IV-20
+- `src/core/net/uploadTimeout.ts` → IV-07, IV-08 (prazo do upload; usado pelos
+  DOIS caminhos que sobem o PDF — foi a duplicação que deixou um corrigido e o
+  outro quebrado em 10/09/2026)
+- `src/core/jobs/conversionJobsStore.ts` → fila de conversões fora do React
 
 **Re-leia o IV correspondente em `ARCHITECTURE.md` ANTES.**
 
@@ -100,8 +192,8 @@ Ler seção "Como debugar produção" em `ARCHITECTURE.md`.
 
 Comandos rápidos:
 ```bash
-# Health do backend
-curl https://converter-pro-image-extractor.onrender.com/health
+# Health do backend PRIMÁRIO (Integrator). O Render virou 2ª instância em 09/2026.
+curl https://conversor-vps.metodoiqc.com.br/health
 
 # Smoke test completo (7 checks) — ajuste a versão esperada à atual em /health
 bash scripts/smoke-test.sh --expect-version v26-center-badge
@@ -136,7 +228,8 @@ O Gabriel toca 4-5 projetos em paralelo e o contexto desta sessão é caro
 
 1. Consulte `ARCHITECTURE.md` → "Como debugar produção em caso de fogo"
 2. Cheque `/health` para versão atual
-3. Veja Render Dashboard para OOM/restarts
+3. Veja os logs do Integrator (`docker logs converter-pro-backend`) e, se o
+   failover tiver caído pro Render, o dashboard dele para OOM/restarts
 4. Console do navegador (anônimo) para padrões `[GeminiRepair]` / `[Engine]`
 5. **Não faça rollback automático** — investigue antes; pode ser ambiente, não código
 
