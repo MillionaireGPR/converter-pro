@@ -230,6 +230,21 @@ export const extractProducts = (
       }
     }
 
+    // PREÇO PROMOCIONAL em COLUNA PRÓPRIA (Excel com TABELA + PROMO lado a
+    // lado, ex. FOLIA — reunião 16/09/2026: 63/64 produtos com promoção
+    // saíam com o preço cheio porque a coluna era extraída mas nunca lida).
+    // Diferente do isPromo/__promo (tag detectada no PDF pro preço ÚNICO já
+    // mostrado): aqui existem DUAS colunas de preço na mesma linha e a menor
+    // é a que deve ser vendida. Guarda de magnitude (promo < tabela) evita
+    // confundir com fornecedor que reusa o mesmo nome de coluna pra preço de
+    // KIT/CAIXA (Neo Festas: "precokits"/"precocaixa" é MAIOR que o
+    // unitário, não é desconto) — sem isso a mudança quebraria Neo Festas.
+    let precoTabelaOriginal: number | undefined;
+    if (precoPromocional && precoPromocional > 0 && precoPromocional < preco) {
+      precoTabelaOriginal = preco;
+      preco = precoPromocional;
+    }
+
     // Heurística de fallback para Código em PDFs tabulares (col_X)
     let finalCodigo = codigo;
     // Se postProcessed, usar o campo direto do smartPdfInterpreter
@@ -416,7 +431,9 @@ export const extractProducts = (
       // da família CLINK). Frontend mostra badge e Info Adicional.
       ...(isEmBreve ? { visualCategory: 'em-breve' as const } : {}),
       // PROMOÇÃO: bloqueia desconto em massa + marca ***PROMOCAO*** no nome.
-      ...(isPromo ? { visualCategory: 'promocional' as const, isPromotional: true, bloqueiaDesconto: true } : {}),
+      // Cobre tanto a tag detectada no PDF (isPromo) quanto a coluna PROMO
+      // própria do Excel (precoTabelaOriginal setado acima, ex. FOLIA).
+      ...((isPromo || precoTabelaOriginal !== undefined) ? { visualCategory: 'promocional' as const, isPromotional: true, bloqueiaDesconto: true } : {}),
       // PRÉ-VENDA: bloqueia desconto em massa + marca ***PRE VENDA*** no nome.
       ...(isPreVenda ? { visualCategory: 'pre-venda' as const, bloqueiaDesconto: true } : {}),
     } as any);
