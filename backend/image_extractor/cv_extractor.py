@@ -108,6 +108,12 @@ def extract_cells_via_cv(
             f"lotes ou upgrade para plano com mais RAM."
         )
 
+    # Onde fica a foto em relacao ao codigo? Medido no proprio arquivo, uma vez
+    # por catalogo, em vez de assumido. Ver _detectar_orientacao_do_catalogo.
+    orientacao = _detectar_orientacao_do_catalogo(
+        doc, skus_by_page, logo_xrefs, logo_digests,
+    )
+
     sorted_pages = sorted(skus_by_page.keys())
     for page_idx, page_num in enumerate(sorted_pages):
         page_skus = skus_by_page[page_num]
@@ -128,6 +134,7 @@ def extract_cells_via_cv(
         n_interior_v = len(v_coords) - 2
 
         page_imgs = _get_page_embedded_images(page, logo_xrefs, logo_digests)
+        page_imgs = _costurar_tiles(page_imgs)
 
         pct = int((page_idx + 1) / total_pages * 100)
         print(f"[CV] [{page_idx+1}/{total_pages} {pct}%] Pág {page_num}: {n_interior_v} V-int | {len(page_imgs)} imgs", end="")
@@ -142,7 +149,7 @@ def extract_cells_via_cv(
             print(f" → GRID ({len(h_coords)}H×{len(v_coords)}V)")
             pm, pu = _match_via_grid(doc, page, raster, h_coords, v_coords,
                                      page_skus, page_imgs, scale, output_folder, page_num,
-                                     supplier_id=supplier_id)
+                                     supplier_id=supplier_id, orientacao=orientacao)
         else:
             print(f" → EMBEDDED")
             pm, pu = _match_via_embedded(doc, raster, page_skus, page_imgs,
@@ -1035,6 +1042,177 @@ def _match_dute_compositions(
     print(f"  [DuteCell] Resultado: {len(matches)} matches | {len(unmatched)} unmatched")
     return matches, unmatched
 
+def _costurar_tiles(page_imgs: List[Dict]) -> List[Dict]:
+    """Junta imagens que sao FATIAS contiguas da MESMA foto.
+
+    Alguns exportadores de PDF (tipicamente CMYK) cortam uma foto em duas ou
+    mais tiras lado a lado. Cada tira vira um objeto de imagem separado, e o
+    casamento salva so uma delas -- foi o "LEVIVAN ta pegando so parte do
+    produto" (LV1052, pag. 20: xref 885 = 1 tigela + 1 pires, xref 884 = o
+    resto do conjunto).
+
+    Assinatura de fatia, puramente geometrica: mesma faixa vertical (topo e
+    base coincidem dentro de 2pt) e bordas horizontais encostadas (vao < 3pt).
+    Duas fotos de PRODUTOS diferentes nunca se encostam assim -- num layout de
+    duas colunas sempre ha um vao de dezenas de pontos entre elas.
+    """
+    if len(page_imgs) < 2:
+        return page_imgs
+
+    TOL_Y = 2.0
+    TOL_GAP = 3.0
+    restantes = sorted(page_imgs, key=lambda i: (i["rect"].y0, i["rect"].x0))
+    usados: set = set()
+    saida: List[Dict] = []
+
+    for i, base in enumerate(restantes):
+        if i in usados:
+            continue
+        grupo = [base]
+        idx_grupo = {i}
+        faixa = fitz.Rect(base["rect"])
+        mudou = True
+        while mudou:
+            mudou = False
+            for j, cand in enumerate(restantes):
+                if j in usados or j in idx_grupo:
+                    continue
+                r = cand["rect"]
+                mesma_faixa = (abs(r.y0 - faixa.y0) <= TOL_Y
+                               and abs(r.y1 - faixa.y1) <= TOL_Y)
+                if not mesma_faixa:
+                    continue
+                # Encosta de QUALQUER um dos lados da faixa ja montada — a
+                # ordem em que o PDF lista as fatias nao é confiavel.
+                encosta = (-TOL_GAP <= (r.x0 - faixa.x1) <= TOL_GAP
+                           or -TOL_GAP <= (faixa.x0 - r.x1) <= TOL_GAP)
+                if encosta:
+                    grupo.append(cand)
+                    idx_grupo.add(j)
+                    faixa |= r
+                    mudou = True
+                    break
+        usados |= idx_grupo
+        if len(grupo) == 1:
+            saida.append(base)
+            continue
+
+        union = fitz.Rect(grupo[0]["rect"])
+        for g in grupo[1:]:
+            union |= g["rect"]
+        print(f"    [Tiles] {len(grupo)} fatias costuradas numa foto so "
+              f"(xrefs={[g['xref'] for g in grupo]})")
+        saida.append({
+            "xref": grupo[0]["xref"],
+            "rect": union,
+            "cx": (union.x0 + union.x1) / 2,
+            "cy": (union.y0 + union.y1) / 2,
+            "area": union.width * union.height,
+            "tiles": grupo,
+        })
+
+    return saida
+
+
+def _avaliar_direcao(
+    skus: list, imgs: List[Dict], direcao: str, janela: float = 360.0,
+) -> Tuple[int, float]:
+    """Monta a atribuicao 1:1 SKU<->foto sob uma hipotese e devolve
+    (quantos SKUs conseguiram foto, custo medio)."""
+    pares = []
+    for si, sku in enumerate(skus):
+        sc = sku.get("spatialContext") or {}
+        sx, sy = sc.get("x"), sc.get("y")
+        if sx is None or sy is None:
+            continue
+        for ii, img in enumerate(imgs):
+            r = img["rect"]
+            gap = (r.y0 - sy) if direcao == "abaixo" else (sy - r.y1)
+            if gap < -25.0 or gap > janela:
+                continue
+            dx = 0.0
+            if r.x1 < sx:
+                dx = sx - r.x1
+            elif r.x0 > sx:
+                dx = r.x0 - sx
+            pares.append((max(gap, 0.0) + dx * 1.5, si, ii))
+
+    pares.sort()
+    us: set = set()
+    ui: set = set()
+    total, n = 0.0, 0
+    for custo, si, ii in pares:
+        if si in us or ii in ui:
+            continue
+        us.add(si)
+        ui.add(ii)
+        total += custo
+        n += 1
+    return n, (total / n if n else float("inf"))
+
+
+def _detectar_orientacao_do_catalogo(
+    doc: fitz.Document,
+    skus_by_page: Dict[int, list],
+    logo_xrefs: set,
+    logo_digests: set,
+    max_paginas: int = 40,
+) -> str:
+    """Descobre sozinho se a foto do produto fica ACIMA ou ABAIXO do codigo.
+
+    O casamento por coluna sempre assumiu "foto em cima, codigo/legenda
+    embaixo". A PETRIN (16/09/2026) inverte isso: codigo + nome + specs no topo
+    do bloco e a foto embaixo. Com a regra fixa, 142 SKUs ficaram sem imagem
+    (`no_img_in_col`, a foto legitima era descartada por estar "abaixo demais")
+    e outros pegaram o enfeite que por acaso estava logo ACIMA do codigo -- foi
+    o "alguns registros ta pegando a tag" do Josef (RD1193 ficou com o selo
+    "PREÇO REDUZIDO", que fica a 1,9pt acima do codigo).
+
+    Em vez de mais um `if fornecedor == X`, a orientacao e MEDIDA: para cada
+    pagina, monta-se a atribuicao 1:1 completa sob as duas hipoteses e vence a
+    que explica mais SKUs. So as K maiores imagens entram na votacao (K = qtd
+    de codigos da pagina) -- a foto de verdade esta sempre entre as maiores, e
+    selos/tags/enfeites saem sozinhos por serem pequenos.
+
+    Na duvida devolve "acima", que e o comportamento historico: catalogo que ja
+    funciona nao muda de caminho.
+    """
+    votos_acima = votos_abaixo = 0
+    paginas = sorted(skus_by_page.keys())[:max_paginas]
+
+    for page_num in paginas:
+        skus = [s for s in skus_by_page[page_num]
+                if (s.get("spatialContext") or {}).get("y") is not None]
+        if len(skus) < 2:
+            continue
+        try:
+            page = doc.load_page(page_num - 1)
+            imgs = _get_page_embedded_images(page, logo_xrefs, logo_digests)
+        except Exception:
+            continue
+        if len(imgs) < 2:
+            continue
+        imgs = sorted(imgs, key=lambda i: -i.get("area", 0))[:max(len(skus), 2)]
+
+        n_a, c_a = _avaliar_direcao(skus, imgs, "acima")
+        n_b, c_b = _avaliar_direcao(skus, imgs, "abaixo")
+        if n_b > n_a or (n_b == n_a and c_b < c_a * 0.85):
+            votos_abaixo += 1
+        elif n_a > n_b or (n_a == n_b and c_a < c_b * 0.85):
+            votos_acima += 1
+
+    total = votos_acima + votos_abaixo
+    # Exige evidencia forte pra sair do padrao: >=3 paginas decididas e 60% de
+    # maioria. Abaixo disso, mantem o comportamento historico.
+    if total >= 3 and votos_abaixo >= total * 0.6:
+        print(f"[CV] Orientacao MEDIDA: foto ABAIXO do codigo "
+              f"({votos_abaixo}/{total} paginas)")
+        return "abaixo"
+    print(f"[CV] Orientacao: foto ACIMA do codigo (padrao) "
+          f"[{votos_acima} acima x {votos_abaixo} abaixo]")
+    return "acima"
+
+
 def _match_via_grid(
     doc: fitz.Document,
     page: fitz.Page,
@@ -1047,6 +1225,7 @@ def _match_via_grid(
     output_folder: str,
     page_num: int,
     supplier_id: Optional[str] = None,
+    orientacao: str = "acima",
 ) -> Tuple[List[Dict], List[Dict]]:
     """
     Estratégia Column-First:
@@ -1149,7 +1328,10 @@ def _match_via_grid(
     # ═══════════════════════════════════════════════════════
     used_xrefs_global: set = set()
     pre_matched: Dict[str, Dict] = {}
-    for sku in valid_skus:
+    # A FASE 1.6 so faz sentido no layout classico (foto em cima, legenda
+    # embaixo). Num catalogo medido como "foto abaixo do codigo" ela casaria
+    # justamente o enfeite que fica acima do codigo.
+    for sku in (valid_skus if orientacao == "acima" else []):
         sku_code = sku.get("sku", "UNKNOWN")
         sku_x, sku_y = sku["spatialContext"]["x"], sku["spatialContext"]["y"]
         melhor, melhor_gap = None, float("inf")
@@ -1194,6 +1376,20 @@ def _match_via_grid(
 
     total_imgs = sum(len(v) for v in col_imgs.values())
     print(f"  [ColMatch] {n_cols} colunas | {len(valid_skus)} SKUs | {total_imgs} imgs")
+
+    # Piso de tamanho pra uma imagem ser PLAUSIVEL como foto de produto.
+    # O cromo do template (selo "PREÇO REDUZIDO", botao "VÍDEO", enfeite de
+    # cabecalho) é sempre pequeno perto da foto real da MESMA pagina, e o filtro
+    # de selo nao o pega porque ele nao encosta em nenhuma foto maior. Estimativa
+    # robusta do tamanho tipico de foto: mediana das N maiores imagens da pagina,
+    # N = quantidade de SKUs. Quem nao alcanca 22% disso so entra na segunda
+    # passada, se nada plausivel tiver casado — assim nenhum SKU perde imagem.
+    area_min_foto = 0.0
+    if orientacao == "abaixo" and valid_skus and page_imgs:
+        maiores = sorted((i.get("area", 0.0) for i in page_imgs),
+                         reverse=True)[:max(len(valid_skus), 2)]
+        if maiores:
+            area_min_foto = maiores[len(maiores) // 2] * 0.22
 
     # ═══════════════════════════════════════════════════════
     # FASE 4: Emparelhar SKU↔Imagem dentro de cada coluna
@@ -1255,40 +1451,62 @@ def _match_via_grid(
             best_img = None
             best_dist = float("inf")
 
-            def _try_match(candidates):
+            def _try_match(candidates, min_area: float = 0.0):
                 nonlocal best_img, best_dist
                 for img in candidates:
                     if img["xref"] in used_xrefs_global:
                         continue
-                    dy = sku_y - img["cy"]
-                    if dy < -100:  # imagem MUITO abaixo do SKU → pular
+                    if min_area > 0 and img.get("area", 0.0) < min_area:
                         continue
-                    dist = abs(dy)
+
+                    if orientacao == "abaixo":
+                        # Catalogo medido como "foto depois do codigo" (PETRIN).
+                        # Exige que a imagem COMECE depois do codigo e mede pela
+                        # BORDA de cima, nao pelo centro. Medir por centro deixava
+                        # o selo "PREÇO REDUZIDO" (18pt ACIMA do codigo) ganhar da
+                        # foto certa (226pt abaixo) só por estar mais perto em
+                        # valor absoluto — era o "ta pegando a tag" do Josef.
+                        gap = img["rect"].y0 - sku_y
+                        if gap < -20:  # comeca antes do codigo → nao é a foto dele
+                            continue
+                        dist = abs(gap)
+                    else:
+                        dy = sku_y - img["cy"]
+                        if dy < -100:  # imagem MUITO abaixo do SKU → pular
+                            continue
+                        dist = abs(dy)
+
                     if dist < best_dist:
                         best_dist = dist
                         best_img = img
 
-            _try_match(imgs_sorted)
+            # 1ª passada: só candidatas plausíveis como foto de produto.
+            # 2ª passada (se nada casou): reabre tudo, pra nunca perder imagem.
+            for min_area in ([area_min_foto, 0.0] if area_min_foto > 0 else [0.0]):
+                _try_match(imgs_sorted, min_area)
 
-            # FALLBACK CROSS-COLUMN: se nenhuma imagem na coluna do SKU,
-            # busca em colunas adjacentes (±1) pela imagem mais próxima.
-            if not best_img:
-                for nearby_col in (col_idx - 1, col_idx + 1):
-                    if 0 <= nearby_col < n_cols:
-                        _try_match(col_imgs[nearby_col])
-                if best_img:
-                    print(f"    [ColMatch] {sku_code}: match cross-col (col_idx={col_idx})")
+                # FALLBACK CROSS-COLUMN: se nenhuma imagem na coluna do SKU,
+                # busca em colunas adjacentes (±1) pela imagem mais próxima.
+                if not best_img:
+                    for nearby_col in (col_idx - 1, col_idx + 1):
+                        if 0 <= nearby_col < n_cols:
+                            _try_match(col_imgs[nearby_col], min_area)
+                    if best_img:
+                        print(f"    [ColMatch] {sku_code}: match cross-col (col_idx={col_idx})")
 
-            # LAST-RESORT: catálogos de lista exportados de planilha (ex: UNIVERSAL)
-            # onde imagens ficam numa coluna separada dos SKUs por mais de 1 coluna
-            # de distância (UNIVERSAL: imagem x≈109, SKU x≈339, col_2 não alcança
-            # col_0 pelo ±1 acima). Tenta qualquer imagem não usada na página pela
-            # proximidade Y — só ativa quando todos os outros métodos falharam.
-            if not best_img:
-                all_page_imgs = [img for imgs in col_imgs.values() for img in imgs]
-                _try_match(all_page_imgs)
+                # LAST-RESORT: catálogos de lista exportados de planilha (ex: UNIVERSAL)
+                # onde imagens ficam numa coluna separada dos SKUs por mais de 1 coluna
+                # de distância (UNIVERSAL: imagem x≈109, SKU x≈339, col_2 não alcança
+                # col_0 pelo ±1 acima). Tenta qualquer imagem não usada na página pela
+                # proximidade Y — só ativa quando todos os outros métodos falharam.
+                if not best_img:
+                    all_page_imgs = [img for imgs in col_imgs.values() for img in imgs]
+                    _try_match(all_page_imgs, min_area)
+                    if best_img:
+                        print(f"    [ColMatch] {sku_code}: match last-resort Y-proximity (col_idx={col_idx})")
+
                 if best_img:
-                    print(f"    [ColMatch] {sku_code}: match last-resort Y-proximity (col_idx={col_idx})")
+                    break
 
             if not best_img:
                 unmatched.append({"sku": sku_code, "page": page_num, "reason": "no_img_in_col"})
@@ -1307,11 +1525,12 @@ def _match_via_grid(
                     used_xrefs_global.add(other["xref"])
 
             if len(grouped) >= 2:
-                # Composição: crop do bounding box de todas as imagens
-                union = fitz.Rect(grouped[0]["rect"])
-                for g in grouped[1:]:
-                    union |= g["rect"]
-                img_arr = _crop_raster_at_pdf_rect(union, raster, width, height, scale)
+                # Composição: recorta a união das imagens APAGANDO o espaço
+                # morto. Fotos posicionadas na diagonal deixam canto vazio no
+                # retângulo que as envolve, e é lá que preço/specs da página
+                # estão desenhados — recortar o raster cru trazia esse texto
+                # junto (mesmo defeito do Dute em 16/09, ver #14.13).
+                img_arr = _crop_composition_masked(grouped, raster, width, height, scale)
                 match_type = "col_composition"
             else:
                 img_arr = _extract_perfect_image(doc, best_img, raster, width, height, scale)
@@ -1589,8 +1808,15 @@ def _extract_perfect_image(
 
     Retorna numpy array RGB ou None se ambos falharem.
     """
-    xref = img_info["xref"]
     rect = img_info["rect"]
+
+    # Foto fatiada pelo exportador do PDF (ver _costurar_tiles): nenhum xref
+    # sozinho contem a foto inteira, entao recorta o raster na uniao das
+    # fatias. Como as fatias sao contiguas, a uniao e exatamente a foto.
+    if img_info.get("tiles"):
+        return _crop_raster_at_pdf_rect(rect, raster, width, height, scale)
+
+    xref = img_info["xref"]
     display_w = max(1.0, rect.width)
     display_h = max(1.0, rect.height)
     display_aspect = display_w / display_h
