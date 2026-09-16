@@ -1002,6 +1002,66 @@ pedido ao Josef antes de mexer em código de novo.
 
 ---
 
+### 14.16 Os dados já estavam no servidor — correção do #14.15 (16/09/2026)
+
+Gabriel, depois do #14.15: *"esses dados que deram problemas... deveriam
+estar registrados ali no painel e a gente conseguir identificar as
+informações com esses logs pra fazer as correções... senão continua não
+sendo uma ferramenta eficiente."* Ele estava certo, e a prova veio na hora:
+os dois itens que o #14.15 deixou como "sem causa confirmada, precisa pedir
+arquivo ao Josef" foram resolvidos **sem pedir nada a ninguém**, só lendo o
+que o próprio servidor já tinha gravado.
+
+**Como**: cada job (imagem ou IA) grava `status.json` em
+`/opt/converter-pro/data/temp/<jobId>/` — inclusive o PDF de entrada, que
+fica 21 dias. `ssh` na Integrator + `docker exec ... python3 -` (o mesmo
+truque de base64 já documentado, já que `docker cp` não funciona nesse host)
+foi o suficiente pra buscar o job certo por conteúdo (grep por SKU/nome no
+JSON) e ler o resultado exato que o Josef viu.
+
+**GIRA — a conclusão do #14.15 estava ERRADA.** Achei o job de produção real
+(`aifirst_343096c7...`) e o resultado gravado tinha os 3 produtos EXATAMENTE
+como o Josef reportou:
+
+```
+GU0132  KIT 6 PORTA-COPOS BAMBU  R$ 8,45  (correto: 6,95)
+TP1679  KIT 6 PORTA-COPOS BAMBU  R$ 5,45  (correto: 8,45)
+TP2003  KIT 6 PORTA-COPOS BAMBU  R$ 6,95  (correto: 5,45)
+```
+
+Rotação perfeita: GU0132 pegou o preço do TP1679, que pegou o do TP2003, que
+pegou o do GU0132. Bug REAL na extração via IA — o modelo do job era
+`gemini-2.5-flash (text-chunked)`, ou seja, esse catálogo Utilidades foi lido
+como PDF/texto pela IA, não pelo adapter Excel genérico que o #14.15
+investigou (a hipótese de dedup/planilha nunca poderia ter sido a causa,
+porque esse caminho nem roda pra esse arquivo). Fix no #148: regra explícita
+no prompt sobre nome duplicado no mesmo lote + `_marcar_nomes_duplicados`,
+que sinaliza esses grupos no resultado do job (mitigação de prompt não
+garante 100%, então fica registrado pra auditoria).
+
+**FOLIA — a hipótese do #14.15 era plausível mas a causa real era outra.**
+Achei os dois jobs de produção reais (mesma PDF, rodada em 15/09 e 16/09) e
+comparei, página por página, a contagem MEDIDA de cards (mesma função
+`_folia_card_candidates` de sempre) contra os produtos que a IA retornou:
+bateram em 43 das 45 páginas nos DOIS jobs. A única divergência real foi a
+página 39 — no job de 16/09 voltou **0 produtos** numa página com 9 cards
+legítimos (conferido visualmente: 9 "KIT BELEZA" perfeitamente legíveis,
+nada de estranho no layout). Reprocessei essa MESMA página contra a API real
+agora e veio 9/9 correto; o job de 15/09 (rodado noutro dia, mesma página)
+também veio 9/9. Ou seja: foi uma falha PONTUAL da chamada à IA naquele
+momento específico (rate limit, timeout, resposta malformada — não dá pra
+saber qual sem o log daquele instante, que já girou do buffer de 1000
+linhas), não um defeito determinístico de código. Nada pra corrigir aqui.
+
+**O que vira prática permanente**: todo job passou a gravar `supplier` no
+`status.json` (antes só existiam contadores — achar o job certo exigia
+adivinhar por padrão de SKU) e o `/admin/dashboard` mostra fornecedor +
+aviso de nome duplicado direto na tabela. **Da próxima vez que o Josef
+reportar um erro, o primeiro passo é `ssh` + olhar o job real — só pedir
+arquivo novo se isso não bastar.**
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por

@@ -21,6 +21,7 @@
 | #140 | DUTE: mesmo defeito do #138, causa diferente — a composição (embalagem+brinquedo) usa a UNIÃO de vários objetos de imagem; quando ficam na diagonal sobra espaço morto onde o preço/título (texto real da página) está desenhado, e a união virava recorte do RASTER da página, trazendo esse texto junto. Achado pior no meio da validação: algumas imagens têm retângulo declarado no PDF muito maior que a página (chega a começar em coordenada negativa, pág. 34 "livro sensorial") — engolia o produto vizinho inteiro, preço incluso | Máscara por retângulo de cada imagem (pinta de branco o que não é imagem) + descarte de retângulo >20% fora da página; **649/649 SKUs do catálogo real**, 0 unmatched, 0 vazamento nas amostras inspecionadas |
 | #143 | **PETRIN/LEVIVAN/FORTAL — a raiz do "tudo que funcionava quebrou".** Cada fornecedor novo virava um `if fornecedor == X`; o layout do próximo não batia com a premissa embutida e o que já rodava quebrava. Trocado premissa por MEDIÇÃO: orientação da foto (a PETRIN põe código em cima e foto embaixo — 142 SKUs sem imagem e o selo "PREÇO REDUZIDO" virando foto de produto), piso de tamanho pra ser foto, costura de fotos fatiadas (LEVIVAN LV1052), "EM BREVE" genérico (era travado na DAGIA), dedup por código+descrição (FORTAL repete o 5085) e tamanho de fonte chegando até a IA (nome em 2 linhas virava código) | PETRIN **142 → 48** sem imagem (798 SKUs); LEVIVAN **73/73**; A/B real na FORTAL corrige `36-30`→`MULTIUSO` em 2/2 rodadas, com **regressão zero** em TUKA/LEVIVAN/PETRIN. Detalhe em `guide.md #14.14` |
 | #133, #136 | Documentação (deploy do Integrator é por `scp`, não `git pull`) | — |
+| #148 | **GIRA — preço trocado entre 3 produtos de nome idêntico** ("KIT 6 PORTA-COPOS BAMBU"), achado direto no `status.json` real de produção (não em arquivo pedido ao Josef) — corrige a conclusão errada do #145/#146. **FOLIA — 331 vs 288 fotos**: confirmado como falha pontual da IA numa única página (9/9 ao reprocessar), não bug. **Observabilidade**: todo job passa a gravar `supplier`; nome duplicado no lote vira aviso no próprio resultado | GU0132/TP1679/TP2003 tinham os 3 preços rotacionados entre si no job real; reprocessado com o prompt corrigido. Página 39 da Folia: 0/9 na produção, 9/9 ao reprocessar duas vezes (dias diferentes) — confirma falha transiente |
 | #145 | **FOLIA e afins — preço PROMOCIONAL em coluna própria** (TABELA + PROMO lado a lado no Excel) era extraído mas nunca decidia o preço final: 63/64 produtos com promoção saíam com o preço cheio. **VAESO — corrida "última gravação vence"** ao escolher as 3 tabelas de preço extra em sequência rápida na tela: cada escolha mesclava em cima de um `columnMappings` que só atualiza DEPOIS do round-trip do Supabase, e a gravação que resolvesse por último apagava as outras duas | Preço: guarda de magnitude (promo < tabela) — protege NEO FESTAS, que reusa o mesmo nome de coluna pra preço de KIT (maior, não desconto). VAESO: teste prova que o código antigo falha (3ª gravação apaga as 2 primeiras) e o novo (merge síncrono em ref + fila por fornecedor) passa mesmo com respostas de rede fora de ordem |
 
 Confirmado pelo cliente:
@@ -41,26 +42,34 @@ Confirmado pelo cliente:
 1. **Josef ainda não confirmou** o #138 (preço fora da foto na Folia), o #134
    (composição do Dute), o #140 (preço do vizinho na composição do Dute) nem o
    #143 (PETRIN/LEVIVAN/FORTAL). Peça pra rodar os quatro de novo.
-1b. **GIRA — 3 produtos de nome idêntico com preço trocado entre si**
-   ("KIT 6 PORTA-COPOS BAMBU", códigos GU0132/TP1679/TP2003, reunião
-   16/09/2026): investigação extensa (ver `guide.md #14.15`) não achou
-   NENHUM mecanismo genérico do pipeline que troque/agrupe dado por
-   descrição — GIRA usa o extrator genérico, código+nome+preço sempre vêm
-   da MESMA linha do Excel, e a dedup exige código na chave (códigos são
-   diferentes aqui). Hipótese mais provável: célula mesclada/copiada errada
-   na planilha de origem do próprio fornecedor. **Não mude código sem o
-   arquivo real** — peça pro Josef mandar a planilha GIRA Utilidades.
-1c. **FOLIA — 331 fotos reais vs. 288 na pasta de extração** (Josef ainda
-   ia confirmar visualmente, reunião 16/09/2026): medido contra o PDF real
-   (55 páginas) — 377 candidatos a card pela grade visual, MAIS que os 331
-   contados à mão (não é cap nem dedup agressivo apagando produto real); o
-   filtro de logo/cabeçalho testado contra o arquivo real não remove nenhum
-   card de produto. Suspeitos restantes: a trava "tudo ou nada" por página
-   em `_assign_folia_card_positions` (se a página tiver menos cards
-   "confiáveis" que SKUs esperados, NENHUM SKU daquela página recebe
-   coordenada) e a etapa de visão via IA (`extract_with_vision_chunked`).
-   **Meça com o relatório real de "SKUs sem imagem"** dessa conversão antes
-   de mexer — sem ele qualquer mudança seria no escuro. Ver `guide.md #14.15`.
+1b. **CORRIGIDO EM #148 — GIRA: preço trocado entre 3 produtos de nome
+   idêntico.** A conclusão anterior aqui ("não achei mecanismo do sistema,
+   provável erro na planilha do fornecedor") estava **ERRADA** — só foi
+   possível perceber o erro porque o Gabriel pediu pra checar o `status.json`
+   real do job de produção (`ssh` + `/opt/converter-pro/data/temp/<job>/`)
+   antes de pedir qualquer arquivo novo pro Josef. O resultado gravado tinha
+   os 3 preços rotacionados EXATAMENTE como ele reportou (GU0132↔TP1679↔TP2003)
+   — bug real na extração via IA (o catálogo é lido como PDF/texto, não pela
+   planilha genérica que eu tinha investigado). Ver `guide.md #14.16`.
+1c. **CONFIRMADO EM #148 — FOLIA: falha pontual da IA, não bug de código.**
+   Achei o job de produção real da Folia no servidor, comparei página a
+   página a contagem medida de cards vs produtos que a IA retornou: bateu em
+   43 das 45 páginas. A única divergência real foi a página 39, que voltou
+   com ZERO produtos numa página de 9 cards legítimos — reprocessei essa
+   página agora contra a API real (e achei outro job de produção da mesma
+   página, de outro dia) e ambos vieram 9/9 corretos. Foi uma falha pontual
+   da chamada à IA naquele momento, não algo reproduzível. Nada a corrigir
+   em código; mitigado por observabilidade (ver 1d). Ver `guide.md #14.16`.
+1d. **Observabilidade dos jobs (#148):** todo job agora grava `supplier` no
+   `status.json` (antes só tinha contadores, forçando adivinhar o fornecedor
+   pelo padrão do código de SKU pra achar o job certo), e nomes duplicados no
+   mesmo lote de extração via IA ficam sinalizados no próprio resultado
+   (`avisosNomeDuplicado`) — visível na tabela de jobs do
+   `/admin/dashboard` sem precisar entrar via SSH. **Use isso primeiro** da
+   próxima vez que o Josef reportar um erro: `ssh` no Integrator, achar o job
+   pelo fornecedor/timestamp em `/opt/converter-pro/data/temp/<job>/status.json`
+   (ou `/admin/jobs`), e SÓ pedir arquivo novo pro Josef se o que já foi
+   gravado não bastar.
 2. **PETRIN: 48 SKUs ainda sem imagem** (eram 142) — 35 `no_img_in_col` +
    13 `no_plausible_match`. NÃO investigado ainda se é layout sem foto,
    produto realmente sem imagem no catálogo, ou lacuna restante do

@@ -5,6 +5,33 @@
 
 ---
 
+## ✅ ENTREGUE em 16/09 (noite, 2ª rodada) — GIRA corrigido (a conclusão anterior estava errada); FOLIA confirmado como falha pontual; jobs agora rastreáveis pelo painel
+
+Gabriel pediu pra checar os dados JÁ gravados no servidor antes de pedir
+qualquer arquivo novo ao Josef ("senão continua não sendo uma ferramenta
+eficiente"). Os dois itens que a entrada anterior deste arquivo tinha
+fechado como "sem causa confirmada" foram resolvidos lendo direto o
+`status.json` real dos jobs de produção — sem pedir nada a ninguém (PR **#148**):
+
+- **GIRA — preço trocado entre 3 produtos de nome idêntico: era bug real,
+  não erro de planilha.** A conclusão anterior estava errada. O job de
+  produção real tinha os 3 preços rotacionados exatamente como o Josef
+  reportou (GU0132↔TP1679↔TP2003). Corrigido: prompt da IA reforçado +
+  aviso automático quando 2+ produtos do mesmo lote têm nome idêntico.
+- **FOLIA — 331 vs 288 fotos: confirmado como falha pontual da IA, não
+  bug.** Comparei os dois jobs reais de produção página por página: só uma
+  divergiu (página 39, 0 produtos numa página de 9 cards legítimos).
+  Reprocessei essa página duas vezes (dias diferentes) e veio 9/9 nas duas —
+  falha transiente daquele momento, nada a corrigir em código.
+- **Observabilidade (o pedido do Gabriel):** todo job passa a gravar o
+  fornecedor no `status.json`, e o `/admin/dashboard` mostra isso + avisos
+  de nome duplicado direto na tabela — próxima vez que der erro, o primeiro
+  passo é olhar o job real no servidor, não pedir arquivo.
+
+Detalhe técnico completo: `guide.md #14.16`.
+
+---
+
 ## ✅ ENTREGUE em 16/09 (noite) — mapeamento estrutural: FOLIA (promo) e VAESO (corrida) corrigidos; GIRA e imagens da FOLIA investigados sem causa confirmada
 
 Pedido do Gabriel após a retestagem do Josef: mapear a fundo onde o sistema
