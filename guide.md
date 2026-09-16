@@ -805,6 +805,76 @@ plausível). Faixa de corte convergiu pra 83.8%-84.0% da altura em todos.
 
 ---
 
+### 14.13 Dute: preço/produto vizinho vazando na composição por união (16/09/2026)
+
+Josef reportou o mesmo sintoma do #14.12, agora no Dute: *"as imagens estão
+capturando valor também"*. A causa é DIFERENTE — o Dute não usa card único
+como a Folia; `_match_dute_compositions()` (ver #14.6) monta a foto de cada
+produto unindo vários objetos de imagem do PDF (embalagem + brinquedo +
+acessórios) num retângulo só, e recortava o RASTER da página dentro desse
+retângulo — ou seja, qualquer coisa que a página desenhasse ali (inclusive
+texto de preço/título que não é imagem nenhuma) saía junto.
+
+**Causa raiz nº 1 — espaço morto na diagonal.** Quando as duas fotos do
+produto ficam posicionadas na diagonal (uma embaixo-esquerda, outra
+em-cima-direita, por exemplo), o retângulo que as envolve sobra espaço morto
+no canto oposto (o outro canto da diagonal). É exatamente ali, na maioria dos
+casos, que o preço e o título do produto — texto real da página, desenhado
+fora de qualquer imagem — aparecem. `DTY1364` (pág. 171): a foto do brinquedo
+fica em cima-direita, a da embalagem embaixo-esquerda; "R$ 4,00" e o nome do
+produto ficavam no canto superior-esquerdo do retângulo união, que não
+pertence a nenhuma das duas fotos.
+
+**Causa raiz nº 2 — retângulo de imagem deformado (achada só validando o
+catálogo INTEIRO, mais grave).** A página 34 (coleção "livro sensorial") tem
+imagens cujo retângulo de exibição declarado no PDF é MUITO maior que a
+própria página, chegando a começar em coordenada negativa (ex.:
+`Rect(-472.67, 355.72, 276.75, 923.19)` numa página de 855×595pt) — resultado
+de uma transformação de rotação/escala malformada na origem do PDF. Ao entrar
+na união com as demais imagens do produto, esse retângulo gigante engolia o
+produto VIZINHO inteiro — `DT10235` saía com o card completo de `DT10237` do
+lado (preço, título, specs e tudo) dentro da própria foto.
+
+**Fix, duas partes (`cv_extractor.py`):**
+
+- `_crop_composition_masked()` substitui o recorte cru do raster: continua
+  cortando a união (mantém a posição relativa das fotos), mas pinta de
+  BRANCO todo pixel que não cai dentro do retângulo de pelo menos uma das
+  imagens agrupadas. O texto que sobrava no espaço morto desaparece; o
+  conteúdo de cada foto real fica intacto.
+- `_filtrar_imagens_fora_da_pagina()` descarta, antes de qualquer
+  agrupamento, candidatas cujo retângulo fica menos de 80% dentro dos limites
+  da página — pega exatamente o padrão da causa nº 2. **Sem** a rede de
+  segurança "devolve a lista original se filtrar tudo" (padrão usado em
+  `_descartar_selos`): a página 34, depois do filtro de selo, só tinha
+  restado essas imagens deformadas — uma rede de segurança aqui devolveria
+  de volta exatamente as imagens que causam o vazamento. Perder a foto (SKU
+  cai no relatório de não-casados, mecanismo que já existe) é preferível a
+  devolver o preço do vizinho.
+
+Threshold calibrado contra o catálogo real: as imagens deformadas medem
+24%-70% dentro da página; a única foto legítima que sangra a borda de
+propósito (`DTY1109`, pág. 152, efeito de design) mede 89% — 80% deixa folga
+dos dois lados sem descartar nenhuma foto de verdade.
+
+**Validado contra os 649 SKUs do catálogo real** (as 190 páginas com produto):
+649/649 casados, 0 sem imagem, 0 caso 100%-branco (máscara zerada por bug), 0
+composição com <5% de conteúdo não-branco (sinal de sobra-quase-tudo-cortado).
+
+**Achado durante a validação, não corrigido:** ~10% das composições cujo
+produto fica na última linha de uma página têm a foto genuinamente colada na
+faixa de navegação de categorias do rodapé (ex.: `DT10371` pág. 6) — isso não
+é texto solto no espaço morto, é a própria foto do produto que se estende até
+ali, então a máscara (corretamente) preserva. Testei um detector de rodapé
+por cor de pixel (fração de pixels não-brancos cai a quase 0% e depois salta
+pra >70% numa faixa cheia de largura — sinal muito consistente, 539-540pt em
+27 de 29 páginas de amostra), mas achou 1 falso-positivo real (pág. 162,
+disparou em y=452 sem nenhum rodapé ali) — não confiável o bastante pra
+arriscar cortar foto de produto de verdade sem mais tempo de calibração. Ver
+"O que está aberto" em `CLAUDE.md`.
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por

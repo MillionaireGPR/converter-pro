@@ -1,7 +1,40 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 15/09/2026
+**Atualizado em:** 16/09/2026
+
+---
+
+## ✅ ENTREGUE em 16/09 — Dute: preço do produto vizinho vazando na composição
+
+Josef testou o Dute de novo e reportou o mesmo sintoma da Folia (#138): "as
+imagens várias pegaram o preço junto também", junto com um relatório de 88
+SKUs sem campo obrigatório (`relatorio_erros_2026-09-16.xlsx` — ainda não
+investigado se é dado ausente no Excel de origem ou bug; ver `CLAUDE.md`).
+
+Causa diferente da Folia: o Dute monta a foto unindo vários objetos de imagem
+do PDF (embalagem + brinquedo), e o recorte antigo cortava o RASTER da página
+dentro do retângulo união — trazendo junto qualquer texto real da página
+(preço, título) que caísse no espaço morto quando as fotos ficam na diagonal.
+Pior ainda: validando o catálogo INTEIRO (não só os 2 casos que o Josef
+mandou print), achei que algumas imagens têm retângulo declarado no PDF muito
+maior que a página (chega a coordenada negativa) — engolia o produto VIZINHO
+inteiro, com o preço dele.
+
+PR **#140** (mergeada, publicada na Integrator): máscara por retângulo de
+cada imagem (pinta de branco o que não é foto) + descarte de retângulo >20%
+fora da página, sem rede de segurança que devolveria as imagens problemáticas
+de volta. Validado contra os **649 SKUs do catálogo real** (190 páginas): 0
+sem imagem, 0 vazamento nas amostras inspecionadas. Reconferido dentro do
+container em produção contra o PDF real do Josef (mesmo arquivo que ele
+testou): mesmo resultado.
+
+Achado durante a validação, não corrigido (baixa severidade, sem preço
+envolvido): ~10% das composições na última linha de uma página têm a foto
+legítima colada na faixa de navegação de categorias do rodapé da página —
+ver "O que está aberto" em `CLAUDE.md`.
+
+Detalhe técnico: `guide.md #14.13`.
 
 ---
 

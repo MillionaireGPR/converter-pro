@@ -2,7 +2,7 @@
 
 ---
 
-## 📍 ONDE PARAMOS — 15/09/2026 (leia primeiro se está retomando)
+## 📍 ONDE PARAMOS — 16/09/2026 (leia primeiro se está retomando)
 
 > Para um agente NOVO assumir sem reler o histórico. Detalhe técnico em
 > `guide.md #14.5` a `#14.12`; estado operacional completo em
@@ -18,30 +18,54 @@
 | #134 | Dute: composição de imagem pegava só uma peça do produto | **651/651 imagens associadas**, 0 sem match, 0 recorte com lado <80px (eram 611, com saídas de 39×59px) |
 | #135 | FOLIA: casamento de foto pelo cartão visual (não existe texto de SKU no PDF). FORTAL: `R$ 72,00` da caixa entrava como preço unitário no lugar do `UND: R$ 7,20` | Folia **367 produtos / 367 imagens / 0 sem imagem**; Fortal **81 preços de caixa corrigidos** em 949 produtos (ex.: `BDZ-2523` 72,00 → 7,20) |
 | #138 | FOLIA: a foto vinha com o PREÇO impresso dentro dela (card = 1 imagem só, arte e dado são a mesma coisa) — Josef: "não pode, gera divergência quando o preço muda" | Recorte por pixel pela cor da borda; **298/298 cards do catálogo real** cortados, 0 sobra de preço/texto |
+| #140 | DUTE: mesmo defeito do #138, causa diferente — a composição (embalagem+brinquedo) usa a UNIÃO de vários objetos de imagem; quando ficam na diagonal sobra espaço morto onde o preço/título (texto real da página) está desenhado, e a união virava recorte do RASTER da página, trazendo esse texto junto. Achado pior no meio da validação: algumas imagens têm retângulo declarado no PDF muito maior que a página (chega a começar em coordenada negativa, pág. 34 "livro sensorial") — engolia o produto vizinho inteiro, preço incluso | Máscara por retângulo de cada imagem (pinta de branco o que não é imagem) + descarte de retângulo >20% fora da página; **649/649 SKUs do catálogo real**, 0 unmatched, 0 vazamento nas amostras inspecionadas |
 | #133, #136 | Documentação (deploy do Integrator é por `scp`, não `git pull`) | — |
 
 Confirmado pelo cliente:
 - 11/09: **TUKA TOYS 335/335 produtos, 326 imagens** (era "rodando sem retorno" 39min).
 - 15/09: **FORTAL "processou e rodou certinho com valor das unidades"** — ele mesmo retestou o #135 e aprovou.
+- 16/09: Josef reportou o Dute com "relatório de erros" (88 SKUs sem
+  campo obrigatório — ver `relatorio_erros_2026-09-16.xlsx`, aparenta ser
+  dado ausente no Excel de origem, não bug de extração; não investigado
+  ainda) **e** "as imagens várias pegaram o preço junto" → isso é o #140,
+  já corrigido e em produção no mesmo dia.
 
 ### ⛔ O que está aberto (é por aqui que se retoma)
 
-**Nenhum bug conhecido em aberto.** O que resta é verificação e limpeza:
+**Nenhum bug conhecido em aberto no código.** O que resta é verificação e limpeza:
 
-1. **Josef ainda não confirmou o #138** (preço fora da foto) nem o #134
-   (composição do Dute) do lado dele — só validou Fortal até agora. Peça
-   pra rodar Folia e Dute de novo.
-2. **LEVIVAN** — último dado conhecido: 73 imagens casadas contra 53 códigos e
+1. **Josef ainda não confirmou o #138** (preço fora da foto na Folia), o
+   #134 (composição do Dute) nem o #140 (preço vizinho vazando na composição
+   do Dute) do lado dele — só validou Fortal até agora. Peça pra rodar Folia
+   e Dute de novo.
+2. **88 SKUs do Dute em `relatorio_erros_2026-09-16.xlsx`** ficaram sem
+   Código/Descrição/Preço (tipo `campo-vazio`). Ainda não investigado se é
+   dado realmente ausente no Excel de origem do Josef ou bug de extração —
+   **olhe o Excel original antes de mexer em código**.
+3. **LEVIVAN** — último dado conhecido: 73 imagens casadas contra 53 códigos e
    20 produtos excluídos por falta de preço. É anterior ao #131 (preço por
    coordenada) e ao #134, então **provavelmente já melhorou sozinho**.
    **Meça antes de investigar** — não abra código sem número novo.
-3. **Produção assistida (combinado com o Gabriel):** rodar catálogos reais,
+4. **Produção assistida (combinado com o Gabriel):** rodar catálogos reais,
    inclusive >100MB, e teste de carga. **Não desligar o Render** até ele
    encerrar esses testes. Quando o servidor do Wesley voltar, comparar se tem
    algum perfil Phase 0 a mais.
-4. **Limpeza não bloqueante:** matar o processo do Quick Tunnel antigo no
+5. **Limpeza não bloqueante:** matar o processo do Quick Tunnel antigo no
    servidor e apagar `cf_tunnel_watcher.sh` + `update_vercel_backend_url.py`
    (obsoletos desde o túnel nomeado do #120).
+6. **Achado durante a validação do #140, NÃO corrigido ainda** (baixa
+   severidade, não é preço): ~10% das composições Dute cujo produto fica na
+   última linha de uma página têm a foto genuinamente colada na faixa de
+   navegação de categorias do rodapé da página (ex.: `DT10371` pág. 6,
+   `DT10221` pág. 89) — a foto real (não texto solto) se estende até ali, e
+   a máscara do #140 preserva tudo que é imagem legítima, então a faixa de
+   categorias aparece na base do recorte. Tentei um detector de rodapé por
+   cor de pixel (queda pra ~0% não-branco seguida de salto pra >70%, muito
+   consistente: 539-540pt em 27 de 29 páginas testadas), mas achei 1
+   falso-positivo (pág. 162, disparou em y=452 sem rodapé real ali) — não
+   confiável o suficiente pra arriscar cortar foto de produto de verdade.
+   Ver `_filtrar_imagens_fora_da_pagina` e `_crop_composition_masked` em
+   `cv_extractor.py` antes de tentar de novo.
 
 ### O método de validação que funcionou — repita, não invente outro
 
@@ -57,7 +81,12 @@ Tem `GEMINI_API_KEY` no `.env` local (gitignored, nunca imprima).
    Josef: testar 47 cards escolhidos à mão deu 100% de acerto, mas rodar os
    298 cards reais (as 45 páginas inteiras) achou 1 caso com nome de produto
    mais largo que quebrava a lógica original. Amostra pequena esconde o
-   outlier; o catálogo inteiro não.
+   outlier; o catálogo inteiro não. O #140 repetiu o padrão: os 2 primeiros
+   casos reportados (`DTY1364`, `DTE0338`) pareciam corrigidos com a máscara
+   simples, mas rodar os 649 SKUs do catálogo achou um caso MUITO pior
+   (`DT10235` saindo com o preço do produto vizinho inteiro) que só aparecia
+   numa página com imagens de retângulo deformado — nenhuma amostra pequena
+   ia pegar isso por acaso.
 
 Foi esse método que revelou coisas que nenhum teste sintético pegaria: com 4
 páginas por chamada de visão o modelo **inventava os códigos** (0/9) enquanto
