@@ -359,3 +359,26 @@ Regras permanentes:
 8. Esta integração é de **estado**, não de execução: a existência da IQC
    Machine não autoriza pular o fluxo normal de desenvolvimento nem agir sem
    confirmação do Gabriel em ações de alto risco (push, merge, deploy).
+
+---
+
+## Comunicação no chat — teto de 20 a 50 linhas
+
+Cobrado pelo Gabriel em 16/09/2026, depois de respostas que diziam a mesma
+coisa três ou quatro vezes (no corpo, na tabela e no fechamento):
+
+> *"não precisa ficar explicando todos os passos (...) tudo isso pode rodar no
+> back-end. Você só vai falar aqui basicamente as principais mudanças que vão
+> afetar estruturalmente, financeiramente e alguma configuração padrão."*
+
+**Entra na resposta:** o que muda **estrutura**, **dinheiro** ou
+**configuração padrão**. Risco relevante, em uma linha. Decisão que depende
+dele.
+
+**NÃO entra:** passo a passo do que foi feito, contagem de testes, build,
+typecheck, deploy, verificação de bundle, tabela recapitulando o que já foi
+dito acima, e resumo final do estado geral. Isso tudo roda em silêncio — se a
+tarefa foi só checagem ou validação, **não traga resposta nenhuma sobre ela**.
+
+O detalhe completo já vai para a documentação no mesmo commit; repetir no chat
+é gastar token, contexto e o tempo de leitura dele.
