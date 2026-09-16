@@ -796,6 +796,99 @@ def _dute_axis_partitions(
     return centers, list(zip(boundaries[:-1], boundaries[1:]))
 
 
+def _crop_composition_masked(
+    grouped: List[Dict],
+    raster: np.ndarray,
+    width: int,
+    height: int,
+    scale: float,
+) -> Optional[np.ndarray]:
+    """Recorta a uniao das imagens de uma composicao Dute apagando o que nao
+    pertence a nenhuma delas.
+
+    Josef, 16/09/2026 (Dute, mesmo defeito que a Folia em 15/09): o preco e o
+    titulo do produto ficam ENTRE as fotos (embalagem + brinquedo), nunca
+    dentro delas -- sao texto da pagina, nao imagem. Quando as duas fotos
+    ficam na diagonal (uma em cima a direita, outra embaixo a esquerda, por
+    exemplo), o retangulo que as envolve sobra espaco morto no canto oposto,
+    e e exatamente ali que o preco/titulo estao desenhados. Recortar so a
+    uniao (raster cru) trazia esse texto junto porque o crop e um recorte da
+    PAGINA renderizada, nao das imagens em si. Aqui pintamos de branco tudo
+    que fica fora do retangulo de CADA imagem, preservando a posicao
+    relativa das fotos e descartando qualquer texto que sobrava no meio.
+    """
+    if not grouped:
+        return None
+
+    union = fitz.Rect(grouped[0]["rect"])
+    for image in grouped[1:]:
+        union |= image["rect"]
+
+    x0 = max(0, int(union.x0 * scale))
+    y0 = max(0, int(union.y0 * scale))
+    x1 = min(width, int(union.x1 * scale))
+    y1 = min(height, int(union.y1 * scale))
+    if x1 <= x0 or y1 <= y0:
+        return None
+
+    crop = raster[y0:y1, x0:x1].copy()
+    mask = np.zeros(crop.shape[:2], dtype=bool)
+    # 1pt de folga pra nao deixar friso branco no contorno real da foto por
+    # arredondamento de ponto-flutuante -> pixel.
+    pad = max(1.0, 1.0 / max(scale, 0.0001))
+    for image in grouped:
+        rect = image["rect"]
+        rx0 = max(0, int((rect.x0 - pad) * scale) - x0)
+        ry0 = max(0, int((rect.y0 - pad) * scale) - y0)
+        rx1 = min(crop.shape[1], int((rect.x1 + pad) * scale) - x0)
+        ry1 = min(crop.shape[0], int((rect.y1 + pad) * scale) - y0)
+        if rx1 > rx0 and ry1 > ry0:
+            mask[ry0:ry1, rx0:rx1] = True
+
+    crop[~mask] = 255
+    return crop if crop.size > 0 else None
+
+
+def _filtrar_imagens_fora_da_pagina(
+    page_imgs: List[Dict], page_width: float, page_height: float, min_frac: float = 0.8,
+) -> List[Dict]:
+    """Descarta imagens cujo retangulo declarado no PDF fica, em boa parte,
+    fora da pagina.
+
+    Catalogo Dute real, pagina 34 (livro sensorial): algumas imagens sao
+    posicionadas com uma transformacao (rotacao/escala) que faz o retangulo
+    reportado por get_image_info() ser MUITO maior que a pagina e ate comecar
+    em coordenada negativa -- x0 chega a -472. O pixel de verdade so aparece
+    no pedaco que a pagina recorta; o resto do retangulo e espaco morto. Ao
+    entrar na composicao Dute (uniao + mascara por retangulo), esse retangulo
+    gigante engolia o produto vizinho inteiro (preco, titulo, especificacoes).
+    Uma foto de produto de verdade fica quase inteira dentro da pagina; aqui
+    exigimos pelo menos 80% da area declarada dentro dos limites da pagina.
+    Medido no catalogo real: as imagens problematicas ficam com 24%-70% em
+    pagina, e a unica foto legitima que sangra a borda (pag. 152, DTY1109)
+    fica com 89% -- 80% deixa folga dos dois lados.
+
+    Sem rede de seguranca "devolve tudo se esvaziar": a pagina 34 (colecao de
+    livros sensoriais) tem SOMENTE imagens fora da pagina depois do filtro de
+    selo, entao qualquer rede de seguranca aqui devolveria exatamente as
+    imagens gigantes que causam a mistura de produtos. Perder a foto (o SKU
+    cai no relatorio de nao-casados, ja existente) e muito melhor do que
+    devolver a foto de um produto com o preco do vizinho dentro.
+    """
+    page_rect = fitz.Rect(0.0, 0.0, page_width, page_height)
+    mantidas = []
+    for image in page_imgs:
+        rect = image.get("rect")
+        area = image.get("area", 0)
+        if rect is None or area <= 0:
+            continue
+        inter = rect & page_rect
+        on_page_frac = (inter.width * inter.height) / area if not inter.is_empty else 0.0
+        if on_page_frac >= min_frac:
+            mantidas.append(image)
+    return mantidas
+
+
 def _match_dute_compositions(
     doc: fitz.Document,
     raster: np.ndarray,
@@ -820,6 +913,7 @@ def _match_dute_compositions(
     page_height = height / max(scale, 0.0001)
     v_points = [value / max(scale, 0.0001) for value in v_coords]
     h_points = [value / max(scale, 0.0001) for value in h_coords]
+    page_imgs = _filtrar_imagens_fora_da_pagina(page_imgs, page_width, page_height)
 
     # O Dute alterna entre dois desenhos:
     #   - grade comum (2x2, 2x1 etc.): ha dois ou mais SKUs na mesma linha;
@@ -922,11 +1016,8 @@ def _match_dute_compositions(
             )
             match_type = "dute_cell"
         else:
-            union = fitz.Rect(grouped[0]["rect"])
-            for image in grouped[1:]:
-                union |= image["rect"]
-            img_arr = _crop_raster_at_pdf_rect(
-                union, raster, width, height, scale
+            img_arr = _crop_composition_masked(
+                grouped, raster, width, height, scale
             )
             match_type = "dute_composition"
 
