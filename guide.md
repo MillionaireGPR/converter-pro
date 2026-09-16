@@ -875,6 +875,65 @@ arriscar cortar foto de produto de verdade sem mais tempo de calibração. Ver
 
 ---
 
+### 14.14 Layout MEDIDO, não assumido (16/09/2026) — PETRIN, LEVIVAN, FORTAL
+
+Princípio que passou a valer para o casamento de imagem: **o que varia entre
+fornecedores é medido no próprio arquivo, não declarado num `if`.** Antes,
+cada catálogo novo virava um ramo (`_is_dute_supplier`, `_is_folia_supplier`,
+`supplierName.includes('DAGIA')`), e o que já funcionava quebrava quando a
+premissa embutida não batia com o próximo layout.
+
+**Orientação da foto (`_detectar_orientacao_do_catalogo`).** O casamento por
+coluna assumia "foto em cima, código/legenda embaixo". A PETRIN inverte:
+código + nome + specs no topo do bloco e a foto embaixo. Com a regra fixa, 142
+SKUs ficavam sem imagem (a foto legítima caía no corte `dy < -100`) e outros
+pegavam o enfeite que por acaso estava logo ACIMA do código — o RD1193 saiu
+com o selo "PREÇO REDUZIDO", que fica a **1,9pt** acima do código.
+
+A orientação é decidida por catálogo: em cada página monta-se a atribuição 1:1
+SKU↔foto sob as duas hipóteses e vence a que explica MAIS SKUs (custo só
+desempata). Só as K maiores imagens votam (K = qtd de códigos da página), o que
+tira selos e enfeites da votação sem precisar reconhecê-los. Exige ≥3 páginas
+decididas e 60% de maioria; na dúvida devolve "acima", o comportamento
+histórico. Medido: PETRIN 135 de 170 páginas dizem ABAIXO; LEVIVAN 23 de 23
+dizem ACIMA (ou seja, catálogo que já funciona não muda de caminho).
+
+Quando a orientação é "abaixo", a distância passa a ser medida pela **borda de
+cima da imagem**, não pelo centro, e a foto precisa COMEÇAR depois do código.
+Medir por centro deixava o selo (18pt acima) ganhar da foto certa (226pt
+abaixo) só por estar mais perto em valor absoluto.
+
+**Piso de tamanho pra ser foto de produto.** O cromo do template (selo, botão
+"VÍDEO", enfeite de cabeçalho) é sempre pequeno perto da foto real da MESMA
+página, e `_descartar_selos` não o pega porque ele não encosta em nenhuma foto
+maior. Piso = 22% da mediana das N maiores imagens da página (N = qtd de SKUs).
+Há 2ª passada sem piso: se nada plausível casar, reabre tudo — nenhum SKU perde
+imagem por causa do filtro.
+
+**Fatias contíguas (`_costurar_tiles`).** Alguns exportadores cortam uma foto
+em tiras lado a lado; cada tira vira um objeto separado e só uma era salva (o
+"LEVIVAN ta pegando só parte do produto", LV1052). Assinatura puramente
+geométrica: mesma faixa vertical (±2pt) e bordas encostadas (<3pt). Duas fotos
+de produtos diferentes nunca se encostam assim — num layout de duas colunas há
+sempre dezenas de pontos de vão. A ordem em que o PDF lista as fatias não é
+confiável, então a adjacência é testada dos DOIS lados da faixa já montada.
+
+**Tamanho de fonte chega até a IA.** `page_text_for_ai` entregava só
+`[x,y] conteúdo` — tamanho e negrito eram descartados. Sem esse sinal, só a
+posição separava código de nome, e a posição engana quando o nome quebra em
+duas linhas logo acima do código: a última palavra cai exatamente no slot do
+código (FORTAL, "RELÓGIO DE PAREDE ROSE" / "GOLD" / "726"). Agora o trecho em
+fonte maior que o corpo da página sai marcado com `**`. A/B contra a API real,
+2 rodadas em chunk de 6 páginas: no formato antigo o código `36-30` some e vira
+o produto fantasma `MULTIUSO`; no novo sai correto. Regressão zero em TUKA,
+LEVIVAN e PETRIN (mesmos códigos, mesmos preços). 26% dos cards da FORTAL têm
+nome em 2+ linhas, ou seja, estavam expostos ao mesmo erro.
+
+**Resultado medido nos catálogos reais inteiros:** PETRIN 142 → **48** SKUs sem
+imagem (798 SKUs); LEVIVAN **73/73** com imagem.
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por

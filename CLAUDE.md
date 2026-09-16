@@ -19,6 +19,7 @@
 | #135 | FOLIA: casamento de foto pelo cartão visual (não existe texto de SKU no PDF). FORTAL: `R$ 72,00` da caixa entrava como preço unitário no lugar do `UND: R$ 7,20` | Folia **367 produtos / 367 imagens / 0 sem imagem**; Fortal **81 preços de caixa corrigidos** em 949 produtos (ex.: `BDZ-2523` 72,00 → 7,20) |
 | #138 | FOLIA: a foto vinha com o PREÇO impresso dentro dela (card = 1 imagem só, arte e dado são a mesma coisa) — Josef: "não pode, gera divergência quando o preço muda" | Recorte por pixel pela cor da borda; **298/298 cards do catálogo real** cortados, 0 sobra de preço/texto |
 | #140 | DUTE: mesmo defeito do #138, causa diferente — a composição (embalagem+brinquedo) usa a UNIÃO de vários objetos de imagem; quando ficam na diagonal sobra espaço morto onde o preço/título (texto real da página) está desenhado, e a união virava recorte do RASTER da página, trazendo esse texto junto. Achado pior no meio da validação: algumas imagens têm retângulo declarado no PDF muito maior que a página (chega a começar em coordenada negativa, pág. 34 "livro sensorial") — engolia o produto vizinho inteiro, preço incluso | Máscara por retângulo de cada imagem (pinta de branco o que não é imagem) + descarte de retângulo >20% fora da página; **649/649 SKUs do catálogo real**, 0 unmatched, 0 vazamento nas amostras inspecionadas |
+| #143 | **PETRIN/LEVIVAN/FORTAL — a raiz do "tudo que funcionava quebrou".** Cada fornecedor novo virava um `if fornecedor == X`; o layout do próximo não batia com a premissa embutida e o que já rodava quebrava. Trocado premissa por MEDIÇÃO: orientação da foto (a PETRIN põe código em cima e foto embaixo — 142 SKUs sem imagem e o selo "PREÇO REDUZIDO" virando foto de produto), piso de tamanho pra ser foto, costura de fotos fatiadas (LEVIVAN LV1052), "EM BREVE" genérico (era travado na DAGIA), dedup por código+descrição (FORTAL repete o 5085) e tamanho de fonte chegando até a IA (nome em 2 linhas virava código) | PETRIN **142 → 48** sem imagem (798 SKUs); LEVIVAN **73/73**; A/B real na FORTAL corrige `36-30`→`MULTIUSO` em 2/2 rodadas, com **regressão zero** em TUKA/LEVIVAN/PETRIN. Detalhe em `guide.md #14.14` |
 | #133, #136 | Documentação (deploy do Integrator é por `scp`, não `git pull`) | — |
 
 Confirmado pelo cliente:
@@ -36,22 +37,33 @@ Confirmado pelo cliente:
 
 **Nenhum bug conhecido em aberto no código.** O que resta é verificação e limpeza:
 
-1. **Josef ainda não confirmou o #138** (preço fora da foto na Folia), o
-   #134 (composição do Dute) nem o #140 (preço vizinho vazando na composição
-   do Dute) do lado dele — só validou Fortal até agora. Peça pra rodar Folia
-   e Dute de novo.
-2. **LEVIVAN** — último dado conhecido: 73 imagens casadas contra 53 códigos e
+1. **Josef ainda não confirmou** o #138 (preço fora da foto na Folia), o #134
+   (composição do Dute), o #140 (preço do vizinho na composição do Dute) nem o
+   #143 (PETRIN/LEVIVAN/FORTAL). Peça pra rodar os quatro de novo.
+2. **PETRIN: 48 SKUs ainda sem imagem** (eram 142) — 35 `no_img_in_col` +
+   13 `no_plausible_match`. NÃO investigado ainda se é layout sem foto,
+   produto realmente sem imagem no catálogo, ou lacuna restante do
+   casamento. **Meça antes de mexer**: rode o catálogo inteiro e olhe as
+   páginas dos que falharam, como está descrito no método abaixo.
+3. **REGRA DE ARQUITETURA (vale pra toda extração daqui pra frente):** o que
+   varia entre fornecedores é **medido no arquivo**, nunca declarado num
+   `if fornecedor == X`. Antes do #143 havia 3 capacidades prontas trancadas
+   num fornecedor só (composição no Dute, "EM BREVE" na DAGIA, orientação
+   fixa pra todos) — era exatamente isso que fazia catálogo novo quebrar
+   catálogo velho. Se precisar de um ramo por fornecedor, primeiro procure o
+   sinal que dá pra medir.
+4. **LEVIVAN** — último dado conhecido: 73 imagens casadas contra 53 códigos e
    20 produtos excluídos por falta de preço. É anterior ao #131 (preço por
    coordenada) e ao #134, então **provavelmente já melhorou sozinho**.
    **Meça antes de investigar** — não abra código sem número novo.
-3. **Produção assistida (combinado com o Gabriel):** rodar catálogos reais,
+5. **Produção assistida (combinado com o Gabriel):** rodar catálogos reais,
    inclusive >100MB, e teste de carga. **Não desligar o Render** até ele
    encerrar esses testes. Quando o servidor do Wesley voltar, comparar se tem
    algum perfil Phase 0 a mais.
-4. **Limpeza não bloqueante:** matar o processo do Quick Tunnel antigo no
+6. **Limpeza não bloqueante:** matar o processo do Quick Tunnel antigo no
    servidor e apagar `cf_tunnel_watcher.sh` + `update_vercel_backend_url.py`
    (obsoletos desde o túnel nomeado do #120).
-5. **Achado durante a validação do #140, NÃO corrigido ainda** (baixa
+7. **Achado durante a validação do #140, NÃO corrigido ainda** (baixa
    severidade, não é preço): ~10% das composições Dute cujo produto fica na
    última linha de uma página têm a foto genuinamente colada na faixa de
    navegação de categorias do rodapé da página (ex.: `DT10371` pág. 6,
@@ -101,7 +113,8 @@ sem ruído) não é. Hoje: **1 página por chamada de visão, 160 DPI**.
 - **SSH:** `ssh -i ~/.ssh/converter_pro_integrator_ed25519 root@23.80.89.90`
 - **Deploy do backend é por `scp`**, não `git pull` — `/opt/converter-pro/repo`
   NÃO é checkout Git. Passo a passo em `infra/integrator/README.md`. Sempre
-  rode `sed -i 's/$//'` no que copiar (checkout Windows grava CRLF).
+  rode `sed -i 's/
+$//'` no que copiar (checkout Windows grava CRLF).
 - **Frontend:** Vercel, deploy automático no merge em `main`.
 - **Domínio:** `metodoiqc.com.br` na Cloudflare com túnel nomeado permanente.
 - ⚠️ **Perfil Phase 0 pode envenenar um fornecedor.** O da FOLIA foi gravado a
