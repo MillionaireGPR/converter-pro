@@ -374,19 +374,28 @@ function renderJobs(r) {
     const extra = j.matchesCount !== undefined
       ? `${j.matchesCount} imagens casadas, ${j.unmatchedCount || 0} sem match`
       : (j.ai_result ? `${(j.ai_result.produtos || []).length} produtos` : (j.message || '-'));
+    // Avisos de diagnóstico persistidos no próprio job (16/09/2026): nome
+    // duplicado no lote é o padrão que trocou preço entre 3 SKUs da GIRA
+    // ("KIT 6 PORTA-COPOS BAMBU") — fica visível aqui pra não depender de
+    // pedir o catálogo de novo pro cliente pra investigar.
+    const avisosNome = (j.ai_result && j.ai_result.avisosNomeDuplicado) || [];
+    const avisoTag = avisosNome.length
+      ? ` <span class="badge error" title="${escapeHtml(avisosNome.map(a => a.nome + ': ' + a.codigos.join('/')).join(' | '))}">⚠ ${avisosNome.length} nome(s) duplicado(s)</span>`
+      : '';
     const peak = (j.peakCpuPercent !== undefined || j.peakMemoryMb !== undefined)
       ? `${(j.peakCpuPercent ?? 0).toFixed(1)}% CPU · ${(j.peakMemoryMb ?? 0).toFixed(0)} MB`
       : '-';
     return `<tr>
       <td><code>${j.jobId}</code></td>
+      <td>${escapeHtml(j.supplier || '-')}</td>
       <td><span class="badge ${badgeFor(j.status)}">${j.status || '-'}</span></td>
-      <td>${extra}</td>
+      <td>${extra}${avisoTag}</td>
       <td>${peak}</td>
       <td>${date}</td>
     </tr>`;
   }).join('');
   wrap.innerHTML = `<table>
-    <thead><tr><th>Job</th><th>Status</th><th>Resultado</th><th>Pico CPU/RAM</th><th>Atualizado</th></tr></thead>
+    <thead><tr><th>Job</th><th>Fornecedor</th><th>Status</th><th>Resultado</th><th>Pico CPU/RAM</th><th>Atualizado</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
 }

@@ -197,6 +197,7 @@ REGRAS CRÍTICAS:
 9. Produto marcado "EM BREVE" sem preço NÃO é erro: retorne preco=null e emBreve=true.
 10. Um card com DOIS códigos separados por barra vertical (ex: "TL03 | 2063-5", "5028-40MM | HX-5328-40") é UM produto só, com código alternativo. Use o PRIMEIRO como `codigo` e coloque o segundo em `observacoes` (ex: "cód. alt.: 2063-5"). NÃO junte os dois num campo só e NÃO crie dois produtos.
 11. O NOME do produto pode quebrar em DUAS LINHAS logo acima do código (ex: "RELÓGIO DE PAREDE ROSE" / "GOLD" / "726"). Nesse caso o código é a linha de baixo e o nome é a junção das duas linhas — nunca use a última palavra do nome como código. Código costuma vir em fonte maior/negrito que o nome.
+12. Quando DOIS OU MAIS produtos tiverem o MESMO nome (ex: variações de tamanho/cor do mesmo item, "KIT 6 PORTA-COPOS BAMBU" repetido com códigos diferentes), preste atenção REDOBRADA para não trocar o preço entre eles — cada preço pertence ao card/bloco onde ele está IMPRESSO, nunca ao card vizinho. Releia cada bloco isoladamente antes de responder, mesmo que os nomes sejam idênticos.
 
 RETORNE APENAS JSON VÁLIDO no seguinte formato:
 {
@@ -2086,6 +2087,36 @@ def _fix_fortal_unit_prices(pdf_path: str, produtos: list, supplier: str) -> lis
     return produtos
 
 
+def _marcar_nomes_duplicados(produtos: list) -> list:
+    """Sinaliza (diagnóstico, não bloqueia) grupos de produtos com o MESMO
+    nome no mesmo lote — é exatamente o padrão que fez a IA trocar preço
+    entre 3 SKUs "KIT 6 PORTA-COPOS BAMBU" na GIRA (reunião 16/09/2026,
+    confirmado direto no status.json do job de produção: GU0132/TP1679/
+    TP2003 saíram com os preços rotacionados entre si). O prompt já pede
+    atenção redobrada nesse caso (regra 12), mas isso não garante acerto —
+    então fica registrado no PRÓPRIO resultado do job (não no `observacoes`
+    exportado pro Mercos, que é dado do cliente) pra dar pra auditar sem
+    precisar pedir o catálogo de novo pro cliente."""
+    from collections import defaultdict
+
+    por_nome = defaultdict(list)
+    for p in produtos:
+        nome = str(p.get("nome") or "").strip().upper()
+        if nome:
+            por_nome[nome].append(p.get("codigo"))
+
+    avisos = [
+        {"nome": nome, "codigos": codigos,
+         "aviso": "nomes identicos no mesmo lote -- risco conhecido de troca de preco entre eles, confira manualmente"}
+        for nome, codigos in por_nome.items()
+        if len(codigos) >= 2
+    ]
+    if avisos:
+        print(f"[Gemini] {len(avisos)} grupo(s) de nome duplicado no lote (risco de preço trocado): "
+              + "; ".join(f"{a['nome']}={a['codigos']}" for a in avisos))
+    return avisos
+
+
 def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str = "") -> Dict[str, Any]:
     """Wrapper único: chama a extração real e aplica correções pós-processamento
     (ex: prefixo de código) independente de qual caminho interno foi usado
@@ -2096,6 +2127,7 @@ def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str =
         result["produtos"] = _fix_fortal_unit_prices(
             pdf_path, result["produtos"], supplier,
         )
+        result["avisosNomeDuplicado"] = _marcar_nomes_duplicados(result["produtos"])
     return result
 
 

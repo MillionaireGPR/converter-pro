@@ -840,6 +840,7 @@ def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, outpu
             if not matches:
                 _save_status(jobId, {
                     "status": "success",
+                    "supplier": supplier,
                     "message": "Nenhuma imagem de produto extraída do PDF",
                     "zipUrl": None,
                     "matchesCount": 0,
@@ -861,6 +862,7 @@ def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, outpu
             print(f"Job {jobId} concluido com sucesso!")
             _save_status(jobId, {
                 "status": "success",
+                "supplier": supplier,
                 "zipUrl": zip_url,
                 "matchesCount": len(matches),
                 "unmatchedCount": len(unmatched),
@@ -876,6 +878,7 @@ def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, outpu
         print(traceback.format_exc())
         _save_status(jobId, {
             "status": "error",
+            "supplier": supplier,
             "message": str(e),
             "details": traceback.format_exc(),
             **_monitor.peaks(),
@@ -900,7 +903,7 @@ async def process_pdf(
 
     output_folder = f"temp/{jobId}"
     os.makedirs(output_folder, exist_ok=True)
-    _save_status(jobId, {"status": "processing", "progress": 0})
+    _save_status(jobId, {"status": "processing", "progress": 0, "supplier": supplier})
 
     try:
         # 1. Salvar PDF localmente
@@ -1023,6 +1026,7 @@ def _run_ai_extraction_task(ai_job_id: str, pdf_path: str, supplier: str, client
 
             _save_status(ai_job_id, {
                 "status": "success" if result.get("success") else "error",
+                "supplier": supplier,
                 "ai_result": result,  # contém produtos, model, confianca, etc.
                 **_monitor.peaks(),
             })
@@ -1033,6 +1037,7 @@ def _run_ai_extraction_task(ai_job_id: str, pdf_path: str, supplier: str, client
         print(traceback.format_exc())
         _save_status(ai_job_id, {
             "status": "error",
+            "supplier": supplier,
             "ai_result": {
                 "success": False,
                 "produtos": [],
@@ -1092,7 +1097,7 @@ async def extract_products_ai(
         print(f"PDF salvo (stream): {os.path.getsize(pdf_path)} bytes -> {pdf_path}")
 
         # Marca como processando ANTES de disparar a task
-        _save_status(ai_job_id, {"status": "processing", "stage": "ai_extraction"})
+        _save_status(ai_job_id, {"status": "processing", "stage": "ai_extraction", "supplier": supplier})
 
         # Dispara BackgroundTask - retorna agora, processa em paralelo
         background_tasks.add_task(_run_ai_extraction_task, ai_job_id, pdf_path, supplier, supplierRules)
