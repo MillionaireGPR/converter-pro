@@ -5,6 +5,40 @@
 
 ---
 
+## ✅ ENTREGUE em 16/09 (noite) — mapeamento estrutural: FOLIA (promo) e VAESO (corrida) corrigidos; GIRA e imagens da FOLIA investigados sem causa confirmada
+
+Pedido do Gabriel após a retestagem do Josef: mapear a fundo onde o sistema
+quebra em cada processamento, sem atirar no escuro. Cinco relatos novos,
+cinco investigações (PR **#145**, mergeada):
+
+- **FOLIA — preço promocional em coluna própria (FIX).** 63 de 64 produtos
+  com promoção saíam com o preço cheio: a coluna PROMO era extraída mas
+  nunca decidia o preço final. Corrigido de forma genérica (guarda: promo
+  > 0 e menor que a tabela) — protege fornecedores como NEO FESTAS, que usa
+  o mesmo nome de campo pra preço de CAIXA/KIT (maior, não é desconto). A
+  mesma lacuna existia, adormecida, em PETRIN/LEVIVAN/DUTE/DAGIA.
+- **VAESO — corrida "última gravação vence" (FIX).** Escolher as 3 tabelas
+  de preço extra em sequência rápida na tela perdia as duas primeiras — cada
+  gravação mesclava em cima de um estado que só atualiza depois do
+  round-trip do banco. Corrigido com merge síncrono + fila de gravação por
+  fornecedor.
+- **GIRA — 3 produtos de nome idêntico com preço trocado (investigado, SEM
+  fix).** Busca extensa não achou nenhum mecanismo do sistema que troque
+  dado por descrição — os 3 códigos são diferentes e nunca colidem na
+  dedup. Hipótese mais provável é erro na planilha de origem do fornecedor.
+  Pedido o arquivo real ao Josef antes de mudar código.
+- **FOLIA — 331 fotos reais vs. 288 extraídas (investigado, SEM fix).**
+  Medido contra o PDF real: 377 candidatos a foto na grade (mais que 331,
+  não é cap nem dedup apagando produto), filtro de logo testado no arquivo
+  real não remove nenhum. Suspeito mais provável é a trava "tudo ou nada"
+  por página no casamento — não confirmável sem o relatório de "SKUs sem
+  imagem" dessa conversão específica.
+
+Detalhe técnico completo (o que foi medido, por que cada hipótese foi
+descartada): `guide.md #14.15`.
+
+---
+
 ## ✅ ENTREGUE em 16/09 (tarde) — PETRIN, LEVIVAN e FORTAL: layout medido, não assumido
 
 Josef mandou uma rodada com catálogos novos e o resultado foi ruim: PETRIN com

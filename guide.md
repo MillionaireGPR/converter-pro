@@ -934,6 +934,74 @@ imagem (798 SKUs); LEVIVAN **73/73** com imagem.
 
 ---
 
+### 14.15 Mapeamento estrutural — FOLIA (promo), VAESO (corrida) e o que NÃO virou fix (16/09/2026)
+
+Pedido do Gabriel após a retestagem do Josef: "faça um mapeamento estrutural
+pra identificar exatamente onde o sistema tem quebrado... sem atirar no
+escuro". Cinco relatos, cinco investigações — duas viraram fix (#145), duas
+ficaram documentadas como "medido, sem causa confirmada" de propósito.
+
+**FOLIA — preço PROMOCIONAL em coluna própria (virou fix).** O adapter já
+mapeava `precoPromocional` (coluna PROMO, separada da TABELA) desde sempre,
+mas o extrator genérico (`extractor.ts`) só usava `preco` — o valor promo
+ficava gravado no produto e NUNCA decidia o preço exportado. 63 de 64
+produtos com promoção saíam com o preço cheio. Não era bug só da FOLIA:
+PETRIN, LEVIVAN, DUTE e DAGIA declaram o mesmo alias `precoPromocional` e
+tinham a mesma lacuna, silenciosa até um catálogo real ter os dois preços
+preenchidos ao mesmo tempo. Fix: quando `precoPromocional > 0` E menor que
+`preco`, vira o preço efetivo (mesmo tratamento de bloqueio de desconto já
+usado pra tag de promoção via IA). A guarda "menor que" é o que impede a
+mesma mudança de quebrar a NEO FESTAS, que reusa o nome do campo pra preço
+de CAIXA/KIT — sempre maior que o unitário, semântica oposta a desconto.
+
+**VAESO — corrida "última gravação vence" (virou fix).** Detalhe em
+`CLAUDE.md` (tabela de PRs, #145) e no código de
+`FornecedoresContext.salvarMapeamentoColuna`. Resumo: 3 seleções de tabela de
+preço extra disparadas em sequência rápida liam o mesmo `columnMappings`
+desatualizado (só atualiza depois do round-trip do Supabase) e a gravação
+mais lenta a resolver vencia, apagando as outras duas. Corrigido com merge
+síncrono num `ref` (nunca lê estado desatualizado, mesmo com escrita ainda em
+voo) + fila de gravação por fornecedor.
+
+**GIRA — 3 produtos de nome idêntico com preço trocado (investigado, SEM
+fix).** "KIT 6 PORTA-COPOS BAMBU" (GU0132/TP1679/TP2003) saiu com os preços
+girados entre si. Busca extensa por qualquer mecanismo do pipeline que
+agrupe/troque dado por DESCRIÇÃO (em vez de código) não achou nada: o
+adapter GIRA é 100% genérico (sem `extract`/`postProcess` custom), código +
+nome + preço vêm sempre da MESMA linha da planilha, a dedup exige código na
+chave (aqui os 3 códigos são diferentes — nunca colidem), e as rotas de IA
+(AI-first, reparo cirúrgico de preço) são gated por `isPdfFile`/`isPdf` —
+GIRA é Excel, nunca entram. Hipótese mais provável: célula mesclada ou
+copiada errada na planilha de ORIGEM do próprio fornecedor (não confirmável
+sem o arquivo real). Deliberadamente NÃO virou fix — mudar código sem causa
+confirmada seria exatamente o "atirar no escuro" que este mapeamento existe
+pra evitar.
+
+**FOLIA — 331 fotos reais vs. 288 extraídas (investigado, SEM fix).** Medido
+direto no PDF real (`Catálogo Folia Brinquedos - 20-07-2026.pdf`, 55
+páginas): a grade visual (`_folia_card_candidates`) encontra **377**
+candidatos a card — MAIS que os 331 que o Josef contou à mão, o que já
+descarta cap numérico ou dedup agressivo apagando foto real (conferido:
+nenhum limite de imagens por catálogo existe, só limite de PÁGINAS, que
+falha o job inteiro com erro explícito, não produz pasta parcial). Testado
+também: rodar o filtro de logo/cabeçalho (`_detect_logo_xrefs`) contra o
+arquivo real remove exatamente as mesmas 377 imagens com ou sem o filtro —
+ele não está confundindo foto de produto reaproveitada com logo, pelo menos
+não neste arquivo. Toda página com contagem de card "estranha" (1, 2, 5, 7,
+8 em vez de múltiplo de 3) foi inspecionada uma por uma: são todas última
+linha de grade incompleta (produto real, coordenadas normais) — nenhuma
+tem cara de falso positivo. Sobra como suspeito mais provável a trava
+"tudo ou nada" por página em `_assign_folia_card_positions` (linha 574: se
+a página tiver menos cards confiáveis que SKUs esperados, NENHUM SKU da
+página recebe coordenada — não só o excedente) e/ou a etapa de visão via IA
+(`extract_with_vision_chunked`, que já tenta se autocorrigir por página
+comparando contagem esperada vs. detectada, mas não foi rodada ao vivo
+contra a API real nesta investigação por custo/tempo). **Não confirmável
+sem o relatório real de "SKUs sem imagem"** dessa conversão específica —
+pedido ao Josef antes de mexer em código de novo.
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
