@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect } from "react";
+import React, { createContext, useContext, useState, useCallback, useRef, ReactNode, useEffect } from "react";
 import { supabase } from "../integrations/supabase/client";
 import { toast } from "sonner";
 import { Fornecedor, RegraMapeamento } from "./types";
@@ -34,6 +34,18 @@ export function FornecedoresProvider({ children }: { children: ReactNode }) {
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
   const [regrasMapeamento, setRegrasMapeamento] = useState<RegraMapeamento[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  // Estado "ao vivo" do columnMappings por fornecedor, atualizado de forma
+  // SÍNCRONA em salvarMapeamentoColuna (ver comentário lá). Existe porque
+  // `fornecedores` só reflete uma gravação depois do round-trip do Supabase
+  // — se a gente mesclasse em cima dele, a 2ª de duas colunas escolhidas em
+  // sequência rápida (caso VAESO: 3 tabelas de preço extra, uma por vez)
+  // apagaria a 1ª (reunião 16/09/2026, "tabela secundária não sai mesmo
+  // escolhendo no sistema").
+  const columnMappingsAoVivo = useRef<Record<string, Record<string, string>>>({});
+  // Serializa as gravações no Supabase por fornecedor: sem isso, duas
+  // respostas de rede fora de ordem fariam a mais lenta sobrescrever a mais
+  // rápida com um mapeamento mais velho.
+  const gravacoesPendentes = useRef<Record<string, Promise<void>>>({});
 
   const refreshFornecedores = useCallback(async () => {
     try {
@@ -157,6 +169,16 @@ export function FornecedoresProvider({ children }: { children: ReactNode }) {
    * de conversão (19/08/2026). Atalho pra corrigir na hora do upload, sem
    * obrigar o usuário a ir até a tela de Regras de Colunas.
    * coluna vazia = remove o mapeamento (volta pra detecção automática).
+   *
+   * VAESO (16/09/2026): configurar as 3 "tabelas de preço extra" dispara 3
+   * chamadas independentes em sequência rápida. Mesclar em cima de
+   * `forn.columnMappings` (só atualizado DEPOIS do round-trip da rede) fazia
+   * a 2ª e 3ª chamada mesclarem sobre um snapshot sem a mudança anterior — a
+   * gravação que resolvesse por último no Supabase vencia e apagava as
+   * outras. Corrigido com (1) merge síncrono em `columnMappingsAoVivo`, que
+   * já inclui qualquer chamada anterior ainda em voo, e (2) fila de escrita
+   * por fornecedor, pra duas respostas de rede fora de ordem não se
+   * sobrescreverem com dado velho.
    */
   const salvarMapeamentoColuna = useCallback(async (
     nomeFornecedor: string,
@@ -168,19 +190,31 @@ export function FornecedoresProvider({ children }: { children: ReactNode }) {
       toast.error(`Fornecedor "${nomeFornecedor}" não encontrado.`);
       return;
     }
-    const mappings = { ...(forn.columnMappings || {}) };
+    const base = columnMappingsAoVivo.current[forn.id] ?? forn.columnMappings ?? {};
+    const mappings = { ...base };
     if (coluna) mappings[campo] = coluna;
     else delete mappings[campo];
+    columnMappingsAoVivo.current[forn.id] = mappings;
 
-    try {
+    const anterior = gravacoesPendentes.current[forn.id] || Promise.resolve();
+    const atual = anterior.then(async () => {
+      // Lido de novo aqui (não `mappings` capturado acima): se outra
+      // chamada mesclou por cima enquanto esperávamos a fila, é o valor
+      // mais recente que tem que ir pro banco.
+      const payload = columnMappingsAoVivo.current[forn.id];
       const { error } = await (supabase.from('suppliers') as any)
-        .update({ column_mappings: mappings })
+        .update({ column_mappings: payload })
         .eq('id', forn.id);
       if (error) throw error;
 
       setFornecedores(prev => prev.map(f =>
-        f.id === forn.id ? { ...f, columnMappings: mappings } : f
+        f.id === forn.id ? { ...f, columnMappings: payload } : f
       ));
+    });
+    gravacoesPendentes.current[forn.id] = atual;
+
+    try {
+      await atual;
       // Mantém a tela de Regras de Colunas em sincronia com o que foi
       // ajustado aqui (as duas telas editam a MESMA configuração).
       setRegrasMapeamento(prev => {
