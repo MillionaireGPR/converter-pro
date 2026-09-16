@@ -5,6 +5,42 @@
 
 ---
 
+## ✅ ENTREGUE em 16/09 (tarde) — PETRIN, LEVIVAN e FORTAL: layout medido, não assumido
+
+Josef mandou uma rodada com catálogos novos e o resultado foi ruim: PETRIN com
+142 produtos sem imagem e "alguns registros ta pegando a tag" (a foto saía
+sendo o selo "PREÇO REDUZIDO", o botão "VÍDEO" ou o fundo hexagonal), LEVIVAN
+"pegando só parte do produto" e 32 códigos reportados como erro, FORTAL com
+nome virando código, dois códigos num campo só e um produto sumindo da
+exportação.
+
+Causa comum, e é a resposta ao "tudo que funcionava agora está quebrando":
+cada fornecedor novo virava um `if fornecedor == X` no código. Três
+capacidades já existiam prontas e estavam **trancadas num fornecedor só**
+(composição de foto no Dute, "EM BREVE" na DAGIA), e uma premissa estava fixa
+pra todo mundo ("a foto fica acima do código" — a PETRIN é o inverso).
+
+PR **#143** (mergeada, publicada na Integrator) troca premissa por medição:
+orientação da foto medida por catálogo, piso de tamanho pra ser foto de
+produto, costura de foto fatiada pelo exportador, "EM BREVE" válido em
+qualquer fornecedor, dedup por código+descrição e tamanho de fonte chegando
+até a IA.
+
+**Resultado nos catálogos reais inteiros:** PETRIN 142 → **48** sem imagem
+(798 SKUs); LEVIVAN **73/73** com imagem e o LV1052 com o conjunto completo;
+FORTAL em A/B contra a API real (2 rodadas) deixa de perder o código `36-30`.
+**Regressão zero** em TUKA, LEVIVAN e PETRIN. Reconferido dentro do container
+em produção contra o PDF real do Josef.
+
+Ainda aberto: 48 SKUs da PETRIN sem imagem (não investigado), e os 120
+produtos "EM BREVE" (32 LEVIVAN + 88 DUTE) seguem sem preço porque o catálogo
+do fornecedor não traz preço — agora entram identificados em vez de virar
+erro.
+
+Detalhe técnico: `guide.md #14.14`.
+
+---
+
 ## ✅ ENTREGUE em 16/09 — Dute: preço do produto vizinho vazando na composição
 
 Josef testou o Dute de novo e reportou o mesmo sintoma da Folia (#138): "as
