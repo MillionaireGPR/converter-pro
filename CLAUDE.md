@@ -24,11 +24,13 @@
 Confirmado pelo cliente:
 - 11/09: **TUKA TOYS 335/335 produtos, 326 imagens** (era "rodando sem retorno" 39min).
 - 15/09: **FORTAL "processou e rodou certinho com valor das unidades"** — ele mesmo retestou o #135 e aprovou.
-- 16/09: Josef reportou o Dute com "relatório de erros" (88 SKUs sem
-  campo obrigatório — ver `relatorio_erros_2026-09-16.xlsx`, aparenta ser
-  dado ausente no Excel de origem, não bug de extração; não investigado
-  ainda) **e** "as imagens várias pegaram o preço junto" → isso é o #140,
-  já corrigido e em produção no mesmo dia.
+- 16/09: Josef reportou o Dute com "relatório de erros" (88 SKUs sem campo
+  obrigatório, `relatorio_erros_2026-09-16.xlsx`) **e** "as imagens várias
+  pegaram o preço junto" → o segundo é o #140, corrigido e em produção no
+  mesmo dia. O primeiro **não é bug**: conferidos os 88/88 SKUs contra o PDF
+  real, todos têm "EM BREVE" no lugar do preço na própria página do
+  catálogo — produto que o Dute ainda não lançou/precificou. O sistema
+  corretamente recusa gravar um produto sem preço.
 
 ### ⛔ O que está aberto (é por aqui que se retoma)
 
@@ -38,22 +40,18 @@ Confirmado pelo cliente:
    #134 (composição do Dute) nem o #140 (preço vizinho vazando na composição
    do Dute) do lado dele — só validou Fortal até agora. Peça pra rodar Folia
    e Dute de novo.
-2. **88 SKUs do Dute em `relatorio_erros_2026-09-16.xlsx`** ficaram sem
-   Código/Descrição/Preço (tipo `campo-vazio`). Ainda não investigado se é
-   dado realmente ausente no Excel de origem do Josef ou bug de extração —
-   **olhe o Excel original antes de mexer em código**.
-3. **LEVIVAN** — último dado conhecido: 73 imagens casadas contra 53 códigos e
+2. **LEVIVAN** — último dado conhecido: 73 imagens casadas contra 53 códigos e
    20 produtos excluídos por falta de preço. É anterior ao #131 (preço por
    coordenada) e ao #134, então **provavelmente já melhorou sozinho**.
    **Meça antes de investigar** — não abra código sem número novo.
-4. **Produção assistida (combinado com o Gabriel):** rodar catálogos reais,
+3. **Produção assistida (combinado com o Gabriel):** rodar catálogos reais,
    inclusive >100MB, e teste de carga. **Não desligar o Render** até ele
    encerrar esses testes. Quando o servidor do Wesley voltar, comparar se tem
    algum perfil Phase 0 a mais.
-5. **Limpeza não bloqueante:** matar o processo do Quick Tunnel antigo no
+4. **Limpeza não bloqueante:** matar o processo do Quick Tunnel antigo no
    servidor e apagar `cf_tunnel_watcher.sh` + `update_vercel_backend_url.py`
    (obsoletos desde o túnel nomeado do #120).
-6. **Achado durante a validação do #140, NÃO corrigido ainda** (baixa
+5. **Achado durante a validação do #140, NÃO corrigido ainda** (baixa
    severidade, não é preço): ~10% das composições Dute cujo produto fica na
    última linha de uma página têm a foto genuinamente colada na faixa de
    navegação de categorias do rodapé da página (ex.: `DT10371` pág. 6,
