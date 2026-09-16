@@ -195,6 +195,8 @@ REGRAS CRÍTICAS:
 7. Se um produto tem múltiplas variações no mesmo card (ex: 3 cores), liste cada variação separadamente se houver código distinto.
 8. quantidadeCaixa é a quantidade da CAIXA DE EMBARQUE (master/transporte), normalmente numa etiqueta técnica separada (ex: "CX C/12Jgs", "CX: 36 PEÇAS"). NÃO confunda com a contagem de peças que faz parte do NOME do produto (ex: "Xicara C/ Pires C/12 Pçs" descreve o conteúdo do produto, não a caixa de embarque).
 9. Produto marcado "EM BREVE" sem preço NÃO é erro: retorne preco=null e emBreve=true.
+10. Um card com DOIS códigos separados por barra vertical (ex: "TL03 | 2063-5", "5028-40MM | HX-5328-40") é UM produto só, com código alternativo. Use o PRIMEIRO como `codigo` e coloque o segundo em `observacoes` (ex: "cód. alt.: 2063-5"). NÃO junte os dois num campo só e NÃO crie dois produtos.
+11. O NOME do produto pode quebrar em DUAS LINHAS logo acima do código (ex: "RELÓGIO DE PAREDE ROSE" / "GOLD" / "726"). Nesse caso o código é a linha de baixo e o nome é a junção das duas linhas — nunca use a última palavra do nome como código. Código costuma vir em fonte maior/negrito que o nome.
 
 RETORNE APENAS JSON VÁLIDO no seguinte formato:
 {
@@ -1025,6 +1027,10 @@ pertence a QUAL produto: numa página em grade, o preço e o selo ("DISPONÍVEL"
 ACIMA do código dele. NUNCA associe a um produto um preço de outra coluna
 (X muito diferente) nem de outra linha da grade (Y distante).
 As coordenadas são só para você raciocinar — não as copie para o JSON.
+Trecho entre **asteriscos** está em fonte MAIOR que o corpo da página: em
+catálogo é quase sempre o CÓDIGO ou o PREÇO, nunca a continuação de um nome
+que quebrou de linha. Use isso para não confundir a última palavra do nome
+com o código. Os asteriscos são marcação — não os copie para o JSON.
 """
 
 
@@ -1040,6 +1046,7 @@ def page_text_for_ai(page) -> str:
     que a página é LIDA de verdade, e não na ordem em que o PDF guardou.
     """
     runs = []
+    tamanhos = []
     for bloco in page.get_text("dict")["blocks"]:
         if bloco.get("type") != 0:  # 0 = texto (1 = imagem)
             continue
@@ -1050,18 +1057,34 @@ def page_text_for_ai(page) -> str:
                 if not texto:
                     continue
                 x0, y0, x1, _ = span["bbox"]
+                tam = round(float(span.get("size") or 0), 1)
+                tamanhos.append(tam)
                 if atual and x0 - atual[2] <= COORD_GAP_COL:
-                    atual = [atual[0], atual[1], x1, atual[3] + " " + texto]
+                    atual = [atual[0], atual[1], x1, atual[3] + " " + texto,
+                             max(atual[4], tam)]
                 else:
                     if atual:
                         runs.append(atual)
-                    atual = [x0, y0, x1, texto]
+                    atual = [x0, y0, x1, texto, tam]
             if atual:
                 runs.append(atual)
     # Faixa de 8pt no Y: itens da mesma linha da grade ficam juntos mesmo com
     # o baseline levemente diferente (selo e código nunca alinham no pixel).
     runs.sort(key=lambda r: (round(r[1] / 8), r[0]))
-    return "\n".join(f"[{int(r[0])},{int(r[1])}] {r[3]}" for r in runs)
+
+    # Marca o trecho em DESTAQUE (fonte maior que o corpo da página).
+    # Sem isso, só a posição sobrava para separar código de nome — e a posição
+    # engana quando o nome quebra em duas linhas logo acima do código: a última
+    # palavra do nome cai exatamente no slot do código. Foi o "726 (relógio de
+    # parede rose gold) saiu com o código GOLD" do Josef (16/09/2026); na
+    # FORTAL o nome é 9.0pt e o código 10.0pt em negrito, então o dado existia
+    # e estava sendo descartado antes de chegar na IA. 26% dos cards do
+    # catálogo têm nome em 2+ linhas, ou seja, expostos ao mesmo erro.
+    corpo = max(set(tamanhos), key=tamanhos.count) if tamanhos else 0.0
+    return "\n".join(
+        f"[{int(r[0])},{int(r[1])}] " + (f"**{r[3]}**" if r[4] > corpo + 0.4 else r[3])
+        for r in runs
+    )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1188,7 +1211,32 @@ def _extract_text_chunk_once(
         raw = raw.strip("`")
         if raw.startswith("json"):
             raw = raw[4:].strip()
-    return json.loads(raw).get("produtos", [])
+    return _sanear_codigo_duplo(json.loads(raw).get("produtos", []))
+
+
+def _sanear_codigo_duplo(produtos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Separa card com DOIS codigos no mesmo campo.
+
+    A FORTAL imprime dois codigos para o mesmo item num unico span do PDF
+    ("TL03 | 2063-5", "5028-40MM | HX-5328-40..."). Josef, 16/09/2026: "sairam
+    com os dois codigos juntos, barra e tudo, num campo so". O modelo tambem
+    erra pro outro lado as vezes, inventando dois produtos. Aqui o campo e
+    normalizado de forma deterministica: fica o PRIMEIRO codigo e o segundo vai
+    para observacoes, onde o cliente enxerga sem poluir a chave do produto.
+    """
+    for p in produtos:
+        cod = str(p.get("codigo") or "").strip()
+        if "|" not in cod:
+            continue
+        partes = [c.strip() for c in cod.split("|") if c.strip()]
+        if len(partes) < 2:
+            continue
+        p["codigo"] = partes[0]
+        alt = ", ".join(partes[1:])
+        obs = str(p.get("observacoes") or "").strip()
+        marca = f"cod. alt.: {alt}"
+        p["observacoes"] = (f"{obs} | {marca}" if obs else marca)[:200]
+    return produtos
 
 
 def _extract_text_chunk(
@@ -1263,7 +1311,7 @@ def _extract_vision_chunk(
                 raw = raw.strip("`")
                 if raw.startswith("json"):
                     raw = raw[4:].strip()
-            produtos = json.loads(raw).get("produtos", [])
+            produtos = _sanear_codigo_duplo(json.loads(raw).get("produtos", []))
             # Numa chamada de página única, a página de origem é FATO conhecido
             # aqui — não precisa (nem deve) depender do modelo acertar.
             if len(jpegs) == 1:

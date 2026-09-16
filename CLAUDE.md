@@ -253,8 +253,18 @@ Sempre inclua referência ao IV-NN se a mudança o afeta:
 O Gabriel toca 4-5 projetos em paralelo e o contexto desta sessão é caro
 (estourar limite trava o trabalho). Portanto:
 
-- **Uma frase por passo.** Nada de parágrafos descrevendo cada ação. Diga o
-  que foi feito (ou o resultado) em 1 linha; o detalhe fica no log/PR/commit.
+- **REGRA MASTER — narre só o que muda o projeto.** Durante a execução, só
+  avise quando o passo alterar de fato **arquitetura, segurança ou regra de uso**
+  do projeto (ex.: novo caminho de extração, mudança de invariante, alteração
+  de credencial/permissão, mudança que afeta como o cliente opera). Todo o
+  resto — diagnóstico, leitura de arquivo, teste, iteração de algoritmo, run de
+  validação, deploy rotineiro — **roda calado**, sem gastar token explicando.
+  Não descreva o que está prestes a fazer nem o raciocínio; faça e siga.
+- **Fechamento: resumo único de 20-30 linhas no máximo**, cobrindo tudo que foi
+  feito e alterado. É o único lugar com detalhe. Sem passo a passo do caminho
+  percorrido.
+- **Uma frase por passo**, quando o passo se enquadrar na regra master acima.
+  Nada de parágrafos descrevendo cada ação; o detalhe fica no log/PR/commit.
 - **Resumo final lido em ≤20s.** Use a tabela curta "o que mudou | versão |
   resultado". Sem passo a passo minucioso.
 - **Vá direto ao COMO ficou e ao RESULTADO**, não ao processo.

@@ -550,19 +550,24 @@ const postProcessBySupplier = (
   const supplierName = template.supplierName.toUpperCase();
 
   // ═══════════════════════════════════════════════════
-  // DAGIA — Produtos marcados "EM BREVE..." entram como válidos
+  // "EM BREVE" — produto sem preço POR DESIGN, em qualquer fornecedor
   // ═══════════════════════════════════════════════════
   // Cliente Nunes Representações cadastra produtos no Mercos a partir
   // desta base. Produtos "EM BREVE" devem aparecer na conversão com a
   // indicação clara em Informações Adicionais (Cx c/ N + EM BREVE).
   // O preço fica ausente e é completado manualmente quando o catálogo
   // de fato anunciar o valor.
-  if (supplierName.includes('DAGIA')) {
-    if (/em\s+breve/i.test(block)) {
-      campos['__emBreve'] = true;
-      // informacoesAdicionais será combinado com qtdCaixa pelo extractor
-      campos['informacoesAdicionais'] = 'EM BREVE';
-    }
+  //
+  // Era travado em `supplierName.includes('DAGIA')`. O selo "EM BREVE" é
+  // convenção do mercado, não de um fornecedor: em 16/09/2026 o Josef
+  // recebeu relatório de erro com 32 produtos da LEVIVAN e 88 da DUTE —
+  // conferidos 120/120 contra o PDF, TODOS traziam "EM BREVE" no lugar do
+  // preço. Não eram falhas de extração: o tratamento existia e simplesmente
+  // não alcançava esses fornecedores.
+  if (/em\s+breve/i.test(block)) {
+    campos['__emBreve'] = true;
+    // informacoesAdicionais será combinado com qtdCaixa pelo extractor
+    campos['informacoesAdicionais'] = 'EM BREVE';
   }
 
   // ═══════════════════════════════════════════════════

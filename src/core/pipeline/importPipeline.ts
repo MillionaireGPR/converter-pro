@@ -28,7 +28,7 @@ import {
   type ColumnMappings,
 } from '../supplierRules/applyColumnMappings';
 import {
-  deduplicateByCodigo,
+  deduplicateByCodigoDescricao,
   extractPrice,
   cleanDescription,
   sanitizeForExport,
@@ -1292,7 +1292,11 @@ export const runImportPipeline = async (
   let produtosFinais = normalizados;
   let duplicadosRemovidos = 0;
   if (options.deduplicate !== false) {
-    const dedup = deduplicateByCodigo(produtosFinais);
+    // Dedup por código + descrição, não só por código: fornecedor repete
+    // código para produtos DIFERENTES (FORTAL 16/09/2026 — o código 5085 é
+    // marmita térmica na pág. 42 e cabideiro de R$ 60 na pág. 81; o dedupe
+    // por código apagava o cabideiro, que sumia da exportação sem aviso).
+    const dedup = deduplicateByCodigoDescricao(produtosFinais);
     produtosFinais = dedup.unicos as ProdutoNormalizadoV2[];
     duplicadosRemovidos = dedup.totalRemovidos;
     if (duplicadosRemovidos > 0) {

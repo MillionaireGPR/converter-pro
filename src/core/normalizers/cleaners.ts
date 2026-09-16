@@ -206,9 +206,16 @@ export function deduplicateByCodigoDescricao<T extends { codigo?: string; descri
   for (const item of items) {
     const cod = (item.codigo || '').trim().toUpperCase();
     const desc = ((item as any).descricao || (item as any).nome || '').trim().toUpperCase().slice(0, 50);
-    const key = `${cod}||${desc}`;
 
-    if (cod && seen.has(key)) {
+    if (!cod) {
+      // Sem código: nunca é duplicata de ninguém (a validação trata adiante).
+      // Chave única para não sobrescrever outro item sem código.
+      seen.set(`__nocode_${seen.size}`, item);
+      continue;
+    }
+
+    const key = `${cod}||${desc}`;
+    if (seen.has(key)) {
       duplicados.push(item);
     } else {
       seen.set(key, item);
