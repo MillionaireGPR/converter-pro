@@ -9,8 +9,10 @@
 
 Josef testou o Dute de novo e reportou o mesmo sintoma da Folia (#138): "as
 imagens várias pegaram o preço junto também", junto com um relatório de 88
-SKUs sem campo obrigatório (`relatorio_erros_2026-09-16.xlsx` — ainda não
-investigado se é dado ausente no Excel de origem ou bug; ver `CLAUDE.md`).
+SKUs sem campo obrigatório (`relatorio_erros_2026-09-16.xlsx`). Conferido:
+não é bug — os 88/88 SKUs têm "EM BREVE" no lugar do preço na própria página
+do catálogo real (produto que o Dute ainda não lançou/precificou); o sistema
+corretamente recusa gravar produto sem preço.
 
 Causa diferente da Folia: o Dute monta a foto unindo vários objetos de imagem
 do PDF (embalagem + brinquedo), e o recorte antigo cortava o RASTER da página
