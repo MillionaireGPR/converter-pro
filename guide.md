@@ -1064,6 +1064,59 @@ arquivo novo se isso não bastar.**
 
 ---
 
+### 14.17 BM36: nome trocado com o produto vizinho no `template-synth` (18/09/2026)
+
+Retestagem do Josef achou o BM36 quase inteiro quebrado: nome cortado/errado
+em 13/13 códigos testados e foto trocada em 21/21 — o pior resultado de
+qualquer fornecedor até aqui. Medido no job real de produção (`ssh` +
+`status.json`, mesmo catálogo que o Josef testou): o nome vinha do caminho
+`extract_via_template` ("template-synth"), não do AI-first text-chunked que
+o `## 14.8`/gate de nome deveriam garantir para esse layout — o gate de
+`extract_via_template` só verifica se o campo `nome` veio PREENCHIDO, não se
+o CONTEÚDO está certo, e nesse catálogo ele vinha preenchido com o texto
+ERRADO.
+
+**Causa raiz nº 1 — fatia de bloco unidirecional.** `_apply_template` fatiava
+o bloco de cada produto do início do match de CODE (`CD: BM######`) até o
+PRÓXIMO CODE. No BM36 o layout é NOME (com o próprio SKU repetido no fim da
+linha) → `CD: <EAN13>` → `CD: BM######` → `CX:` → preço — ou seja, o nome do
+produto atual fica ANTES do match de CODE, não depois. O bloco fatiado assim
+continha só o preço/qtd do produto atual + o NOME do produto SEGUINTE, então
+todo nome saía deslocado em um.
+
+**Causa raiz nº 2 — classe de caractere restrita.** A IA sintetiza a classe
+de caracteres do grupo de captura do NOME olhando a amostra (ex.:
+`[A-Z0-9\s.,-]`), e nomes reais em português têm acento e minúscula que essa
+classe não cobre (`PÉS`, `-15cm`) — truncando o nome mesmo quando o bloco
+está certo.
+
+**Fix (`_apply_template`, `gemini_extractor.py`):** busca BIDIRECIONAL — a
+janela de busca do nome vai do fim do CODE anterior até o início do PRÓXIMO
+(cobre os dois layouts, nome antes ou depois do código), e entre os matches
+dentro dela fica o mais PRÓXIMO da posição do código atual. `_widen_nome_capture`
+substitui o conteúdo do grupo de captura do nome por `[^\n]+` (qualquer
+caractere menos quebra de linha) mantendo as âncoras que a IA escreveu —
+a âncora já delimita onde o nome termina, a classe de caracteres do meio só
+atrapalha. PRECO/QTD não mudaram (continuam no bloco pra frente, onde já
+funcionavam). Sem `if fornecedor == BM36`: a mudança é no motor genérico do
+`template-synth`, vale para qualquer fornecedor futuro com esse layout.
+
+**Validado contra o catálogo real inteiro** (140 páginas, baixado do
+servidor): 1188 produtos após dedup — bate exatamente com a contagem que o
+Josef reportou ("de 1.188 do catálogo") — 99,3% com nome, 0 nomes truncados
+abaixo de 8 caracteres, `BM361552` sai `"FACA PATE C/4 -15cm DOURADO"`
+(igual ao que o Josef esperava). Teste de regressão em
+`test_bm36_nome_shift.py` trava o texto real da página 4 e confirma que o
+layout padrão (nome DEPOIS do código) não quebrou.
+
+**Ainda aberto no BM36:** a foto trocada (21/21 na amostra do Josef, sinal
+de bug sistêmico na estratégia Embedded de `cv_extractor.py`, provavelmente
+o `score()` por Y-proximidade não discrimina bem produtos lado a lado na
+mesma linha) e os 137/1188 produtos que não aparecem na exportação —
+investigação em andamento, não confirmado ainda se são o mesmo problema.
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
