@@ -37,10 +37,14 @@ fornecedor por fornecedor — achar a causa GENÉRICA e validar como fornecedor 
   1ª versão desfazia o fix do preço unitário da Fortal (105 produtos) — pego pelo
   teste, travado; versão final: Fortal 6 erros latentes corrigidos, Dute/Dagia/
   Gira/Folia 0 mudanças. Detalhe: `guide.md #14.17` e `#14.18`.
-- **Ainda aberto (reportado pelo Josef, não tocado):** BM36 foto trocada (21/21;
-  reproduzido, não é o PDF — suspeita no `findItemForSku` do frontend) e 137
-  produtos que somem; PETRIN 9 fotos trocadas; DUTE 31 códigos ativos que somem +
-  DTY0730; FOLIA 338 sem foto (JRF-50/20/30/90); VAESO tabelas extras; GIRA.
+- **DUTE (#155) e BM36 (#156):** 31 códigos Dute + DTY0730 e os 137 sem nome da
+  BM36 corrigidos e no ar. BM36 "foto trocada" medida: foto do backend bate com o
+  produto (era o nome do vizinho, corrigido antes).
+- **PETRIN fotos (#157):** foto principal escolhida pela CÉLULA do produto (maior
+  imagem no bloco código→próximo código), não pela coluna de X. Petrin: sem imagem
+  47 → 14; os 9 do Josef corrigidos. Detalhe: `guide.md #14.21`.
+- **Ainda aberto (reportado pelo Josef, não tocado):** FOLIA 338 sem foto
+  (JRF-50/20/30/90); VAESO tabelas extras; GIRA.
 
 ---
 
