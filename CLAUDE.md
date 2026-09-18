@@ -90,9 +90,13 @@ Confirmado pelo cliente:
    inclusive >100MB, e teste de carga. **Não desligar o Render** até ele
    encerrar esses testes. Quando o servidor do Wesley voltar, comparar se tem
    algum perfil Phase 0 a mais.
-6. **Limpeza não bloqueante:** matar o processo do Quick Tunnel antigo no
-   servidor e apagar `cf_tunnel_watcher.sh` + `update_vercel_backend_url.py`
-   (obsoletos desde o túnel nomeado do #120).
+6. **Limpeza não bloqueante — PARCIAL em 18/09/2026:** `cf_tunnel_watcher.sh`
+   e `update_vercel_backend_url.py` (obsoletos desde o túnel nomeado do #120)
+   foram apagados do repo. **Não verificado**: se o processo do Quick Tunnel
+   antigo ainda roda no servidor do Wesley — não existe credencial de SSH
+   documentada pra esse host (só o `monitor_wesley_token` que a Integrator
+   usa pra ler status), então matar o processo em si ainda depende de acesso
+   direto a essa máquina.
 7. **Achado durante a validação do #140, NÃO corrigido ainda** (baixa
    severidade, não é preço): ~10% das composições Dute cujo produto fica na
    última linha de uma página têm a foto genuinamente colada na faixa de

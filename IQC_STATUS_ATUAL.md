@@ -1,7 +1,23 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 16/09/2026
+**Atualizado em:** 18/09/2026
+
+---
+
+## ✅ ENTREGUE em 18/09 — limpeza dos scripts obsoletos do Quick Tunnel
+
+`cf_tunnel_watcher.sh` e `update_vercel_backend_url.py` (obsoletos desde a
+migração pro túnel nomeado, PR #120) removidos do repo. **Não verificado**:
+se o processo do Quick Tunnel antigo ainda roda no servidor do Wesley — não
+existe credencial de SSH documentada pra esse host, só o
+`monitor_wesley_token` que a Integrator usa pra ler status via HTTP. Matar
+o processo em si depende de acesso direto a essa máquina.
+
+Em paralelo: avaliando conexão via Supabase CLI escopada só a este projeto
+(`xjznoddaifyxlfbivmau`), pra aplicar a migration `20260827_historico_estruturado.sql`
+pendente sem expor um token de conta que alcance os outros projetos Supabase
+do Gabriel.
 
 ---
 
@@ -793,9 +809,10 @@ motivo pra não apagar `VITE_BACKEND_URL_PRIMARY` antes de atualizá-lo.
    `no_img_in_col` 27 + `no_plausible_match` 15). O padrão matriz cor×tamanho
    foi resolvido, esses são casos diferentes.
 4. **Gemini:** Google exige migração para pré-pago (prazo deles)
-5. **Limpeza pós-migração do Tunnel (não bloqueante):** desligar o processo
-   do Quick Tunnel antigo no servidor próprio e remover `cf_tunnel_watcher.sh`
-   + `update_vercel_backend_url.py` do repo (obsoletos desde 01/09).
+5. ~~Limpeza pós-migração do Tunnel~~ — **PARCIAL 18/09**: `cf_tunnel_watcher.sh`
+   + `update_vercel_backend_url.py` removidos do repo. Ainda falta confirmar/
+   desligar o processo do Quick Tunnel no servidor do Wesley — não há SSH
+   documentado pra esse host (só o token de monitoramento da Integrator).
 6. **Construir subdomínios pros demais sistemas em `metodoiqc.com.br`**
    (Nunê AI, Banknect, Pontual Working, Contacado, StickerOps) — zona já
    está na Cloudflare, falta só criar cada CNAME + registrar no projeto
