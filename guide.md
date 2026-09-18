@@ -1224,6 +1224,29 @@ produto sem nome. Reproduzido exato: **137 inválidos, todos com `nome` vazio**.
 
 ---
 
+### 14.21 Foto principal pela CÉLULA do produto — Petrin (18/09/2026)
+
+Josef, Petrin: 9 fotos trocadas com o vizinho (RD1748 com a do RD1445, etc.).
+**Medido:** em catálogo com foto ABAIXO do código, `_match_via_columns` agrupava
+imagens pela coluna de X do centro. A foto principal larga/longe em X (garrafa
+do RD1748, x=518, código em x=337) caía noutra coluna, e o SKU levava o detalhe
+mais perto (o círculo de zoom). Outra falha: foto que COMEÇA acima do código
+(manteigueira RD1543) era descartada pelo corte `gap < -20`.
+
+**Fix genérico (`_foto_principal_da_celula`, só na orientação "abaixo"):** o
+bloco do produto vai do código até o próximo código abaixo (mesma faixa) e, na
+horizontal, até o código vizinho da mesma linha; a foto é a MAIOR imagem com
+centro no bloco. Bloco vazio cai no caminho antigo. Sem regra por fornecedor.
+
+**Medido na Petrin inteira (800 SKUs):** sem imagem 47 → **14**; os 9 códigos do
+Josef conferidos olhando as fotos. Catálogos "acima" (Levivan etc.) não passam
+por esse caminho. **Ressalva:** 343 SKUs mudaram de foto (a maior parte
+corrige vizinho/detalhe; alguns passam a pegar a variante ou uma composição
+com fundo) — Josef reconfirma numa amostra.
+- **Teste:** geometria real das págs. 6 e 11 em `test_foto_celula_abaixo.py`.
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por

@@ -403,6 +403,42 @@ BADGE_CONTAINMENT = 0.80
 BADGE_MAX_REL_AREA = 0.50
 
 
+def _foto_principal_da_celula(sku, valid_skus, imgs, usadas, page_w, page_h, min_area=0.0):
+    """Catálogo com foto ABAIXO do código: o bloco do produto vai do seu código
+    até o próximo código abaixo (mesma faixa horizontal) e, na horizontal, até o
+    código vizinho à direita na mesma linha. A foto principal é a MAIOR imagem
+    cujo centro cai no bloco — a foto larga que fica longe do código em X (ou
+    começa acima dele) não perde para o detalhe/zoom que está mais perto."""
+    sc = sku["spatialContext"]
+    sx, sy = sc["x"], sc["y"]
+    meia = (sc.get("width") or 40.0) / 2.0
+    x0 = max(0.0, sx - meia - 5.0)
+    x1 = page_w
+    for o in valid_skus:
+        if o is sku:
+            continue
+        oc = o["spatialContext"]
+        if abs(oc["y"] - sy) < 30.0 and oc["x"] > sx + 20.0:
+            x1 = min(x1, oc["x"] - (oc.get("width") or 40.0) / 2.0 - 5.0)
+    y0, y1 = sy - 10.0, page_h
+    for o in valid_skus:
+        if o is sku:
+            continue
+        oc = o["spatialContext"]
+        if oc["y"] > sy + 30.0 and x0 <= oc["x"] < x1:
+            y1 = min(y1, oc["y"] - 10.0)
+    melhor = None
+    for img in imgs:
+        if img["xref"] in usadas or img.get("rect") is None:
+            continue
+        if min_area > 0 and img.get("area", 0.0) < min_area:
+            continue
+        if x0 <= img["cx"] < x1 and y0 <= img["cy"] < y1:
+            if melhor is None or img.get("area", 0.0) > melhor.get("area", 0.0):
+                melhor = img
+    return melhor
+
+
 def _descartar_selos(page_imgs: List[Dict], tag: str) -> List[Dict]:
     """
     Tira da disputa as imagens que são SELO/TAG, não foto de produto.
@@ -1503,6 +1539,14 @@ def _match_via_grid(
             # 1ª passada: só candidatas plausíveis como foto de produto.
             # 2ª passada (se nada casou): reabre tudo, pra nunca perder imagem.
             for min_area in ([area_min_foto, 0.0] if area_min_foto > 0 else [0.0]):
+                if orientacao == "abaixo":
+                    celula = _foto_principal_da_celula(
+                        sku, valid_skus, page_imgs, used_xrefs_global,
+                        width / scale, height / scale, min_area,
+                    )
+                    if celula is not None:
+                        best_img = celula
+                        break
                 _try_match(imgs_sorted, min_area)
 
                 # FALLBACK CROSS-COLUMN: se nenhuma imagem na coluna do SKU,
