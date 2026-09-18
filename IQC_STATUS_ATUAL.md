@@ -5,6 +5,13 @@
 
 ---
 
+## ✅ ENTREGUE em 18/09 — BM36: os 137 produtos que não saíam eram nome vazio
+
+Medido rodando o export inteiro sobre o resultado real: extração e imagens
+tinham os 1188; o export descarta produto sem nome e 137 vinham sem. Agora o
+nome usa a última linha de texto antes do código quando o template não casa
+(zero nomes vazios, nenhum nome existente alterado). `guide.md #14.20`.
+
 ## ✅ ENTREGUE em 18/09 — DUTE: 31 códigos sumindo + foto vazando (causa genérica)
 
 Medido: a IA devolvia os 651 produtos; o frontend perdia 37 por uma regra de

@@ -1201,6 +1201,29 @@ JSON real da Dute.
 
 ---
 
+### 14.20 BM36 — os "137 que não aparecem na exportação" eram nome vazio (18/09/2026)
+
+Josef: "137 produtos que nem aparecem na exportação (de 1.188)". Medido, sem
+suposição: extração 1188, pipeline do frontend 1188 e ZIP de imagens 1187 — o
+que cortava era o export Mercos (`batchNormalizeToMercos`), que descarta
+produto sem nome. Reproduzido exato: **137 inválidos, todos com `nome` vazio**.
+
+- **Causa:** o template-synth (regex de NOME que a IA sintetiza) não casava em
+  parte dos blocos. O #153 (nome deslocado) já derrubou os vazios de 136 para
+  9; sobravam dois layouts do mesmo catálogo: código sozinho numa linha (pág.
+  71) e bloco sem a linha de EAN de 13 dígitos (pág. 92).
+- **Fix genérico (`_nome_linha_anterior`, em `_apply_template`):** só para
+  produto que ficaria SEM nome, usa a última linha de texto antes do código,
+  ignorando linhas que casam CODE/PREÇO/QTD do template, "rótulo: número"
+  (EAN), número de página e o próprio código. Nenhum nome que já existia
+  mudou (comparado no catálogo inteiro: 0 alterados, 0 vazios).
+- **Teste:** páginas 71 e 92 reais em `test_bm36_nome_shift.py`.
+- **Lição de método:** o relatório de erro do sistema mostrava esses 137 o
+  tempo todo; a causa (nome vazio) só apareceu rodando o export inteiro sobre
+  o JSON real do servidor.
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
