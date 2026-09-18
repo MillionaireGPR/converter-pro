@@ -123,6 +123,34 @@ check(
 )
 
 
+print("PAGINA 162 -- linha de baixo com 1 produto so (coluna direita): nao engole a foto da esquerda")
+raster_162 = np.zeros((595, 855, 3), dtype=np.uint8)
+matches_162, unmatched_162 = cv._match_via_grid(
+    None, None, raster_162,
+    [0.0, 20.0, 300.0, 558.0, 595.0],
+    [0.0, 428.0, 855.0],
+    [
+        sku("DTY1194", 36.0, 102.0),
+        sku("DTY1125", 392.0, 104.0),
+        sku("DTY0730", 393.0, 354.0),
+    ],
+    [
+        image(500, 90.0, 230.0, 330.0, 340.0),    # caranguejo (coluna esquerda, desce ate a linha 2)
+        image(501, 30.0, 400.0, 330.0, 470.0),    # caranguejo, parte de baixo
+        image(502, 430.0, 100.0, 800.0, 260.0),   # peixe
+        image(503, 470.0, 380.0, 800.0, 500.0),   # tartaruga
+    ],
+    1.0, "tmp", 162, supplier_id="Dute Toys",
+)
+by_sku_162 = {item["sku"]: item for item in matches_162}
+check("os tres produtos da pagina 162 recebem imagem", len(matches_162) == 3, str(unmatched_162))
+check(
+    "DTY0730 fica so com a tartaruga (1 elemento), sem a foto do caranguejo",
+    by_sku_162.get("DTY0730", {}).get("match_type") == "dute_cell",
+    str(by_sku_162.get("DTY0730")),
+)
+
+
 print("PAGINA 95 -- a divisoria visual fica em x=428, nao no meio dos codigos")
 centers_95, ranges_95 = cv._dute_axis_partitions(
     [69.7, 453.4], [0.0, 164.4, 428.0, 631.5, 716.9, 855.0], 855.0, 80.0
