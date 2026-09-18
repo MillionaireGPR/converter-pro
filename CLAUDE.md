@@ -251,9 +251,15 @@ deploye 1× só. (Foi assim que v26 resolveu LX15016/DXP57 em minutos.)
    antes de todo `git push` e BLOQUEIA se algo violar. Ative uma vez por clone
    com `npm run setup-hooks` (o `prepare` do npm install já faz isso).
 
-> ⚠️ **A trava NÃO depende do GitHub** (repo é privado p/ proteger dados do
-> cliente; não usamos GitHub Actions/Pro). A segurança vive AQUI, no projeto,
-> via `npm run verify` + o pre-push hook. Validar local é o portão oficial.
+> ⚠️ **Correção 18/09/2026**: esta seção dizia que o repo NÃO usava GitHub
+> Actions — **estava errado**. `.github/workflows/regression-locks.yml`
+> roda em todo PR/push pra `main` (mesmos invariantes do `npm run verify` +
+> build + smoke test pós-deploy) e a branch protection do repo **exige**
+> esses checks passarem antes do merge (confirmado tentando mergear um PR
+> com checks ainda em andamento — bloqueado até ficarem verdes). `npm run
+> verify` local + pre-push hook continuam sendo o portão RÁPIDO (pega erro
+> antes de gastar um push), mas o GitHub Actions é quem trava de fato o
+> merge, não só o hook local.
 
 ## 🚫 O que NUNCA fazer
 
