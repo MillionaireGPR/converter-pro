@@ -1117,6 +1117,53 @@ investigação em andamento, não confirmado ainda se são o mesmo problema.
 
 ---
 
+### 14.18 Preço conferido pela geometria da página — Petrin e afins (18/09/2026)
+
+Josef, Petrin: 10 preços errados (2 códigos com os preços trocados entre si) e
+o RD1557 (46,00) sumindo da exportação enquanto o RD1558 ("EM BREVE") saía com
+o preço dele. Medido no job real de produção: os 12 casos batem exatamente com
+o que a IA devolveu — o erro é da atribuição de preço, não do frontend.
+
+Padrão medido no catálogo inteiro (800 produtos): num layout de 2 colunas, se o
+código da esquerda é "EM BREVE" (sem preço impresso), a IA passa o preço da
+coluna da direita pro código da esquerda e deixa o dono sem. **62 preços
+errados no total; o Josef pegou 12.** A informação pra acertar está no PDF —
+o preço de cada produto fica sempre na mesma posição relativa ao seu código
+(Petrin: ~111pt à direita, ~10pt acima).
+
+**`_verify_prices_by_geometry` (`gemini_extractor.py`, chamado em
+`extract_with_fallback`, vale pra qualquer fornecedor — sem `if` por nome):**
+1. MEDE a assinatura de posição do catálogo: entre os produtos cujo preço da IA
+   coincide com um preço impresso na página, mediana do deslocamento (dx,dy)
+   código→preço. Só confere se ≥85% dos casos concordam (≥30 produtos).
+2. Corrige só quando é inequívoco: exatamente UM preço na região do card e
+   ninguém mais disputando; um código sem preço na própria região cujo preço da
+   IA é o da região de OUTRO código fica sem preço (era "roubado").
+3. Falha segura (qualquer erro → preços da IA intactos). Cada correção fica
+   registrada em `avisosPrecoCorrigido` no resultado do job (auditável).
+
+**Regressão medida nos catálogos reais de produção (pegou um erro meu):**
+a 1ª versão desfazia o fix do preço unitário da Fortal em 105 produtos
+(`UND: R$ 7,20` ao lado do total `R$ 72,00` — dois preços no mesmo card).
+Agora card com 2+ preços é ambíguo e não é tocado. Resultado final:
+
+| Catálogo | Assinatura | Mudanças |
+|---|---|---|
+| PETRIN (800) | dx +111, dy −10 (89%) | **62 corrigidas — os 12 do Josef, 12/12** (conferidas à mão as páginas 3, 78, 120, 163) |
+| FORTAL (943) | dx +43, dy +67 (89%) | 6 — todas o preço do card vizinho da esquerda (conferido: ENS-01 tem só `R$ 32,40`, a IA tinha 7,20) |
+| DUTE (651) | dx +4, dy −32 (100%) | 0 — a IA já estava certa |
+| DAGIA, GIRA, FOLIA | sem padrão / não usa "R$" no texto | 0 — não confere, não toca |
+
+Teste: `test_price_geometry.py` (troca entre vizinhos, preço roubado, card de 2
+preços, layout agrupado, falha segura).
+
+**Por que isto e não um ajuste de prompt pra Petrin:** é a mesma classe de
+erro que apareceu na GIRA (#148, prompt não garantiu) — prompt é probabilístico,
+posição é determinística. Como o padrão é medido no arquivo, o próximo
+fornecedor com preço posicionado ganha a conferência sem ninguém configurar.
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
