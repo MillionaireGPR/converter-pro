@@ -5,6 +5,15 @@
 
 ---
 
+## ✅ ENTREGUE em 18/09 — DUTE: 31 códigos sumindo + foto vazando (causa genérica)
+
+Medido: a IA devolvia os 651 produtos; o frontend perdia 37 por uma regra de
+exclusão de "linha de total" que casava com "(Total 144 UND)" na observação.
+Agora linha com código de produto nunca é tratada como total (vale pra qualquer
+fornecedor). Dute 614 → 651/651 produtos e 651 fotos. A foto do DTY0730 não
+leva mais o produto da coluna vizinha (24 fotos da Dute ficaram sem vizinho).
+Detalhe: `guide.md #14.19`.
+
 ## ✅ ENTREGUE em 18/09 — retestagem do Josef (17/09): BM36 nome e PETRIN preço corrigidos pela causa estrutural
 
 Josef retestou 7 fornecedores e reabriu bugs. Diretriz do Gabriel: não remendar

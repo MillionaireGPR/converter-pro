@@ -96,12 +96,17 @@ const toNum = (val: any): number => {
  */
 const shouldExclude = (campos: Record<string, any>, adapter: SupplierAdapter): boolean => {
   const allText = Object.values(campos).filter(v => typeof v === 'string').join(' ');
+  // Linha com código de produto não é total/rodapé: regra de texto livre só
+  // vale contra o próprio código. Sem isso "(Total 144 UND)" na observação
+  // derrubava 37 produtos válidos da Dute (`total|subtotal|soma` sem âncora).
+  const codigo = toStr(findValue(campos, adapter.fieldAliases.codigo) ?? campos['codigo']);
+  const textoLivre = codigo || allText;
   for (const rule of adapter.exclusionRules) {
     if (rule.campo) {
       const val = toStr(campos[rule.campo]);
       if (rule.pattern.test(val)) return true;
     } else {
-      if (rule.pattern.test(allText)) return true;
+      if (rule.pattern.test(textoLivre)) return true;
     }
   }
   return false;

@@ -953,13 +953,33 @@ def _match_dute_compositions(
             page_height,
             cluster_tolerance=45.0,
         )
-        for row_index, row_skus in skus_by_global_row.items():
-            col_centers, col_ranges = _dute_axis_partitions(
+        row_cols = {
+            row_index: _dute_axis_partitions(
                 [sku["spatialContext"]["x"] for sku in row_skus],
                 v_points,
                 page_width,
                 cluster_tolerance=80.0,
             )
+            for row_index, row_skus in skus_by_global_row.items()
+        }
+        # Linha com 1 produto so (pag. 162: peixe em cima, tartaruga embaixo, e a
+        # foto do caranguejo da coluna vizinha desce ate a linha de baixo) ganhava
+        # a pagina inteira e engolia a foto do vizinho. Se as colunas da pagina
+        # sao consistentes (mesmo numero da linha mais cheia), a linha curta usa
+        # a faixa da propria coluna. Pagina em triangulo (1 centralizado + 2)
+        # gera mais colunas globais que a linha mais cheia: nao entra aqui.
+        global_col_centers, global_col_ranges = _dute_axis_partitions(
+            [sku["spatialContext"]["x"] for sku in valid_skus],
+            v_points,
+            page_width,
+            cluster_tolerance=80.0,
+        )
+        max_row_cols = max(len(c) for c, _ in row_cols.values())
+        use_global_cols = len(global_col_centers) == max_row_cols
+        for row_index, row_skus in skus_by_global_row.items():
+            col_centers, col_ranges = row_cols[row_index]
+            if use_global_cols and len(col_centers) < max_row_cols:
+                col_centers, col_ranges = global_col_centers, global_col_ranges
             y_min, y_max = row_ranges[row_index]
             for sku in row_skus:
                 sku_x = sku["spatialContext"]["x"]

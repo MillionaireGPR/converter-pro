@@ -1164,6 +1164,43 @@ fornecedor com preço posicionado ganha a conferência sem ninguém configurar.
 
 ---
 
+### 14.19 Linha de total não derruba produto com código — Dute 31 sumindo + foto vazando (18/09/2026)
+
+Josef, Dute: 31 códigos ativos, com preço, não saíam na exportação; o DTY0730
+saía com a foto do caranguejo do vizinho.
+
+**Medido (não achado por hipótese):** o resultado da IA no servidor tinha os
+651 produtos e os 31 códigos, todos com preço. O pipeline do frontend
+(`runImportPipeline`) devolvia 614: os 37 que sumiam (31 do Josef + 6) eram
+os mesmos SEM foto no ZIP, porque nem chegavam ao extrator de imagens
+(`unmatchedCount 0`). Reproduzido sem o Josef, rodando o pipeline sobre o
+JSON real da Dute.
+
+- **Causa 1 (produto some):** `shouldExclude` (`supplierRules/extractor.ts`)
+  aplicava regra de texto livre contra a linha INTEIRA do produto. A regra
+  `total|subtotal|soma` (sem âncora, copiada em Dute/Petrin/Levivan) casava com
+  "(Total 144 UND)" na observação de caixa. **Fix genérico:** linha com código
+  de produto não é total/rodapé — a regra de texto livre passa a valer só
+  contra o próprio código. Linha sem código e código literalmente "TOTAL"
+  continuam excluídos. Vale pra qualquer fornecedor novo. Teste:
+  `exclusion-com-codigo.test.ts`. Resultado: Dute 614 → **651/651**.
+- **Causa 2 (foto vazando, DTY0730):** `_match_dute_compositions`
+  (`cv_extractor.py`) partia as colunas de cada linha só com os SKUs DA
+  LINHA. Linha com 1 produto (coluna direita) ganhava a página inteira e
+  engolia a parte de baixo da foto da coluna esquerda. **Fix:** se as colunas da
+  página são consistentes (nº de colunas globais == nº da linha mais cheia), a
+  linha curta usa a faixa da própria coluna. Página em triângulo (1 centralizado
+  + 2) tem mais colunas globais e não entra na regra. Teste: pág. 162 em
+  `test_dute_composition.py`.
+- **Medido no catálogo real inteiro (mini teste como fornecedor novo):** 651
+  fotos associadas, 0 sem foto (eram 614); 24 fotos mudaram, todas encolhendo
+  (vizinho removido); amostra de 8 conferida visualmente, nenhuma piorou.
+- **Ainda aberto:** o backend reportava `unmatchedCount 0` mesmo quando o
+  frontend não mandava o SKU — produto que nunca chega ao extrator não aparece
+  no relatório de falhas.
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
