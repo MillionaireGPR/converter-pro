@@ -1,7 +1,31 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 16/09/2026
+**Atualizado em:** 18/09/2026
+
+---
+
+## ✅ ENTREGUE em 18/09 — migration do histórico estruturado aplicada (pendência desde 27/08)
+
+A migration `20260827_historico_estruturado.sql` (8 colunas novas em
+`export_history` + função de limpeza de 14 dias) estava pendente porque a
+CLI do Supabase não tinha token de conta pra linkar o projeto
+`xjznoddaifyxlfbivmau`. Resolvido sem token de conta nenhum — o Gabriel
+tem vários projetos Supabase na mesma conta e não queria um acesso que
+alcançasse os outros. Usada a connection string do **Session Pooler**
+desse projeto específico (Project Settings → Database, só esse projeto),
+guardada em `.env.local` (gitignored) como `SUPABASE_DB_URL`.
+
+Rodada statement a statement via `supabase db query --file --db-url`
+(a ferramenta não aceita múltiplos comandos numa chamada só). Verificado
+depois via `information_schema.columns`: as 8 colunas existem em produção.
+
+**Nota:** uma entrada anterior deste arquivo (27/08) dizia "migration
+aplicada em produção (28/08)" — o estado real encontrado agora mostra que
+não estava. Não investigada a causa da divergência; irrelevante agora que
+está aplicada e verificada de novo.
+
+Detalhe técnico: `guide.md #16`.
 
 ---
 
