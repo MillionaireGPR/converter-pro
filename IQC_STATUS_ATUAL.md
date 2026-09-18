@@ -5,6 +5,30 @@
 
 ---
 
+## ✅ ENTREGUE em 18/09 — migration do histórico estruturado aplicada (pendência desde 27/08)
+
+A migration `20260827_historico_estruturado.sql` (8 colunas novas em
+`export_history` + função de limpeza de 14 dias) estava pendente porque a
+CLI do Supabase não tinha token de conta pra linkar o projeto
+`xjznoddaifyxlfbivmau`. Resolvido sem token de conta nenhum — o Gabriel
+tem vários projetos Supabase na mesma conta e não queria um acesso que
+alcançasse os outros. Usada a connection string do **Session Pooler**
+desse projeto específico (Project Settings → Database, só esse projeto),
+guardada em `.env.local` (gitignored) como `SUPABASE_DB_URL`.
+
+Rodada statement a statement via `supabase db query --file --db-url`
+(a ferramenta não aceita múltiplos comandos numa chamada só). Verificado
+depois via `information_schema.columns`: as 8 colunas existem em produção.
+
+**Nota:** uma entrada anterior deste arquivo (27/08) dizia "migration
+aplicada em produção (28/08)" — o estado real encontrado agora mostra que
+não estava. Não investigada a causa da divergência; irrelevante agora que
+está aplicada e verificada de novo.
+
+Detalhe técnico: `guide.md #16`.
+
+---
+
 ## ✅ ENTREGUE em 18/09 — limpeza dos scripts obsoletos do Quick Tunnel
 
 `cf_tunnel_watcher.sh` e `update_vercel_backend_url.py` (obsoletos desde a
@@ -13,11 +37,6 @@ se o processo do Quick Tunnel antigo ainda roda no servidor do Wesley — não
 existe credencial de SSH documentada pra esse host, só o
 `monitor_wesley_token` que a Integrator usa pra ler status via HTTP. Matar
 o processo em si depende de acesso direto a essa máquina.
-
-Em paralelo: avaliando conexão via Supabase CLI escopada só a este projeto
-(`xjznoddaifyxlfbivmau`), pra aplicar a migration `20260827_historico_estruturado.sql`
-pendente sem expor um token de conta que alcance os outros projetos Supabase
-do Gabriel.
 
 ---
 

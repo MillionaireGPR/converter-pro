@@ -1170,15 +1170,20 @@ oportunisticamente toda vez que a tela de Histórico carrega, no máximo
 limpeza). Catálogo é atualizado toda semana pelo fornecedor — 14 dias
 cobre "essa semana vs a passada" sem acumular histórico indefinidamente.
 
-**Pendência de infraestrutura:** a migration foi criada mas NÃO aplicada
-— a CLI do Supabase usada nesta sessão não tem acesso ao projeto
-`xjznoddaifyxlfbivmau` (`supabase link` retorna "account does not have
-the necessary privileges"). Alguém com acesso ao painel do Supabase
-precisa colar o conteúdo de
-`supabase/migrations/20260827_historico_estruturado.sql` no SQL Editor
-antes que os campos estruturados comecem a ser preenchidos — até lá, o
-fallback acima mantém o histórico funcionando normalmente, só sem os
-badges novos.
+**Aplicada em 18/09/2026.** Ficou pendente por semanas porque a CLI do
+Supabase, sem token de conta, não tinha como linkar o projeto
+(`supabase link` retornava "account does not have the necessary
+privileges"). Resolvido com conexão **escopada só a este projeto**: string
+de conexão via Session Pooler (Project Settings → Database), guardada em
+`.env.local` (gitignored) como `SUPABASE_DB_URL` — nunca um token de conta
+que alcançasse os outros projetos Supabase do Gabriel. `supabase db query
+--file <arquivo> --db-url "$SUPABASE_DB_URL"` não aceita múltiplos comandos
+por chamada (prepared statement), então os 5 statements do arquivo rodaram
+um a um. Confirmado via `information_schema.columns`: as 8 colunas novas
+existem em `public.export_history`. (Uma entrada anterior deste arquivo
+dizia "migration aplicada em 28/08" — o estado real encontrado agora
+mostra que não estava; não investigado o motivo da divergência, e não é
+mais relevante agora que está aplicada e verificada.)
 
 ---
 
