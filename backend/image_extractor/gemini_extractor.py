@@ -2186,6 +2186,197 @@ def _fix_fortal_unit_prices(pdf_path: str, produtos: list, supplier: str) -> lis
     return produtos
 
 
+_PRICE_TOKEN_RE = re.compile(r"R\$\s*([\d.\s]+?)\s*,\s*(\d{2})")
+
+
+def _page_price_tokens(page) -> List[Dict[str, float]]:
+    """Todos os 'R$ 12 ,80' da página com posição. O preço vem partido em
+    trechos de fonte diferentes (reais grandes + centavos pequenos), então
+    junta os trechos da LINHA antes de casar o padrão."""
+    out: List[Dict[str, float]] = []
+    try:
+        d = page.get_text("dict")
+    except Exception:
+        return out
+    for b in d.get("blocks", []):
+        for line in b.get("lines", []):
+            texto = "".join(s.get("text", "") for s in line.get("spans", []))
+            m = _PRICE_TOKEN_RE.search(texto)
+            if not m:
+                continue
+            inteiro = re.sub(r"[.\s]", "", m.group(1))
+            if not inteiro.isdigit():
+                continue
+            x0, y0 = line["bbox"][0], line["bbox"][1]
+            out.append({"val": float(f"{inteiro}.{m.group(2)}"), "x": x0, "y": y0})
+    return out
+
+
+def _verify_prices_by_geometry(pdf_path: str, produtos: list) -> Tuple[list, list]:
+    """Confere o preço que a IA devolveu contra a GEOMETRIA da página.
+
+    A IA recebe o texto com coordenadas e mesmo assim erra a atribuição em
+    ~1,5% dos produtos quando há vários preços por página (Petrin 17/09/2026:
+    12 casos reais, inclusive 2 códigos com os preços trocados entre si e um
+    código "em breve" ficando com o preço do vizinho). A informação para
+    acertar está no PDF: o preço de cada produto fica sempre na MESMA posição
+    relativa ao seu código.
+
+    Nada é declarado por fornecedor — a posição é MEDIDA no próprio catálogo:
+    entre os produtos cujo preço da IA coincide com um preço impresso na
+    página, tira-se a mediana do deslocamento (dx, dy) código→preço. Só se
+    esse padrão for consistente (≥85% dos casos dentro da tolerância, ≥30
+    produtos) o catálogo tem "assinatura de posição" e a conferência roda;
+    layout sem padrão (preços agrupados no fim da página, tabela etc.) não
+    é tocado — zero risco de regressão nesses.
+
+    Corrige só quando é inequívoco: exatamente UM preço na janela esperada,
+    nenhum outro produto disputando o mesmo preço. Um código sem preço na
+    sua janela cujo preço da IA é, na verdade, o preço da janela de OUTRO
+    código (preço "roubado") fica sem preço. Falha segura: qualquer erro
+    devolve os preços da IA intactos. Devolve (produtos, avisos).
+    """
+    MIN_MATCHED, MIN_CONSISTENCY = 30, 0.85
+    DY_TOL, DX_TOL = 12.0, 60.0
+    avisos: List[Dict[str, Any]] = []
+    if not produtos:
+        return produtos, avisos
+
+    by_page: Dict[int, List[Dict[str, Any]]] = {}
+    for p in produtos:
+        try:
+            pg = int(p.get("paginaOrigem") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pg > 0:
+            by_page.setdefault(pg, []).append(p)
+
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception as e:
+        print(f"[PrecoGeometria] não abriu o PDF, mantendo preços da IA: {e}")
+        return produtos, avisos
+
+    try:
+        page_data: Dict[int, Tuple[List[Dict[str, float]], List[Tuple[Dict[str, Any], Any]]]] = {}
+        for pg, plist in by_page.items():
+            if not 1 <= pg <= len(doc):
+                continue
+            page = doc.load_page(pg - 1)
+            tokens = _page_price_tokens(page)
+            if not tokens:
+                continue
+            located = []
+            for p in plist:
+                code = str(p.get("codigo") or "").strip()
+                if not code:
+                    continue
+                rects = page.search_for(code)
+                if len(rects) == 1:  # código repetido na página = ambíguo, não arrisca
+                    located.append((p, rects[0]))
+            page_data[pg] = (tokens, located)
+
+        # 1) assinatura de posição do catálogo, medida onde a IA já bate com a página
+        offsets: List[Tuple[float, float]] = []
+        for tokens, located in page_data.values():
+            for p, rect in located:
+                preco = p.get("preco")
+                if not isinstance(preco, (int, float)):
+                    continue
+                cand = [t for t in tokens if abs(t["val"] - preco) < 0.005]
+                if not cand:
+                    continue
+                t = min(cand, key=lambda t: 2 * abs(t["y"] - rect.y0) + abs(t["x"] - rect.x0))
+                offsets.append((t["x"] - rect.x0, t["y"] - rect.y0))
+        if len(offsets) < MIN_MATCHED:
+            print(f"[PrecoGeometria] {len(offsets)} preços casados (<{MIN_MATCHED}) — sem assinatura, não confere")
+            return produtos, avisos
+        med_dx = sorted(o[0] for o in offsets)[len(offsets) // 2]
+        med_dy = sorted(o[1] for o in offsets)[len(offsets) // 2]
+        inliers = sum(1 for dx, dy in offsets if abs(dx - med_dx) <= DX_TOL and abs(dy - med_dy) <= DY_TOL)
+        consistencia = inliers / len(offsets)
+        if consistencia < MIN_CONSISTENCY:
+            print(f"[PrecoGeometria] posição do preço inconsistente ({consistencia:.0%} < {MIN_CONSISTENCY:.0%}) — não confere")
+            return produtos, avisos
+        print(f"[PrecoGeometria] assinatura medida: preço a dx={med_dx:+.0f} dy={med_dy:+.0f} do código "
+              f"({consistencia:.0%} de {len(offsets)} casos) — conferindo")
+
+        # 2) confere cada produto contra a janela esperada
+        for pg, (tokens, located) in page_data.items():
+            janela: Dict[int, Optional[int]] = {}  # id(produto) → índice do token único, ou None
+            for p, rect in located:
+                # Conta TODOS os preços da região do card (janela expandida). Um card
+                # com 2+ preços (ex.: "UND R$ 2,28" + total da caixa "R$ 13,68" na
+                # Fortal, "DE/POR" na Petrin) é ambíguo: a posição sozinha não diz qual
+                # é o unitário, e "corrigir" poderia trocar um erro por outro (o total da
+                # caixa). Regressão pega em 18/09: sem esta trava a conferência desfazia
+                # o fix do preço unitário da Fortal em 105 produtos.
+                cand = []
+                for ti, t in enumerate(tokens):
+                    dx, dy = t["x"] - rect.x0, t["y"] - rect.y0
+                    if abs(dx - med_dx) <= 1.5 * DX_TOL and abs(dy - med_dy) <= 3 * DY_TOL:
+                        cand.append((ti, abs(dx - med_dx) <= DX_TOL and abs(dy - med_dy) <= DY_TOL))
+                if not cand:
+                    janela[id(p)] = None
+                elif len(cand) == 1 and cand[0][1]:
+                    janela[id(p)] = cand[0][0]
+                else:
+                    janela[id(p)] = -1
+            donos: Dict[int, List[Dict[str, Any]]] = {}
+            original = {id(p): p.get("preco") for p, _r in located}
+            for p, _rect in located:
+                ti = janela[id(p)]
+                if ti is not None and ti >= 0:
+                    donos.setdefault(ti, []).append(p)
+            for p, rect in located:
+                ti = janela[id(p)]
+                atual = p.get("preco")
+                if ti == -1:
+                    continue
+                # Se o preço da IA está impresso COLADO neste mesmo card (região
+                # expandida da janela), ela escolheu entre preços do próprio produto
+                # (ex.: Fortal "UND R$ 7,20" ao lado do total "R$ 72,00") e a posição
+                # não prova erro. O erro real é o preço vir de OUTRO produto (longe).
+                if isinstance(atual, (int, float)) and any(
+                    abs(t["val"] - atual) < 0.005
+                    and abs((t["x"] - rect.x0) - med_dx) <= 1.5 * DX_TOL
+                    and abs((t["y"] - rect.y0) - med_dy) <= 3 * DY_TOL
+                    for t in tokens
+                ):
+                    continue
+                if ti is not None:
+                    if len(donos[ti]) != 1:
+                        continue  # preço disputado por 2+ códigos (ex.: matriz) — não mexe
+                    novo = tokens[ti]["val"]
+                    if not isinstance(atual, (int, float)) or abs(atual - novo) >= 0.005:
+                        avisos.append({"codigo": p.get("codigo"), "pagina": pg, "de": atual, "para": novo})
+                        p["preco"] = novo
+                else:
+                    # sem preço na própria janela: só zera se o preço da IA é o preço
+                    # da janela de OUTRO código E esse outro código não o recebeu
+                    # (foi "roubado"). Se o dono já tem o mesmo valor, é só coincidência
+                    # de preço igual entre produtos — não mexe.
+                    if isinstance(atual, (int, float)) and any(
+                        abs(tokens[t2]["val"] - atual) < 0.005
+                        and all(
+                            not isinstance(original[id(o)], (int, float))
+                            or abs(original[id(o)] - atual) >= 0.005
+                            for o in donos[t2]
+                        )
+                        for t2 in donos
+                    ):
+                        avisos.append({"codigo": p.get("codigo"), "pagina": pg, "de": atual, "para": None})
+                        p["preco"] = None
+    except Exception as e:
+        print(f"[PrecoGeometria] falha segura, mantendo preços da IA: {e}")
+        return produtos, []
+    finally:
+        doc.close()
+
+    print(f"[PrecoGeometria] {len(avisos)} preço(s) corrigido(s) pela posição na página")
+    return produtos, avisos
+
+
 def _marcar_nomes_duplicados(produtos: list) -> list:
     """Sinaliza (diagnóstico, não bloqueia) grupos de produtos com o MESMO
     nome no mesmo lote — é exatamente o padrão que fez a IA trocar preço
@@ -2225,6 +2416,9 @@ def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str =
         result["produtos"] = _fix_supplier_code_prefix(result["produtos"], supplier)
         result["produtos"] = _fix_fortal_unit_prices(
             pdf_path, result["produtos"], supplier,
+        )
+        result["produtos"], result["avisosPrecoCorrigido"] = _verify_prices_by_geometry(
+            pdf_path, result["produtos"],
         )
         result["avisosNomeDuplicado"] = _marcar_nomes_duplicados(result["produtos"])
     return result

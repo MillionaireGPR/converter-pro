@@ -5,6 +5,29 @@
 
 ---
 
+## ✅ ENTREGUE em 18/09 — retestagem do Josef (17/09): BM36 nome e PETRIN preço corrigidos pela causa estrutural
+
+Josef retestou 7 fornecedores e reabriu bugs. Diretriz do Gabriel: não remendar
+fornecedor por fornecedor — achar a causa GENÉRICA e validar como fornecedor novo.
+
+- **BM36 nome (PR #153, em produção):** o motor `template-synth` fatiava o bloco
+  a partir do código, mas nesse catálogo o nome vem ANTES do código; e a classe
+  de caractere sintetizada pela IA cortava acento/minúscula. Fix genérico no motor.
+  Catálogo real: 1188 produtos (= total do Josef), 99,3% com nome.
+- **PETRIN preço (PR #154):** a IA passava o preço da coluna direita pro código
+  "EM BREVE" da esquerda. `_verify_prices_by_geometry` mede a posição código→preço
+  no PRÓPRIO catálogo e corrige só o inequívoco. Petrin: 62 preços corrigidos (o
+  Josef achou 12; os 12 dele 12/12). Regressão medida em 5 catálogos reais: a
+  1ª versão desfazia o fix do preço unitário da Fortal (105 produtos) — pego pelo
+  teste, travado; versão final: Fortal 6 erros latentes corrigidos, Dute/Dagia/
+  Gira/Folia 0 mudanças. Detalhe: `guide.md #14.17` e `#14.18`.
+- **Ainda aberto (reportado pelo Josef, não tocado):** BM36 foto trocada (21/21;
+  reproduzido, não é o PDF — suspeita no `findItemForSku` do frontend) e 137
+  produtos que somem; PETRIN 9 fotos trocadas; DUTE 31 códigos ativos que somem +
+  DTY0730; FOLIA 338 sem foto (JRF-50/20/30/90); VAESO tabelas extras; GIRA.
+
+---
+
 ## ✅ ENTREGUE em 18/09 — migration do histórico estruturado aplicada (pendência desde 27/08)
 
 A migration `20260827_historico_estruturado.sql` (8 colunas novas em
