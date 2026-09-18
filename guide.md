@@ -465,10 +465,12 @@ já existente, nunca usado até então. `backendLabel()` (`backendResolver.ts`)
 passou a reconhecer `metodoiqc.com.br`, além do antigo `trycloudflare.com`,
 como servidor "próprio".
 
-`cf_tunnel_watcher.sh` e `update_vercel_backend_url.py` ficam obsoletos
-depois dessa migração (o endereço não muda mais sozinho) mas ainda não
-foram removidos do repo — desligar o processo do Quick Tunnel no servidor
-próprio e então apagar os dois scripts é o próximo passo de limpeza.
+`cf_tunnel_watcher.sh` e `update_vercel_backend_url.py` ficaram obsoletos
+com essa migração (o endereço não muda mais sozinho) e foram removidos do
+repo em 18/09/2026. **Pendente**: confirmar se o processo do Quick Tunnel
+ainda roda no servidor do Wesley — não há credencial de SSH documentada
+pra esse host (só o token de monitoramento que a Integrator usa), então
+essa parte não foi verificada remotamente.
 Registros DNS de `metodoiqc.com.br` replicados manualmente na Cloudflare
 antes do corte de nameserver: MX (Google Workspace), CNAME de
 `pirralhos.metodoiqc.com.br` (Central Pirralhos/Vercel), CNAME de
