@@ -1847,6 +1847,25 @@ def _widen_nome_capture(pattern: str) -> str:
     return pattern
 
 
+def _nome_linha_anterior(texto: str, codigo: str, skip_res: List["re.Pattern"]) -> str:
+    """Último trecho de texto "de nome" no fim de `texto` (a janela antes do
+    código). Ignora linhas que casam CODE/PRECO/QTD do template, EAN/numéricas,
+    "Pag: N" e o próprio código. Só é usado quando o NOME sintetizado não casou
+    (BM36 pág. 71: código sozinho na linha; pág. 92: bloco sem linha de EAN)."""
+    for ln in reversed(texto.split(chr(10))):
+        ln = ln.strip()
+        if not ln or ln.upper() == codigo.upper():
+            continue
+        if re.fullmatch(r"(?:[A-Za-z]{1,6}:\s*)?[\d\s.,/:;+*#\-]+", ln) or re.match(r"(?i)^p[aá]g(ina)?", ln):
+            continue
+        if any(r.search(ln) for r in skip_res):
+            continue
+        nome = re.sub(rf"\s*{re.escape(codigo)}\s*$", "", ln, flags=re.I).strip()
+        if len(nome) >= 3 and re.search(r"[A-Za-zÀ-ú]{2,}", nome):
+            return re.sub(r"\s+", " ", nome)
+    return ""
+
+
 def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str, Any]]:
     """Aplica o template em TODAS as páginas (determinístico, instantâneo)."""
     code_re = re.compile(tpl["CODE"], re.M)
@@ -1901,6 +1920,13 @@ def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str
                     # Alguns catálogos repetem o próprio código no fim da
                     # linha do nome (achado no BM36) — tira se sobrou.
                     nome = re.sub(rf"\s*{re.escape(codigo)}\s*$", "", nome, flags=re.I).strip()
+                    if nome:
+                        prod["nome"] = nome
+                if not prod.get("nome"):
+                    nome = _nome_linha_anterior(
+                        txt[lo:mm.start()], codigo,
+                        [r for r in (code_re, rx_preco, rx_qtd) if r],
+                    )
                     if nome:
                         prod["nome"] = nome
             if rx_preco:

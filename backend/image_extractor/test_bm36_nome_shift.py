@@ -67,4 +67,42 @@ TPL_STANDARD = {
 padrao = ge._apply_template([STANDARD_TEXT], TPL_STANDARD)
 assert padrao[0]["nome"] == "NOME PRODUTO PADRAO", padrao
 
+# ── Nome vazio (18/09/2026): 137 produtos da BM36 saíam sem nome e eram
+# descartados da exportação. Layouts reais do mesmo catálogo em que o NOME
+# sintetizado não casa: (a) código sozinho numa linha (pág. 71) e (b) bloco
+# sem a linha de EAN de 13 dígitos (pág. 92). O fallback pega a última linha
+# de texto antes do código, sem regra por fornecedor.
+PAGE71_TEXT = (
+    "GARRAFA INOX C/CAPA 1.1L \n"
+    "WC409499 \n"
+    "CD: 7898681262120\n"
+    "CD: WC409499\n"
+    "CX: 30 \n"
+    "B6000B7200\n"
+    "GARRAFA INOX INFANTIL 560ML \n"
+    "WC410044 \n"
+    "CD: 7908604400444\n"
+    "CD: WC410044\n"
+    "CX: 50\n"
+    "B4500B5400\n"
+)
+p71 = {p["codigo"]: p for p in ge._apply_template([PAGE71_TEXT], TPL)}
+assert p71["WC409499"]["nome"] == "GARRAFA INOX C/CAPA 1.1L", p71["WC409499"]
+assert p71["WC410044"]["nome"] == "GARRAFA INOX INFANTIL 560ML", p71["WC410044"]
+assert p71["WC409499"]["preco"] == 60.0 and p71["WC409499"]["quantidadeCaixa"] == 30
+
+PAGE92_TEXT = (
+    "GUARDA CHUVA LONGO MASCULINO 70CM 8K \n"
+    "CD: WC4010166\n"
+    "CX: 48 \n"
+    "B3000B3600\n"
+    "GUARDA CHUVA DOBRAVEL 3DOBRA AUTOMAT \n"
+    "CD: WC4010177\n"
+    "CX: 60 \n"
+    "B3450B4140\n"
+)
+p92 = {p["codigo"]: p for p in ge._apply_template([PAGE92_TEXT], TPL)}
+assert p92["WC4010166"]["nome"] == "GUARDA CHUVA LONGO MASCULINO 70CM 8K", p92["WC4010166"]
+assert p92["WC4010177"]["nome"] == "GUARDA CHUVA DOBRAVEL 3DOBRA AUTOMAT", p92["WC4010177"]
+
 print("OK: BM36 não troca mais o nome com o produto vizinho (nome antes do código)")
