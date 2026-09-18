@@ -1781,16 +1781,94 @@ def _price_looks_like_code(codigo: str, preco: Any, fmt: str = "BR") -> bool:
     return False
 
 
+def _widen_nome_capture(pattern: str) -> str:
+    """Substitui o CONTEÚDO do único grupo de captura por [^\\n]+ (ou +?),
+    preservando as âncoras (o que está FORA do grupo). A IA sintetiza a
+    classe de caracteres do NOME olhando uma amostra pequena (ex.:
+    [A-Z0-9\\s.,-]) e nomes de produto em português têm acento/minúscula que
+    essa classe trunca no meio — a âncora (o texto fixo antes/depois do
+    grupo) já delimita onde o nome começa e termina, então a classe de
+    caracteres do meio é desnecessária e só atrapalha. Achado real: BM36
+    catálogo 17/09/2026, nome cortado em 13/13 amostras (ver PR de correção).
+    Falha segura: se não achar um grupo de captura real, devolve o original.
+    """
+    n = len(pattern)
+    i = 0
+    while i < n:
+        ch = pattern[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "[":
+            j = i + 1
+            if j < n and pattern[j] == "]":
+                j += 1
+            while j < n and pattern[j] != "]":
+                if pattern[j] == "\\":
+                    j += 1
+                j += 1
+            i = j + 1
+            continue
+        if ch == "(":
+            is_named = pattern[i:i + 4] == "(?P<"
+            is_noncap = pattern[i:i + 2] == "(?" and not is_named
+            if is_noncap:
+                i += 1
+                continue
+            prefix_end = pattern.index(">", i) + 1 if is_named else i + 1
+            depth = 1
+            k = prefix_end
+            while k < n and depth > 0:
+                c2 = pattern[k]
+                if c2 == "\\":
+                    k += 2
+                    continue
+                if c2 == "[":
+                    k += 1
+                    if k < n and pattern[k] == "]":
+                        k += 1
+                    while k < n and pattern[k] != "]":
+                        if pattern[k] == "\\":
+                            k += 1
+                        k += 1
+                    k += 1
+                    continue
+                if c2 == "(":
+                    depth += 1
+                elif c2 == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                k += 1
+            inner = pattern[prefix_end:k]
+            suffix = "+?" if inner.rstrip().endswith("?") else "+"
+            return pattern[:prefix_end] + "[^\\n]" + suffix + pattern[k:]
+        i += 1
+    return pattern
+
+
 def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str, Any]]:
     """Aplica o template em TODAS as páginas (determinístico, instantâneo)."""
     code_re = re.compile(tpl["CODE"], re.M)
     fmt = tpl.get("PRECO_FMT", "BR").upper()
 
-    def mk(key):
+    def mk(key, widen=False):
         v = tpl.get(key, "NONE")
-        return re.compile(v, re.M | re.S) if v and v != "NONE" else None
+        if not v or v == "NONE":
+            return None
+        if widen:
+            try:
+                v = _widen_nome_capture(v)
+            except Exception:
+                pass
+        return re.compile(v, re.M | re.S)
 
-    rx_nome, rx_preco, rx_qtd = mk("NOME"), mk("PRECO"), mk("QTD")
+    # NOME é tratado à parte (ver abaixo): classe de caractere ampliada +
+    # busca bidirecional, porque a IA pode sintetizar um NOME que aparece
+    # ANTES do código no bloco (ex.: BM36 "NOME ... CÓDIGO \nCD: <EAN>"), e
+    # nesse caso o nome do produto atual fica no texto ANTES do match de
+    # CODE, não depois. Ver `_widen_nome_capture` e o histórico do achado.
+    rx_nome, rx_preco, rx_qtd = mk("NOME", widen=True), mk("PRECO"), mk("QTD")
     produtos: List[Dict[str, Any]] = []
     for pi, txt in enumerate(page_texts):
         matches = list(code_re.finditer(txt))
@@ -1801,9 +1879,30 @@ def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str
                 continue
             prod: Dict[str, Any] = {"codigo": codigo, "paginaOrigem": pi + 1}
             if rx_nome:
-                fm = rx_nome.search(blk)
-                if fm and fm.groups():
-                    prod["nome"] = re.sub(r"\s+", " ", fm.group(1)).strip()
+                # Janela BIDIRECIONAL: do fim do código ANTERIOR até o início
+                # do PRÓXIMO — cobre tanto "nome depois do código" (padrão)
+                # quanto "nome antes do código" (BM36). Entre os matches de
+                # NOME dentro dessa janela, fica o mais PRÓXIMO da posição do
+                # código atual — é sempre o nome DESTE produto, nunca o do
+                # vizinho, nos dois layouts.
+                lo = matches[j - 1].end() if j > 0 else 0
+                hi = matches[j + 1].start() if j + 1 < len(matches) else len(txt)
+                wide_blk = txt[lo:hi]
+                code_pos = mm.start() - lo
+                best = None
+                for fm in rx_nome.finditer(wide_blk):
+                    if not fm.groups():
+                        continue
+                    dist = min(abs(fm.start() - code_pos), abs(fm.end() - code_pos))
+                    if best is None or dist < best[0]:
+                        best = (dist, fm)
+                if best:
+                    nome = re.sub(r"\s+", " ", best[1].group(1)).strip()
+                    # Alguns catálogos repetem o próprio código no fim da
+                    # linha do nome (achado no BM36) — tira se sobrou.
+                    nome = re.sub(rf"\s*{re.escape(codigo)}\s*$", "", nome, flags=re.I).strip()
+                    if nome:
+                        prod["nome"] = nome
             if rx_preco:
                 fm = rx_preco.search(blk)
                 if fm and fm.groups():
