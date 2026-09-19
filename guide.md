@@ -1293,6 +1293,32 @@ antes. Teste: `test_price_geometry_sem_rs.py`.
 
 ---
 
+### 14.24 VAESO — tabelas de preço extra perdidas entre a conversão e a exportação (18/09/2026)
+
+Josef: reconfigurou as 3 tabelas (V50, V250, V.R.), a tela mostrou as 3, e "nenhuma
+das 178 linhas trouxe elas" na exportação. O #145 (corrida ao salvar o mapeamento)
+era real mas não era esta causa.
+
+**Medido:** o pipeline de importação extrai certo (`verify-vaeso-real.mjs` na planilha
+real: V50/V250/V.R. = 11,25/10,75/9,99 e as colunas #1/#2/#3 do Mercos corretas). O
+valor se perdia DEPOIS: `addProdutosNormalizados` convertia `ProdutoNormalizado` em
+`Produto` sem `precosTabela` (nem `camposMercos`), e a tela de Exportações remontava
+o produto para `batchNormalizeToMercos` também sem eles — o mesmo caminho perdia os
+campos Mercos mapeados pelo cliente (peso, dimensões...).
+
+**Fix:** `Produto` ganha `precosTabela`/`camposMercos`; passam por
+`addProdutosNormalizados` e por `produtosV2` da Exportações; persistem na coluna
+`standardized_products.mercos_extras` (jsonb, migration
+`20260918_standardized_products_mercos_extras.sql`). Se a coluna ainda não existir no
+banco, o insert é refeito sem ela e as tabelas ficam na sessão (mesmo padrão do
+histórico estruturado, #16) — por isso **a migration precisa ser aplicada** para
+sobreviver a recarregar a página.
+
+**Teste:** `ProdutosContext.tabelas-extras.test.tsx` (com e sem a coluna).
+**Não verificado:** o clique real no navegador (exige login/Supabase).
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por

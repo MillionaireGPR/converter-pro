@@ -56,6 +56,10 @@ export interface Produto {
   erros: string[];
   imagemUrl?: string;
   temImagem?: boolean;
+  /** Tabelas de preço extra (#1, #2...) e campos Mercos mapeados pelo cliente — precisam
+   *  chegar até a exportação; sem isto saem vazios (VAESO V50/V250/V.R., 18/09/2026). */
+  precosTabela?: (number | null)[];
+  camposMercos?: Record<string, unknown>;
 }
 
 export interface RegraMapeamento {

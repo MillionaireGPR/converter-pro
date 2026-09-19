@@ -47,8 +47,11 @@ fornecedor por fornecedor — achar a causa GENÉRICA e validar como fornecedor 
   47 → 14; os 9 do Josef corrigidos. Detalhe: `guide.md #14.21`.
 - **GIRA (#159):** conferência de preço por geometria agora reconhece preço sem
   "R$" (fim da linha); 6 preços corrigidos, os 3 do Josef conferidos no PDF.
+- **VAESO (#160):** as tabelas extras eram descartadas entre a conversão e a
+  exportação (`Produto` sem `precosTabela`). Corrigido; **aplicar a migration
+  `20260918_standardized_products_mercos_extras.sql` no Supabase** para persistir.
 - **Ainda aberto (reportado pelo Josef):** FOLIA 338 sem foto (JRF-50/20/30/90;
-  falta o PDF de 652 produtos); VAESO tabelas extras (falta a planilha).
+  falta o PDF de 652 produtos); 
 
 ---
 
