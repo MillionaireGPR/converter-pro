@@ -45,8 +45,10 @@ fornecedor por fornecedor — achar a causa GENÉRICA e validar como fornecedor 
 - **PETRIN fotos (#157):** foto principal escolhida pela CÉLULA do produto (maior
   imagem no bloco código→próximo código), não pela coluna de X. Petrin: sem imagem
   47 → 14; os 9 do Josef corrigidos. Detalhe: `guide.md #14.21`.
-- **Ainda aberto (reportado pelo Josef, não tocado):** FOLIA 338 sem foto
-  (JRF-50/20/30/90); VAESO tabelas extras; GIRA.
+- **GIRA (#159):** conferência de preço por geometria agora reconhece preço sem
+  "R$" (fim da linha); 6 preços corrigidos, os 3 do Josef conferidos no PDF.
+- **Ainda aberto (reportado pelo Josef):** FOLIA 338 sem foto (JRF-50/20/30/90;
+  falta o PDF de 652 produtos); VAESO tabelas extras (falta a planilha).
 
 ---
 

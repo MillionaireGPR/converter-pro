@@ -1271,6 +1271,28 @@ Dagia 0 e Fortal 0 mudanças (939 fotos). Teste com a geometria real: `test_foto
 
 ---
 
+### 14.23 GIRA — conferência de preço por geometria em catálogo sem "R$" (18/09/2026)
+
+Josef: os 3 "KIT 6 PORTA-COPOS BAMBU" (GU0132/TP1679/TP2003) voltaram a sair com
+os preços em rodízio (o #148 foi só mitigação de prompt). **Medido no PDF real:**
+o texto dá GU0132 = 6,95, TP1679 = 8,45, TP2003 = 5,45; a IA devolveu 8,45 / 5,45 /
+6,95. O #154 já tinha a solução geral (mede a posição código→preço e corrige o
+inequívoco), mas `_page_price_tokens` só reconhecia "R$ 12,80" — a GIRA imprime o
+preço solto no fim da linha ("10cm  CX50  6,95"), então nenhum token existia
+("0 preços casados") e a conferência nunca rodava.
+
+**Fix genérico:** quando a página não tem NENHUM "R$", o token de preço passa a ser
+o último número com 2 casas no fim da linha (dimensão "13,5*34cm" e "1,5x2,5" não
+casam). Com "R$" na página o comportamento é idêntico ao anterior. A trava de
+assinatura (≥85% consistente, ≥30 produtos) continua protegendo layouts sem padrão.
+
+**Medido:** GIRA assinatura dx=+7 dy=+11 (95% de 175 casos) → 6 preços corrigidos: os
+3 do Josef + TP1636 (5,96→7,45), TP1875 (6,76→8,45), TP1560 (3,84→4,80), os 6
+conferidos no texto do PDF. Dagia, Dute e Folia 0 mudanças; Fortal os mesmos 6 de
+antes. Teste: `test_price_geometry_sem_rs.py`.
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
