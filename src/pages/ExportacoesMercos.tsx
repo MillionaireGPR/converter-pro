@@ -144,6 +144,8 @@ export default function ExportacoesMercos() {
       unidade: p.unidade || 'UN',
       quantidadeCaixa: p.qtdCaixa || 1,
       embalagem: p.embalagem,
+      precosTabela: p.precosTabela,
+      camposMercos: p.camposMercos,
       status: (p.status === 'incompleto' ? 'pendente' : p.status) as 'validado' | 'pendente' | 'erro',
       erros: p.erros || [],
       warnings: [],

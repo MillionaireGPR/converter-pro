@@ -72,6 +72,8 @@ export function ProdutosProvider({ children }: { children: ReactNode }) {
             isFixedPrice: p.is_fixed_price || false,
             bloqueiaDesconto: p.bloqueia_desconto || false,
             additionalInfo: p.additional_info || '',
+            precosTabela: p.mercos_extras?.precosTabela,
+            camposMercos: p.mercos_extras?.camposMercos,
           })));
         }
       } catch (e) {
@@ -91,6 +93,11 @@ export function ProdutosProvider({ children }: { children: ReactNode }) {
 
       const isUUID = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 
+      const extrasDe = (p: Produto) => {
+        const temPrecos = (p.precosTabela || []).some(v => v !== null && v !== undefined);
+        const temCampos = !!p.camposMercos && Object.keys(p.camposMercos).length > 0;
+        return temPrecos || temCampos ? { precosTabela: p.precosTabela, camposMercos: p.camposMercos } : null;
+      };
       const inserts = prods.map(p => {
         const sId = (p.fornecedorId && isUUID(p.fornecedorId)) ? p.fornecedorId : null;
         return {
@@ -117,15 +124,24 @@ export function ProdutosProvider({ children }: { children: ReactNode }) {
           is_fixed_price: p.isFixedPrice || false,
           bloqueia_desconto: p.bloqueiaDesconto || false,
           additional_info: p.additionalInfo || null,
+          mercos_extras: extrasDe(p),
         };
       });
 
-      const { data, error } = await (supabase.from('standardized_products') as any).insert(inserts).select();
+      let { data, error } = await (supabase.from('standardized_products') as any).insert(inserts).select();
+      if (error) {
+        // Coluna mercos_extras ainda não existe nesse banco: grava sem ela e mantém as
+        // tabelas de preço extra só na sessão (mesmo fallback do histórico estruturado).
+        const semExtras = inserts.map(({ mercos_extras: _m, ...resto }) => resto);
+        ({ data, error } = await (supabase.from('standardized_products') as any).insert(semExtras).select());
+      }
       if (error) {
         toast.warning("Modo Offline: Dados salvos localmente");
         setProdutosPadronizados(prev => [...prev, ...prods.map(p => ({ ...p, id: genId() }))]);
       } else if (data) {
-        setProdutosPadronizados(prev => [...prev, ...data.map((p: any) => ({
+        setProdutosPadronizados(prev => [...prev, ...data.map((p: any, i: number) => ({
+          precosTabela: p.mercos_extras?.precosTabela ?? prods[i]?.precosTabela,
+          camposMercos: p.mercos_extras?.camposMercos ?? prods[i]?.camposMercos,
           id: p.id, fornecedor: p.supplier_name, fornecedorId: p.supplier_id || undefined,
           codigoOriginal: p.original_code, codigoFinal: p.final_code || '',
           nome: p.name, descricao: p.description || '', precoBase: p.base_price || 0,
@@ -175,6 +191,7 @@ export function ProdutosProvider({ children }: { children: ReactNode }) {
         bloqueiaDesconto: anyProd.bloqueiaDesconto || anyProd.bloqueia_desconto || false,
         additionalInfo: anyProd.informacoesAdicionais || anyProd.additionalInfo || '',
         imagemUrl: p.imagemUrl || '', temImagem: p.temImagem || false,
+        precosTabela: p.precosTabela, camposMercos: p.camposMercos,
       };
     });
     await addProdutos(mappedProds);
