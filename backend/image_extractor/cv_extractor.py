@@ -1531,6 +1531,11 @@ def _match_via_grid(
                         if dy < -100:  # imagem MUITO abaixo do SKU → pular
                             continue
                         dist = abs(dy)
+                        # Foto que COMEÇA depois do código é do cartão de baixo:
+                        # só vale se nenhuma foto acima/sobreposta ao código casar.
+                        rect_i = img.get("rect")
+                        if rect_i is not None and rect_i.y0 > sku_y + 2.0:
+                            dist += 10000.0
 
                     if dist < best_dist:
                         best_dist = dist

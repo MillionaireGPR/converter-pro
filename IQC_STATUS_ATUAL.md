@@ -40,6 +40,8 @@ fornecedor por fornecedor — achar a causa GENÉRICA e validar como fornecedor 
 - **DUTE (#155) e BM36 (#156):** 31 códigos Dute + DTY0730 e os 137 sem nome da
   BM36 corrigidos e no ar. BM36 "foto trocada" medida: foto do backend bate com o
   produto (era o nome do vizinho, corrigido antes).
+  **CORREÇÃO (#158):** essa conclusão estava errada — a troca de foto era real
+  (cartão de baixo ganhava do próprio); corrigido, ver `guide.md #14.22`.
 - **PETRIN fotos (#157):** foto principal escolhida pela CÉLULA do produto (maior
   imagem no bloco código→próximo código), não pela coluna de X. Petrin: sem imagem
   47 → 14; os 9 do Josef corrigidos. Detalhe: `guide.md #14.21`.
