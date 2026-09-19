@@ -2213,6 +2213,9 @@ def _fix_fortal_unit_prices(pdf_path: str, produtos: list, supplier: str) -> lis
 
 
 _PRICE_TOKEN_RE = re.compile(r"R\$\s*([\d.\s]+?)\s*,\s*(\d{2})")
+# Catálogo sem "R$": o preço é o último número com 2 casas no fim da linha
+# ("10cm  CX50  6,95"). Só é usado quando a página não tem NENHUM "R$".
+_PRICE_BARE_RE = re.compile(r"(?<![\w.,*])(\d{1,3}(?:\.\d{3})*|\d+),(\d{2})\s*$")
 
 
 def _page_price_tokens(page) -> List[Dict[str, float]]:
@@ -2235,6 +2238,16 @@ def _page_price_tokens(page) -> List[Dict[str, float]]:
                 continue
             x0, y0 = line["bbox"][0], line["bbox"][1]
             out.append({"val": float(f"{inteiro}.{m.group(2)}"), "x": x0, "y": y0})
+    if out:
+        return out
+    for b in d.get("blocks", []):
+        for line in b.get("lines", []):
+            texto = "".join(s.get("text", "") for s in line.get("spans", []))
+            m = _PRICE_BARE_RE.search(texto)
+            if not m:
+                continue
+            inteiro = m.group(1).replace(".", "")
+            out.append({"val": float(f"{inteiro}.{m.group(2)}"), "x": line["bbox"][0], "y": line["bbox"][1]})
     return out
 
 
