@@ -1247,6 +1247,30 @@ com fundo) — Josef reconfirma numa amostra.
 
 ---
 
+### 14.22 Foto do cartão de baixo ganhava da do próprio cartão — BM36 (18/09/2026)
+
+Josef, BM36: "21 de 21 códigos com foto de outro produto" (WC409917 elefante com
+foto de abacaxi, WC409929 abacaxi com dog, WC409934 dog com elefante; WC409582 e
+WC409723 trocados entre si). **Correção de rumo:** em 18/09 concluí que era só o
+nome do vizinho; estava errado — amostrei fotos onde o layout não estressa o
+casamento. Reproduzido com os códigos exatos do Josef, na página 84 real.
+
+**Causa (medida):** no layout "foto acima do código", a foto do cartão tem o
+código 42pt abaixo dela, e a foto do cartão SEGUINTE começa 22pt depois do código.
+A distância era `abs(cy_do_codigo - cy_da_foto)`, então a foto de baixo (66pt) ganhava
+da certa (92pt) — rodízio em toda coluna. Nas páginas com legenda a 15pt (a maioria)
+a FASE 1.6 já resolvia; aqui o vão de 42pt passa do limite dela.
+
+**Fix genérico:** foto que COMEÇA depois do código (`rect.y0 > y_codigo + 2`) recebe
+penalidade e só vale se nenhuma foto acima/sobreposta ao código casar (balões que
+sobrepõem a foto, como no NIX, não são afetados).
+
+**Medido:** os 5 códigos do Josef corretos; BM36 inteira 30 de 1187 fotos mudaram;
+Dagia 0 e Fortal 0 mudanças (939 fotos). Teste com a geometria real: `test_foto_acima_proxima.py`
+(falha sem o fix, reproduzindo o rodízio exato).
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
