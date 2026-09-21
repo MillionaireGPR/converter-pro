@@ -1315,7 +1315,17 @@ histórico estruturado, #16) — por isso **a migration precisa ser aplicada** p
 sobreviver a recarregar a página.
 
 **Teste:** `ProdutosContext.tabelas-extras.test.tsx` (com e sem a coluna).
-**Não verificado:** o clique real no navegador (exige login/Supabase).
+
+**Segunda causa (21/09, teste real no navegador de produção):** mesmo com o #160 no ar,
+a exportação da VAESO EXCEL (178 linhas) ainda saía com "Preço de Tabela #1/#2/#3"
+vazios e `standardized_products.mercos_extras` nulo no banco. O vazamento estava ANTES:
+`processarArquivoV2` (`src/core/engine.ts`) remonta cada produto no formato de
+compatibilidade (`ProdutoNormalizado`) e não copiava `precosTabela`/`camposMercos` —
+e é essa lista (`result.produtos`) que a tela de Conversão grava. Fix: os dois campos
+entram no tipo (`core/types/index.ts`) e no mapeamento do engine. Teste
+`engine.tabelas-extras.test.ts` (planilha V50/V250/V.R. → `processarArquivoV2`; falha
+sem o fix). Lição: o teste do #160 cobria só o contexto; faltou cobrir a fronteira
+engine → tela. Verificar sempre de ponta a ponta na tela após corrigir.
 
 ---
 

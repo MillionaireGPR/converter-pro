@@ -225,6 +225,8 @@ export const processarArquivoV2 = async (
     isPromotional: p.isPromotional,
     isFixedPrice: p.isFixedPrice,
     informacoesAdicionais: p.informacoesAdicionais,
+    precosTabela: p.precosTabela,
+    camposMercos: p.camposMercos,
   }));
 
   return {

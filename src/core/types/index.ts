@@ -27,6 +27,8 @@ export interface ProdutoNormalizado {
   isFixedPrice?: boolean;
   bloqueiaDesconto?: boolean;
   informacoesAdicionais?: string;
+  precosTabela?: (number | null)[];
+  camposMercos?: Record<string, unknown>;
 }
 
 export interface SupplierConfig {
