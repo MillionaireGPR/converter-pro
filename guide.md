@@ -1329,6 +1329,33 @@ engine → tela. Verificar sempre de ponta a ponta na tela após corrigir.
 
 ---
 
+### 14.25 VAESO PDF — fotos trocadas no caminho embedded (21/09/2026)
+
+Teste real (PDF de 67 páginas pelo backend + tela): 162 produtos, "157 fotos
+associadas", 5 sem foto (PUM/PUMF/PUG/PUGF0007 e GK0010). Conferindo as fotos, não
+eram só 5: **29 produtos tinham a foto errada** (PUMF0002 Rosé com a foto Pistache, etc.),
+porque o contador de "associadas" só diz que houve casamento, não que está certo.
+
+**Causa (medida):** páginas com 1 foto grande + miniaturas em grade caem no caminho
+EMBEDDED. Com a foto ACIMA do código, o código de um cartão fica a ~66pt da miniatura
+de cima (a dele) e a ~67pt da de baixo. A distância era em valor absoluto, então o
+empate era decidido por ruído de X e a foto do cartão de baixo ganhava — em cascata,
+todas as cores deslocadas e o último item sem foto. É o mesmo defeito do #158 (grid),
+no outro caminho.
+
+**Fix:** `_match_via_embedded` recebe `orientacao`; com "acima", foto que começa abaixo
+do código ganha +100 só na ORDEM do casamento guloso. O teto de aceitação continua
+usando o score cru. (1ª versão somava ao score e o A/B na FORTAL pegou uma regressão:
+HL186-B, cuja posição é inferida errada — a busca de "HL186-B" acerta dentro de
+"HL186-BL" — perdeu a foto que antes recebia por sobra.)
+
+**Medido:** VAESO 162/162 casadas; das 157 antigas, 29 mudaram e todas foram conferidas
+lado a lado (agora corretas). A/B contra o código anterior em DAGIA, DUTE, FOLIA, GIRA,
+BM36 e FORTAL (939 fotos): zero diferença. **Teste:** `test_embedded_foto_acima_empate.py`.
+**Lição:** "N associadas" não prova acerto; conferir amostra visual em todo teste real.
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por

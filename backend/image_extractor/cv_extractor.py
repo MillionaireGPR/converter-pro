@@ -153,7 +153,8 @@ def extract_cells_via_cv(
         else:
             print(f" → EMBEDDED")
             pm, pu = _match_via_embedded(doc, raster, page_skus, page_imgs,
-                                         scale, output_folder, page_num)
+                                         scale, output_folder, page_num,
+                                         orientacao=orientacao)
 
         # ─── v24: GEMINI VISION PICKER memory-safe (substitui heurística) ───
         # Quando use_ai_picker=True e supplier=DAGIA, manda a página JÁ
@@ -1626,7 +1627,8 @@ def _match_via_embedded(
     page_imgs: List[Dict],
     scale: float,
     output_folder: str,
-    page_num: int
+    page_num: int,
+    orientacao: str = "acima",
 ) -> Tuple[List[Dict], List[Dict]]:
     """
     Casamento SKU↔imagem por proximidade espacial (para páginas sem grade
@@ -1680,13 +1682,21 @@ def _match_via_embedded(
         sku_x, sku_y = sc["x"], sc["y"]
         for pi, img in enumerate(page_imgs):
             s = abs(img["cy"] - sku_y) * 2 + abs(img["cx"] - sku_x)
-            pairs.append((s, si, pi))
+            # Foto ACIMA do código: a do cartão de baixo começa depois do código
+            # e empatava em distância com a do próprio cartão (VAESO pág. 25:
+            # o 7º item ficava sem foto). Só reordena o desempate: o teto de
+            # aceitação usa o score cru (não pode reprovar quem já casava).
+            rect_i = img.get("rect")
+            ordem = s
+            if orientacao == "acima" and rect_i is not None and rect_i.y0 > sku_y + 2.0:
+                ordem += 100.0
+            pairs.append((ordem, si, pi, s))
     pairs.sort(key=lambda t: t[0])
 
     chosen_by_sku: Dict[int, Dict] = {}
     used_sku_idx: set = set()
     used_img_idx: set = set()
-    for s, si, pi in pairs:
+    for _ordem, si, pi, s in pairs:
         if si in used_sku_idx or pi in used_img_idx:
             continue
         used_sku_idx.add(si)
