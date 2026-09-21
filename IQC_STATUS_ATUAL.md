@@ -47,6 +47,7 @@ fornecedor por fornecedor — achar a causa GENÉRICA e validar como fornecedor 
   47 → 14; os 9 do Josef corrigidos. Detalhe: `guide.md #14.21`.
 - **GIRA (#159):** conferência de preço por geometria agora reconhece preço sem
   "R$" (fim da linha); 6 preços corrigidos, os 3 do Josef conferidos no PDF.
+- **VAESO PDF (#162):** 29 fotos deslocadas + 5 sem foto no caminho embedded (foto acima do código, empate de distância entre a miniatura de cima e a de baixo). Corrigido e conferido visualmente; A/B sem regressão em 5 catálogos.
 - **VAESO (#160):** as tabelas extras eram descartadas entre a conversão e a
   exportação (`Produto` sem `precosTabela`) e, achado no teste real de 21/09, também
   em `processarArquivoV2` (engine.ts, formato de compatibilidade). Corrigido nos dois; **aplicar a migration
