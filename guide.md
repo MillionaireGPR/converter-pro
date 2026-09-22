@@ -1412,6 +1412,56 @@ contrato de `usadas` = set de `id(img)`, não de xref).
 
 ---
 
+### 14.28 FOLIA — 113 produtos sem foto (cards fundidos) + código "50"→"S0" (22/09/2026)
+
+Retestagem do Josef (catálogo Utilidades, 300 produtos): 113 sem foto no Mercos
+apesar de ter foto no catálogo, e 12 códigos `JRF-50.xxxx` saindo `JRF-S0.xxxx`.
+Reproduzido de ponta a ponta contra o PDF real do Drive, via POST direto nos
+endpoints do backend (`/extract_products_ai` + `/process`), sem GEMINI_API_KEY
+local — a chave só existe no ambiente do VPS.
+
+**Causa 1 (fotos, medida):** `_costurar_tiles` (criado pro LEVIVAN — junta
+fatias de uma foto cortada pelo exportador em 2 tiras) rodava pra TODOS os
+fornecedores antes do roteamento pro caminho de casamento. Os cards da FOLIA
+são quadrados de 192×192 numa grade 3 colunas com vão de ~2pt entre eles —
+dentro do `TOL_GAP=3.0` do costurador. 2-3 cards de PRODUTOS DIFERENTES viravam
+1 imagem só (retângulo largo, reprovado por `_folia_card_candidates` ou
+roubando o card de outro SKU), sumindo com a foto de vários produtos por vez.
+`totalImages` real: 187 de ~300 esperadas.
+
+**Fix (genérico, sem tocar LEVIVAN):** fatiamento real de UMA foto cortada
+produz pedaços de TAMANHO DIFERENTE (medido: LV1052 tem 213pt vs 313pt de
+largura — o conteúdo não se divide em partes iguais). Pedaços do MESMO tamanho
+(±2pt), mesmo só 2, são a assinatura de uma grade de fotos independentes que
+por coincidência de layout quase se tocam — `_costurar_tiles` agora pula a
+costura nesse caso.
+
+**Causa 2 (código, medida):** catálogo sem camada de texto — Gemini Vision lê
+os pixels direto, sem texto pra conferir. Numa extração real, 294 de 297
+códigos do mesmo segmento saíram "50" e 3 saíram "S0" (o "5" lido como "S" em
+cartões isolados) — falha de percepção do modelo, não regex determinístico
+(uma nova rodada produz um conjunto diferente de erros).
+
+**Fix:** `_fix_ocr_digit_letter_confusion` mede a MAIORIA dos segmentos
+100% numéricos do próprio lote (não é lista fixa por fornecedor) e só corrige
+um código quando existe EXATAMENTE UMA troca letra→dígito visualmente parecida
+(`S↔5, O↔0, I↔1, B↔8, Z↔2, G↔6`) que produz um segmento já confirmado por
+outros códigos do mesmo lote — ambíguo ou sem batida não mexe.
+
+**Medido:** extração real (300 produtos, mesma chamada de API do Josef) —
+fotos sem match **113 → 3**; os 3 "S0" daquela rodada real, **3/3 corrigidos**.
+Testes: `test_grade_de_cards_do_mesmo_tamanho_colados_nao_e_costurada` +
+`test_par_de_cards_do_mesmo_tamanho_colados_tambem_nao_e_costurado` (geometria
+real pág. 3), `test_ocr_digito_letra.py`. Suíte completa + LEVIVAN
+(`test_fatias_contiguas_da_mesma_foto_viram_uma_imagem_so`) e BM36 sem
+regressão.
+
+**Pendente:** os 3 casos residuais (pág. 12) não investigados — retorno já é
+99% (era 62%); catálogo de Brinquedos (45 págs, novo, no Drive) ainda não
+testado.
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
