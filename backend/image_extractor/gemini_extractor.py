@@ -1955,7 +1955,11 @@ def extract_via_template(pdf_path: str, supplier: str = "", client_rules: str = 
     start = time.time()
     try:
         doc = fitz.open(pdf_path)
-        page_texts = [doc[i].get_text() for i in range(len(doc))]
+        # Asterisco de rodapé (marca preço promocional/riscado, ex: "B8460*B10152**")
+        # não carrega valor pro modelo CODE/NOME/PRECO/QTD e só quebra o PRECO
+        # regex sintetizado, que nunca viu essa variante na amostra → produto
+        # some da exportação por "preço não encontrado" (BM36 22/09, BM362346).
+        page_texts = [doc[i].get_text().replace("*", "") for i in range(len(doc))]
         doc.close()
     except Exception as e:
         print(f"[Template] falha ao ler PDF: {e}")
