@@ -54,8 +54,8 @@ fornecedor por fornecedor — achar a causa GENÉRICA e validar como fornecedor 
   exportação (`Produto` sem `precosTabela`) e, achado no teste real de 21/09, também
   em `processarArquivoV2` (engine.ts, formato de compatibilidade). Corrigido nos dois; **aplicar a migration
   `20260918_standardized_products_mercos_extras.sql` no Supabase** para persistir.
-- **Ainda aberto (reportado pelo Josef):** FOLIA 338 sem foto (JRF-50/20/30/90;
-  falta o PDF de 652 produtos); 
+- **FOLIA Utilidades (#165, retestagem 22/09):** 113 de 300 produtos sem foto + 12 códigos "50"→"S0". Causa real: `_costurar_tiles` (feito pro LEVIVAN) fundia 2-3 cards quadrados independentes de 192×192 numa imagem só por estarem a ~2pt de distância na grade; e a Vision (catálogo sem texto) trocou "5" por "S" em alguns cartões isolados. Fix genérico: só costura fatias de TAMANHO diferente; letra→dígito só corrige quando bate com a maioria do próprio lote. Medido no catálogo real via POST direto no backend: fotos sem match 113 → 3 (297/300), os "S0" 3/3 corrigidos. No ar e verificado no container. **Catálogo de Brinquedos (novo, 45 págs) baixado do Drive, ainda não testado.**
+- **FOLIA 652 produtos:** PDF completo já está no Drive (pasta Catálogos ATUAIS/FOLIA), pendente de teste de ponta a ponta.
 
 ---
 

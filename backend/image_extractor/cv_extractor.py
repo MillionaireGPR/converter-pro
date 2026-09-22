@@ -1154,6 +1154,28 @@ def _costurar_tiles(page_imgs: List[Dict]) -> List[Dict]:
             saida.append(base)
             continue
 
+        # Grade de cards INDEPENDENTES coladas por poucos pontos de vão
+        # (FOLIA, 22/09/2026: cards quadrados de 192×192 numa linha, vão de
+        # ~2pt entre eles — dentro de TOL_GAP; acontece tanto em grupos de 3
+        # quanto, ocasionalmente, de 2). Fatiamento real de UMA foto cortada
+        # pelo exportador (LEVIVAN LV1052) produz pedaços de TAMANHOS
+        # DIFERENTES (o conteúdo não se divide em partes iguais — medido:
+        # 213pt vs 313pt de largura); pedaços do MESMO tamanho (±2pt) são a
+        # assinatura de uma grade de fotos de produtos DIFERENTES que só por
+        # coincidência de layout quase se tocam. Não costura nesse caso,
+        # mesmo com só 2 pedaços.
+        larguras = [g["rect"].width for g in grupo]
+        alturas = [g["rect"].height for g in grupo]
+        grade_uniforme = (
+            max(larguras) - min(larguras) <= 2.0
+            and max(alturas) - min(alturas) <= 2.0
+        )
+        if grade_uniforme:
+            print(f"    [Tiles] {len(grupo)} cards do mesmo tamanho encostados — "
+                  f"grade de produtos diferentes, não costura (xrefs={[g['xref'] for g in grupo]})")
+            saida.extend(grupo)
+            continue
+
         union = fitz.Rect(grupo[0]["rect"])
         for g in grupo[1:]:
             union |= g["rect"]

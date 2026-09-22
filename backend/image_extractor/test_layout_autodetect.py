@@ -71,6 +71,32 @@ def test_imagens_na_mesma_coluna_mas_faixas_diferentes_nao_sao_costuradas():
     assert len(_costurar_tiles([de_cima, de_baixo])) == 2
 
 
+def test_grade_de_cards_do_mesmo_tamanho_colados_nao_e_costurada():
+    """FOLIA (retestagem Josef 22/09): 3 cards quadrados de 192×192 numa
+    linha, com vão de ~2pt entre eles (layout de catálogo com margem mínima)
+    — dentro do TOL_GAP que o costurador usa pra detectar fatias coladas.
+    113 produtos ficavam sem foto porque 3 cards viravam 1 imagem só (union
+    com aspect fora do padrão de card, rejeitada por `_folia_card_candidates`
+    e/ou perdendo 2 SKUs por card fundido). Geometria real da pág. 3."""
+    esquerda = _img(808, 7.0, 149.0, 199.0, 341.0)
+    meio = _img(809, 201.0, 149.0, 393.0, 341.0)
+    direita = _img(810, 396.0, 149.0, 588.0, 341.0)
+
+    out = _costurar_tiles([esquerda, meio, direita])
+    assert len(out) == 3
+    assert {img["xref"] for img in out} == {808, 809, 810}
+
+
+def test_par_de_cards_do_mesmo_tamanho_colados_tambem_nao_e_costurado():
+    """Mesma assinatura (tamanho idêntico), mas só 2 cards colados — não pode
+    exigir 3+ pra disparar a proteção, senão um par de cards de produtos
+    diferentes na borda de uma grade ainda vira 1 foto só."""
+    a = _img(1, 7.0, 149.0, 199.0, 341.0)
+    b = _img(2, 201.0, 149.0, 393.0, 341.0)
+
+    assert len(_costurar_tiles([a, b])) == 2
+
+
 # ── Orientação do layout (PETRIN) ────────────────────────────────────────────
 
 def test_layout_petrin_e_explicado_por_foto_abaixo_do_codigo():

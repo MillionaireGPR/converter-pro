@@ -2130,6 +2130,59 @@ def _fix_supplier_code_prefix(produtos: list, supplier: str) -> list:
     return produtos
 
 
+# Letra que a IA de VISÃO (sem camada de texto pra conferir, ex: FOLIA) às
+# vezes lê no lugar de um dígito visualmente parecido, em catálogos escaneados
+# ou 100% imagem: cada leitura do pixel é independente, então o mesmo dígito
+# pode sair certo em 99% dos códigos e virar letra em alguns cartões isolados
+# (medido: JRF-50.xxxx → JRF-S0.xxxx em 3 de 297 códigos do mesmo segmento).
+_OCR_DIGIT_LOOKALIKES = {"O": "0", "S": "5", "I": "1", "B": "8", "Z": "2", "G": "6"}
+_CODE_SEGMENT_RE = re.compile(r"[-_]([A-Z0-9]{1,3})\.")
+
+
+def _fix_ocr_digit_letter_confusion(produtos: list) -> list:
+    """Corrige código com segmento curto (padrão "PREFIXO-NN.sufixo") que saiu
+    com uma letra visualmente parecida com dígito, comparando contra a MAIORIA
+    dos próprios códigos do mesmo lote — não é lista fixa por fornecedor, é
+    medido no lote real a cada extração.
+
+    Só corrige quando existe EXATAMENTE UM jeito de trocar uma letra por seu
+    dígito parecido que produz um segmento que já aparece, 100% numérico, em
+    outros códigos do mesmo lote — evidência do próprio catálogo, não achismo;
+    ambíguo (duplo candidato) ou sem batida não mexe."""
+    known_numeric_segments = set()
+    for p in produtos:
+        codigo = str(p.get("codigo") or "").strip().upper()
+        m = _CODE_SEGMENT_RE.search(codigo)
+        if m and m.group(1).isdigit():
+            known_numeric_segments.add(m.group(1))
+    if not known_numeric_segments:
+        return produtos
+
+    fixed = 0
+    for p in produtos:
+        codigo_original = str(p.get("codigo") or "").strip()
+        codigo = codigo_original.upper()
+        m = _CODE_SEGMENT_RE.search(codigo)
+        if not m or m.group(1).isdigit():
+            continue
+        seg = m.group(1)
+        candidatos = set()
+        for i, ch in enumerate(seg):
+            troca = _OCR_DIGIT_LOOKALIKES.get(ch)
+            if troca is None:
+                continue
+            novo_seg = seg[:i] + troca + seg[i + 1:]
+            if novo_seg in known_numeric_segments:
+                candidatos.add(novo_seg)
+        if len(candidatos) == 1:
+            novo_seg = next(iter(candidatos))
+            p["codigo"] = codigo_original[:m.start(1)] + novo_seg + codigo_original[m.end(1):]
+            fixed += 1
+    if fixed:
+        print(f"[Gemini] Corrigido {fixed} código(s) com letra parecida com dígito (confusão da visão)")
+    return produtos
+
+
 FORTAL_UNIT_PRICE_LINE = re.compile(
     r"^\[(?P<x>\d+),(?P<y>\d+)\]\s+UND\s*:\s*R\$\s*(?P<price>[\d.,]+)",
     re.IGNORECASE,
@@ -2457,6 +2510,7 @@ def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str =
     result = _extract_with_fallback_impl(pdf_path, supplier, client_rules)
     if result and result.get("produtos"):
         result["produtos"] = _fix_supplier_code_prefix(result["produtos"], supplier)
+        result["produtos"] = _fix_ocr_digit_letter_confusion(result["produtos"])
         result["produtos"] = _fix_fortal_unit_prices(
             pdf_path, result["produtos"], supplier,
         )
