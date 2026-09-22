@@ -1356,6 +1356,31 @@ BM36 e FORTAL (939 fotos): zero diferença. **Teste:** `test_embedded_foto_acima
 
 ---
 
+### 14.26 BM36 — preço com asterisco de rodapé sumia da exportação (22/09/2026)
+
+Retestagem do Josef: BM362346 (pág. 37, "BOWL C/6 PORCELANA FASELIS 16CM") não saiu
+na exportação. No catálogo o preço vem `B8460*B10152**` ("B" é o glifo quebrado de
+"R$" nesse PDF; os asteriscos marcam que o segundo valor é o promocional/riscado).
+
+**Causa (medida):** BM36 usa o caminho `template-synth` (regex sintetizado pela IA a
+partir de uma amostra de páginas, aplicado depois em todas de forma determinística).
+A amostra usada pra sintetizar o PRECO regex nunca tinha um exemplo com asterisco, e
+o regex resultante não batia com o `*` no meio do número — o produto ficava sem
+`preco` e caía como erro. Isso não disparava o fallback pro AI-first porque os gates
+de qualidade do template só olham cobertura de nome/qtd/código, não de preço isolado.
+
+**Fix (genérico, não `if BM36`):** `extract_via_template` remove todo `*` do texto de
+CADA página antes de sintetizar a amostra e antes de aplicar o template — pros campos
+CODE/NOME/PRECO/QTD desse caminho, asterisco de rodapé nunca carrega valor, só atrapalha
+o regex. Vale pra qualquer fornecedor com esse mesmo padrão de marcação, não só BM36.
+
+**Medido:** `test_preco_asterisco_promocional.py` com o texto real da pág. 37 — SEM o
+fix o produto fica sem `preco` (reproduz o bug relatado); COM o fix sai `84.60`.
+Suíte Python completa (44 testes) sem regressão. Deploy verificado dentro do container
+(`docker exec ... grep`).
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
