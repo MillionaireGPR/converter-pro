@@ -430,7 +430,7 @@ def _foto_principal_da_celula(sku, valid_skus, imgs, usadas, page_w, page_h, min
             y1 = min(y1, oc["y"] - 10.0)
     melhor = None
     for img in imgs:
-        if img["xref"] in usadas or img.get("rect") is None:
+        if id(img) in usadas or img.get("rect") is None:
             continue
         if min_area > 0 and img.get("area", 0.0) < min_area:
             continue
@@ -1383,7 +1383,13 @@ def _match_via_grid(
     # respeita esse conjunto nativamente (todo `_try_match` já checa antes
     # de considerar uma imagem).
     # ═══════════════════════════════════════════════════════
-    used_xrefs_global: set = set()
+    # Chave por IDENTIDADE do dict (id(img)), não por xref: a mesma imagem
+    # embutida pode ser desenhada em 2+ posições da página (ex: BM36 pág. 119,
+    # WC410003 e WC410004 usam o MESMO xref de foto de frasco em 2 células
+    # diferentes) — dedup por xref achava que a 2ª posição "já tinha sido
+    # usada" pela 1ª e descartava o produto ("no_img_in_col"), quando na
+    # verdade são 2 recortes legítimos da mesma foto reaproveitada.
+    used_img_ids: set = set()
     pre_matched: Dict[str, Dict] = {}
     # A FASE 1.6 so faz sentido no layout classico (foto em cima, legenda
     # embaixo). Num catalogo medido como "foto abaixo do codigo" ela casaria
@@ -1393,7 +1399,7 @@ def _match_via_grid(
         sku_x, sku_y = sku["spatialContext"]["x"], sku["spatialContext"]["y"]
         melhor, melhor_gap = None, float("inf")
         for img in page_imgs:
-            if img["xref"] in used_xrefs_global:
+            if id(img) in used_img_ids:
                 continue
             rect = img.get("rect")
             if rect is None:
@@ -1403,7 +1409,7 @@ def _match_via_grid(
                 melhor_gap, melhor = gap, img
         if melhor is not None:
             pre_matched[sku_code] = melhor
-            used_xrefs_global.add(melhor["xref"])
+            used_img_ids.add(id(melhor))
             print(f"    [ColMatch] {sku_code}: foto grande logo acima da legenda (gap={melhor_gap:.1f}pt)")
 
     # ═══════════════════════════════════════════════════════
@@ -1463,7 +1469,7 @@ def _match_via_grid(
         # Remove sufixos comuns: -A, -P, -V, -01, /A, etc.
         return _re.sub(r"[-_/][A-Z0-9]{1,3}$", "", str(code))
 
-    # used_xrefs_global já existe (populado na FASE 1.6, com o que foi
+    # used_img_ids já existe (populado na FASE 1.6, com o que foi
     # reservado pra legenda-abaixo-da-foto-grande).
     # Mapa: sku_code → imagem matched (para variantes pegarem a mesma)
     variant_cache: Dict[str, Dict] = {}
@@ -1511,7 +1517,7 @@ def _match_via_grid(
             def _try_match(candidates, min_area: float = 0.0):
                 nonlocal best_img, best_dist
                 for img in candidates:
-                    if img["xref"] in used_xrefs_global:
+                    if id(img) in used_img_ids:
                         continue
                     if min_area > 0 and img.get("area", 0.0) < min_area:
                         continue
@@ -1547,7 +1553,7 @@ def _match_via_grid(
             for min_area in ([area_min_foto, 0.0] if area_min_foto > 0 else [0.0]):
                 if orientacao == "abaixo":
                     celula = _foto_principal_da_celula(
-                        sku, valid_skus, page_imgs, used_xrefs_global,
+                        sku, valid_skus, page_imgs, used_img_ids,
                         width / scale, height / scale, min_area,
                     )
                     if celula is not None:
@@ -1582,17 +1588,17 @@ def _match_via_grid(
                 unmatched.append({"sku": sku_code, "page": page_num, "reason": "no_img_in_col"})
                 continue
 
-            used_xrefs_global.add(best_img["xref"])
+            used_img_ids.add(id(best_img))
             variant_cache[base] = best_img
 
             # Verificar variações (múltiplas imagens agrupadas no mesmo Y)
             grouped = [best_img]
             for other in imgs_sorted:
-                if other["xref"] in used_xrefs_global:
+                if id(other) in used_img_ids:
                     continue
                 if abs(other["cy"] - best_img["cy"]) < 15:
                     grouped.append(other)
-                    used_xrefs_global.add(other["xref"])
+                    used_img_ids.add(id(other))
 
             if len(grouped) >= 2:
                 # Composição: recorta a união das imagens APAGANDO o espaço

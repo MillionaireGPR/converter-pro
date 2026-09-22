@@ -1381,6 +1381,37 @@ Suíte Python completa (44 testes) sem regressão. Deploy verificado dentro do c
 
 ---
 
+### 14.27 BM36 — imagem com o MESMO xref em 2 posições perdia a 2ª (22/09/2026)
+
+Retestagem do Josef: WC410004 (pág. 119, "FRASCO CREME 100ML") saía sem foto.
+Página com 6 SKUs (frascos de creme variando só o volume) e 6 fotos em grade;
+a foto de WC410003 (80ML) e a de WC410004 (100ML) são o MESMO recurso de imagem
+embutido no PDF (xref idêntico), só desenhado 2 vezes — 2 frascos visualmente
+iguais compartilhando a mesma arte.
+
+**Causa (medida):** `_match_via_grid` marcava imagem como "já usada" guardando
+o `xref` num set (`used_xrefs_global`). Quando o mesmo xref aparece em 2 posições
+da página, a 1ª reivindicação (WC410003) marcava o xref como usado, e a 2ª
+posição (a foto de WC410004, fisicamente noutro lugar da página) era descartada
+como se já tivesse sido consumida — produto ficava com `no_img_in_col`. Esse
+dedup por xref já tinha sido corrigido na COLETA de imagens da página (nota em
+`cv_extractor.py` ~linha 1995, achado no Fortal), mas o mesmo defeito continuava
+vivo na camada de CASAMENTO (`_match_via_grid`, `_foto_principal_da_celula`).
+
+**Fix (genérico, não `if BM36`):** dedup trocado de `img["xref"]` pra `id(img)` —
+identidade do dict de CADA posição desenhada, não do recurso de imagem. Uma
+imagem reaproveitada em N posições agora libera N candidatas independentes;
+duas posições realmente já usadas continuam bloqueadas (o dict é o mesmo objeto).
+
+**Medido:** `test_xref_duplicado_2_posicoes.py` com a geometria real da pág. 119:
+6/6 casadas (era 5/6, WC410004 sem foto). A mudança é estritamente uma
+RELAXAÇÃO da regra — nunca pode fazer um match que já funcionava parar de
+funcionar, só resgata os que eram descartados à toa por xref repetido. Suíte
+Python completa sem regressão (`test_foto_celula_abaixo.py` atualizado pro novo
+contrato de `usadas` = set de `id(img)`, não de xref).
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
