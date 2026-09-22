@@ -48,6 +48,9 @@ m = cv._foto_principal_da_celula(p11_skus[1], p11_skus, p11_imgs, set(), 595.0, 
 assert m["xref"] == 476, m["xref"]
 
 # Imagem já usada é ignorada; célula vazia devolve None (cai no caminho antigo).
-assert cv._foto_principal_da_celula(p11_skus[1], p11_skus, p11_imgs, {476, 527}, 595.0, 842.0) is None
+# `usadas` guarda id(img) (identidade do dict), não xref: a mesma imagem pode
+# ser desenhada 2x na página (ver test_xref_duplicado_2_posicoes.py) e cada
+# posição precisa poder ser reivindicada por um produto diferente.
+assert cv._foto_principal_da_celula(p11_skus[1], p11_skus, p11_imgs, {id(p11_imgs[0]), id(p11_imgs[1])}, 595.0, 842.0) is None
 
 print("OK: foto principal da célula (catálogo com foto abaixo do código)")
