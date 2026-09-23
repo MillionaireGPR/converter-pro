@@ -10,14 +10,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { toast } from "sonner";
 
 export default function Fornecedores() {
-  const { fornecedores, updateFornecedor, removeFornecedor, seedSuppliers, isLoading } = useFornecedores();
+  const { fornecedores, updateFornecedor, removeFornecedor } = useFornecedores();
   const [editId, setEditId] = useState<string | null>(null);
   const [removeId, setRemoveId] = useState<string | null>(null);
   const [deleteData, setDeleteData] = useState(false);
   const [editDesconto, setEditDesconto] = useState("");
   const [editIpi, setEditIpi] = useState("");
   const [editRegras, setEditRegras] = useState("");
-  const [isSeeding, setIsSeeding] = useState(false);
 
   const openEdit = (f: typeof fornecedores[0]) => {
     setEditId(f.id);
@@ -37,18 +36,6 @@ export default function Fornecedores() {
     }
   };
 
-  const handleSeed = async () => {
-    try {
-      setIsSeeding(true);
-      await seedSuppliers();
-      toast.success("Fornecedores base importados com sucesso!");
-    } catch (err) {
-      toast.error("Erro ao importar fornecedores base.");
-    } finally {
-      setIsSeeding(false);
-    }
-  };
-
   const confirmDelete = async () => {
     if (!removeId) return;
     try {
@@ -62,19 +49,9 @@ export default function Fornecedores() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Fornecedores</h1>
-          <p className="text-sm text-muted-foreground">{fornecedores.length} fornecedores cadastrados</p>
-        </div>
-        <Button 
-          variant="outline" 
-          onClick={handleSeed} 
-          disabled={isSeeding || isLoading}
-          className="border-dashed"
-        >
-          {isSeeding ? "Importando..." : "Seed Dados Base"}
-        </Button>
+      <div>
+        <h1 className="text-2xl font-bold text-foreground">Fornecedores</h1>
+        <p className="text-sm text-muted-foreground">{fornecedores.length} fornecedores cadastrados</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

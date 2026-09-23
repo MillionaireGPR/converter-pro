@@ -44,8 +44,20 @@ export function ProdutosProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     async function load() {
       try {
-        const { data: prodData, error } = await (supabase.from('standardized_products') as any).select('*');
-        if (error) throw error;
+        // O Supabase devolve no máximo 1000 linhas por consulta: sem paginar,
+        // a base (vários milhares) chegava cortada na tela e na exportação
+        // depois de recarregar a página.
+        const PAGINA = 1000;
+        const prodData: any[] = [];
+        for (let inicio = 0; ; inicio += PAGINA) {
+          const { data, error } = await (supabase.from('standardized_products') as any)
+            .select('*')
+            .order('id', { ascending: true })
+            .range(inicio, inicio + PAGINA - 1);
+          if (error) throw error;
+          prodData.push(...(data || []));
+          if (!data || data.length < PAGINA) break;
+        }
         if (prodData) {
           setProdutosPadronizados(prodData.map((p: any) => ({
             id: p.id,
@@ -163,7 +175,9 @@ export function ProdutosProvider({ children }: { children: ReactNode }) {
         const f = fornecedores.find(x => x.nome === name);
         if (f && isUUID(f.id)) {
           await (supabase.from('suppliers') as any).update({ 
-            total_products: f.totalProdutos + count,
+            // addProdutos SUBSTITUI os produtos do fornecedor (delete + insert
+            // acima), então o total é a contagem nova, não uma soma acumulada.
+            total_products: count,
             last_processed: new Date().toISOString()
           }).eq('id', f.id);
         }

@@ -1551,6 +1551,36 @@ não é instantâneo, é o preço de ser uma métrica de ciclo inteiro.
 
 ---
 
+### 14.31 Base cortada em 1000 produtos + telas sem função (23/09/2026)
+
+**Causa (medida no banco real):** `ProdutosContext` carregava
+`standardized_products` com um único `select('*')`. O PostgREST do Supabase
+limita cada resposta a 1000 linhas; a tabela tinha 6275. Logo após converter,
+a tela funcionava (produtos recém-inseridos ficam no estado em memória), mas
+depois de recarregar a página a Base Padronizada, a Exportação Mercos e o
+Dashboard viam só os 1000 primeiros — produto de fornecedor que caísse fora
+desse corte simplesmente não aparecia na exportação, sem erro. Era o "1000"
+travado no Dashboard.
+
+**Fix:** carga paginada (`.order('id').range(i, i+999)` até vir lote < 1000).
+Ordenar por `id` é obrigatório: `range` sem ordem estável pode repetir/pular
+linhas entre páginas.
+
+**Contador por fornecedor:** `addProdutos` faz delete + insert (substitui os
+produtos do fornecedor), mas gravava `total_products = anterior + novos` —
+cada reconversão inflava o número (MOMENT 102.042 com 1.484 reais). Agora grava
+a contagem da conversão. Correção única no banco: os 32 fornecedores passaram a
+ter o total real (8 com produtos, somando exatamente 6275).
+
+**Telas removidas (não faziam nada de verdade):** botão "Seed Dados Base" e
+`seedSuppliers` (inseria os 16 nomes de adapter como fornecedores — contra a
+regra de não amarrar o fluxo a fornecedor), sino de notificação com ponto
+vermelho fixo, campo "Buscar..." do topo sem handler, página `/configuracoes`
+(CNPJ/telefone fictícios, integrações estáticas, "Salvar" só mostrava toast).
+A exportação JaWeb de PEDIDOS é real e continua em Conversão de Pedidos.
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por

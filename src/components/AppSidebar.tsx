@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, FileUp, Database, Tag, Download, ArrowRightLeft,
-  Building2, Settings as SettingsIcon, History, LogOut, Scissors, Users,
+  Building2, History, LogOut, Scissors, Users,
   Columns3,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
@@ -28,7 +28,6 @@ const menuItems = [
   { title: "Regras de Colunas", url: "/regras", icon: Columns3 },
   { title: "Histórico", url: "/historico", icon: History },
   { title: "Usuários", url: "/usuarios", icon: Users, adminOnly: true },
-  { title: "Configurações", url: "/configuracoes", icon: SettingsIcon },
 ];
 
 export function AppSidebar() {
