@@ -2,7 +2,6 @@ import React, { createContext, useContext, useState, useCallback, useRef, ReactN
 import { supabase } from "../integrations/supabase/client";
 import { toast } from "sonner";
 import { Fornecedor, RegraMapeamento } from "./types";
-import { getAllAdapters } from "../core/supplierRules/registry";
 
 interface FornecedoresContextType {
   fornecedores: Fornecedor[];
@@ -16,7 +15,6 @@ interface FornecedoresContextType {
   removeRegra: (id: string) => void;
   salvarMapeamentoColuna: (nomeFornecedor: string, campo: string, coluna: string) => Promise<void>;
   getFornecedorByName: (nome: string) => Fornecedor | undefined;
-  seedSuppliers: () => Promise<void>;
 }
 
 const FornecedoresContext = createContext<FornecedoresContextType | null>(null);
@@ -266,41 +264,12 @@ export function FornecedoresProvider({ children }: { children: ReactNode }) {
     return fornecedores.find(f => f.nome === nome);
   }, [fornecedores]);
 
-  const seedSuppliers = useCallback(async () => {
-    // Insere no Supabase os 14 fornecedores REAIS suportados pelo pipeline.
-    // Fonte da verdade: src/core/supplierRules/registry.ts (getAllAdapters).
-    // Antes inseria Tramontina/Vonder (sem adapter), o que fazia o dropdown
-    // listar opções que o engine não conseguia processar.
-    try {
-      setIsLoading(true);
-      const adapters = getAllAdapters();
-      const defaultSuppliers = adapters.map(a => ({
-        name: a.nome,
-        file_type: 'PDF', // Maioria dos adapters suporta PDF; pode ser editado depois
-        frequency: 'Mensal',
-        default_discount: 0,
-        default_ipi: 0,
-        status: 'ativo',
-      }));
-      const { data: existing } = await (supabase.from('suppliers') as any).select('name');
-      const existingNames = existing?.map((s: any) => s.name) || [];
-      const toInsert = defaultSuppliers.filter(s => !existingNames.includes(s.name));
-      if (toInsert.length > 0) await (supabase.from('suppliers') as any).insert(toInsert);
-      await refreshFornecedores();
-      toast.success(`${toInsert.length} fornecedores adicionados (de ${adapters.length} suportados).`);
-    } catch (error) {
-      toast.warning("Modo offline para fornecedores.");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [refreshFornecedores]);
-
   return (
     <FornecedoresContext.Provider value={{
       fornecedores, regrasMapeamento, isLoading, refreshFornecedores,
       updateFornecedor, removeFornecedor, addRegra, updateRegra, removeRegra,
       salvarMapeamentoColuna,
-      getFornecedorByName, seedSuppliers
+      getFornecedorByName,
     }}>
       {children}
     </FornecedoresContext.Provider>
