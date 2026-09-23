@@ -1614,7 +1614,7 @@ DAGIA (IA escolhe), pra nada mudar até o recadastro.
 nome real e pelo código novo com nome neutro ("FORNECEDOR NOVO"), comparando o
 MD5 de cada foto gerada: **BM36 1188, DAGIA 70, DUTE 650 (com a opção), FOLIA
 Brinquedos 288, FOLIA Utilidades 297, GIRA 177, PETRIN 787, VAESO 146, FORTAL
-[FORTAL_RESULT] — 0 arquivos diferentes**. "UND:" sem nome: FORTAL restaura os mesmos
+943 — 0 arquivos diferentes**. "UND:" sem nome: FORTAL restaura os mesmos
 82 preços; 8 outros catálogos 0 mudanças. Prefixo: 0 mudanças nos 9 catálogos.
 
 **Ainda por nome (conhecido, não mudou nesta rodada):**
