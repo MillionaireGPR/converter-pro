@@ -27,7 +27,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from cv_extractor import extract_cells_via_cv
-from storage import upload_file_to_supabase
+from storage import upload_file_to_supabase, cleanup_old_storage_files
 
 # ─────────────────────────────────────────────────────────────
 # PAINEL DE MONITORAMENTO (25/07/2026): captura os últimos N prints
@@ -239,6 +239,35 @@ async def admin_metrics(admin_token: str = Depends(_require_admin)):
 async def admin_jobs(limit: int = 50, admin_token: str = Depends(_require_admin)):
     """Últimos jobs processados (status, timing) lidos de temp/<jobId>/status.json."""
     return _jobs_snapshot(limit)
+
+
+_STORAGE_RETENTION_DAYS = max(1, int(os.environ.get("STORAGE_RETENTION_DAYS", "10")))
+
+
+@app.post("/admin/storage/cleanup")
+async def admin_storage_cleanup(
+    days: int = _STORAGE_RETENTION_DAYS,
+    admin_token: str = Depends(_require_admin),
+):
+    """Apaga do bucket Supabase os ZIPs de resultado com mais de `days` dias
+    (padrão STORAGE_RETENTION_DAYS). Roda sozinho 1x/dia (ver _storage_cleanup_loop),
+    isso aqui é só pra disparar manualmente / conferir o resultado na hora."""
+    return await asyncio.to_thread(cleanup_old_storage_files, max(1, days))
+
+
+def _storage_cleanup_loop():
+    """Limpeza automática do bucket, 1x por dia. O bucket grátis do Supabase
+    tem 1GB e cada job de imagens deixa um ZIP permanente nele -- sem isso o
+    armazenamento enche sozinho (estourou em 22/09/2026, 1.71GB/1GB)."""
+    while True:
+        try:
+            cleanup_old_storage_files(_STORAGE_RETENTION_DAYS)
+        except Exception as e:
+            print(f"[StorageCleanup] falha na limpeza automática: {e}")
+        time.sleep(24 * 60 * 60)
+
+
+threading.Thread(target=_storage_cleanup_loop, daemon=True).start()
 
 
 def _jobs_snapshot(limit: int = 50) -> dict:

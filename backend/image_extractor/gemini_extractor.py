@@ -2275,6 +2275,109 @@ _PRICE_TOKEN_RE = re.compile(r"R\$\s*([\d.\s]+?)\s*,\s*(\d{2})")
 _PRICE_BARE_RE = re.compile(r"(?<![\w.,*])(\d{1,3}(?:\.\d{3})*|\d+),(\d{2})\s*$")
 
 
+def _fix_labeled_promo_price(pdf_path: str, produtos: list) -> list:
+    """Card com rótulos impressos "DE R$X POR R$Y" (+ opcional "PREÇO FINAL"):
+    atribui X=preco cheio, Y=precoPromocional ao código MAIS PRÓXIMO (por Y)
+    desse cluster de rótulos — não pelo código que vem primeiro na leitura.
+
+    Achado (Petrin, retestagem 22/09): RD1602 tem exatamente esse rótulo na
+    página, mas a IA devolveu R$35,00 (preço de um produto vizinho, RD1604) e
+    deu o par DE/POR certo pro RD1098-1, que fica bem mais longe na página —
+    ela seguiu a ORDEM do texto, não a posição. É um sinal FORTE e inequívoco
+    (o rótulo "POR" só existe pra marcar o preço final de uma promoção
+    riscada), diferente do caso Fortal (2 preços sem rótulo, ambíguo demais
+    pra arriscar — ver `_verify_prices_by_geometry`).
+
+    Só corrige quando os 2 números (DE e POR) e o rótulo "POR" estão a
+    poucos pontos um do outro (mesmo bloco visual) e existe um código na
+    página claramente mais perto desse cluster que dos demais — falha
+    segura: sem isso, não mexe."""
+    if not produtos:
+        return produtos
+    by_page: Dict[int, List[Dict[str, Any]]] = {}
+    for p in produtos:
+        try:
+            pg = int(p.get("paginaOrigem") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pg > 0:
+            by_page.setdefault(pg, []).append(p)
+    if not by_page:
+        return produtos
+
+    fixed = 0
+    try:
+        doc = fitz.open(pdf_path)
+        for pg, page_products in by_page.items():
+            if not 1 <= pg <= len(doc):
+                continue
+            page = doc.load_page(pg - 1)
+            d = page.get_text("dict")
+            lines = []
+            for b in d.get("blocks", []):
+                for line in b.get("lines", []):
+                    texto = "".join(s.get("text", "") for s in line.get("spans", [])).strip()
+                    if texto:
+                        lines.append({"text": texto, "x": line["bbox"][0], "y": line["bbox"][1]})
+
+            por_labels = [ln for ln in lines if ln["text"].upper() == "POR"]
+            de_labels = [ln for ln in lines if ln["text"].upper() == "DE"]
+            precos = []
+            for ln in lines:
+                m = _PRICE_TOKEN_RE.search(ln["text"]) or _PRICE_BARE_RE.search(ln["text"])
+                if m:
+                    inteiro = re.sub(r"[.\s]", "", m.group(1))
+                    if inteiro.isdigit():
+                        precos.append({"val": float(f"{inteiro}.{m.group(2)}"), "x": ln["x"], "y": ln["y"]})
+
+            for por in por_labels:
+                de = min(
+                    (d_ for d_ in de_labels if abs(d_["y"] - por["y"]) <= 5.0),
+                    key=lambda d_: abs(d_["x"] - por["x"]), default=None,
+                )
+                if de is None:
+                    continue
+                preco_de = min(
+                    (pr for pr in precos if abs(pr["x"] - de["x"]) <= 20.0 and 0 <= pr["y"] - de["y"] <= 20.0),
+                    key=lambda pr: pr["y"], default=None,
+                )
+                preco_por = min(
+                    (pr for pr in precos if abs(pr["x"] - por["x"]) <= 20.0 and 0 <= pr["y"] - por["y"] <= 20.0),
+                    key=lambda pr: pr["y"], default=None,
+                )
+                if preco_de is None or preco_por is None or preco_por["val"] >= preco_de["val"]:
+                    continue
+
+                candidatos = []
+                for p in page_products:
+                    code = str(p.get("codigo") or "").strip()
+                    if not code:
+                        continue
+                    rects = page.search_for(code)
+                    if len(rects) != 1:
+                        continue
+                    candidatos.append((abs(rects[0].y0 - por["y"]), p))
+                if not candidatos:
+                    continue
+                candidatos.sort(key=lambda t: t[0])
+                if len(candidatos) >= 2 and candidatos[1][0] - candidatos[0][0] < 15.0:
+                    continue  # 2 códigos igualmente perto do rótulo — ambíguo, não arrisca
+                alvo = candidatos[0][1]
+                if alvo.get("preco") != preco_de["val"] or alvo.get("precoPromocional") != preco_por["val"]:
+                    alvo["preco"] = preco_de["val"]
+                    alvo["precoPromocional"] = preco_por["val"]
+                    alvo["promocional"] = True
+                    fixed += 1
+        doc.close()
+    except Exception as error:
+        print(f"[PromoDePor] falha segura, mantendo preços da IA: {error}")
+        return produtos
+
+    if fixed:
+        print(f"[PromoDePor] {fixed} produto(s) com rótulo DE/POR corrigido(s) pela posição na página")
+    return produtos
+
+
 def _page_price_tokens(page) -> List[Dict[str, float]]:
     """Todos os 'R$ 12 ,80' da página com posição. O preço vem partido em
     trechos de fonte diferentes (reais grandes + centavos pequenos), então
@@ -2514,6 +2617,7 @@ def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str =
         result["produtos"] = _fix_fortal_unit_prices(
             pdf_path, result["produtos"], supplier,
         )
+        result["produtos"] = _fix_labeled_promo_price(pdf_path, result["produtos"])
         result["produtos"], result["avisosPrecoCorrigido"] = _verify_prices_by_geometry(
             pdf_path, result["produtos"],
         )
