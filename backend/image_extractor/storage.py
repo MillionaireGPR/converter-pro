@@ -95,6 +95,103 @@ def upload_file_to_supabase(local_path: str, remote_path: str):
                 print(f"[Upload] Todas as tentativas falharam.")
                 raise e
 
+def list_bucket_files() -> list:
+    """
+    Lista todos os arquivos do bucket (percorre as pastas de 1 nível, que hoje
+    são sempre `{jobId}/imagens_extraidas.zip`), com tamanho e data de
+    modificação vindos do próprio Storage -- não depende de nenhuma tabela.
+    """
+    files = []
+    try:
+        root = supabase.storage.from_(BUCKET_NAME).list()
+    except Exception as e:
+        print(f"Erro ao listar bucket: {e}")
+        return files
+
+    for entry in root or []:
+        name = entry.get("name")
+        if not name:
+            continue
+        if entry.get("id") is None and entry.get("metadata") is None:
+            # Entrada sem id/metadata = pasta virtual (jobId) -- desce um nível.
+            try:
+                sub = supabase.storage.from_(BUCKET_NAME).list(name)
+            except Exception as e:
+                print(f"Erro ao listar pasta {name}: {e}")
+                continue
+            for f in sub or []:
+                meta = f.get("metadata") or {}
+                if not meta:
+                    continue
+                files.append({
+                    "path": f"{name}/{f.get('name')}",
+                    "size": meta.get("size", 0),
+                    "updated_at": f.get("updated_at") or f.get("created_at"),
+                })
+        else:
+            meta = entry.get("metadata") or {}
+            files.append({
+                "path": name,
+                "size": meta.get("size", 0),
+                "updated_at": entry.get("updated_at") or entry.get("created_at"),
+            })
+    return files
+
+
+def cleanup_old_storage_files(retention_days: int = 10) -> dict:
+    """
+    Apaga do bucket `source-files` os ZIPs de resultado mais antigos que
+    `retention_days`. Sem essa limpeza, cada job de imagens deixa um ZIP
+    permanente no Storage -- foi o que encheu o 1GB grátis do Supabase
+    (22/09/2026, alerta "Organization exceeded its quota"). O usuário já
+    baixa o ZIP na hora da conversão; não precisa ficar guardado.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    files = list_bucket_files()
+
+    to_delete = []
+    freed_bytes = 0
+    skipped_no_date = 0
+    for f in files:
+        ts = f.get("updated_at")
+        if not ts:
+            skipped_no_date += 1
+            continue
+        try:
+            file_dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        except ValueError:
+            skipped_no_date += 1
+            continue
+        if file_dt < cutoff:
+            to_delete.append(f["path"])
+            freed_bytes += f.get("size", 0) or 0
+
+    deleted = 0
+    errors = []
+    for i in range(0, len(to_delete), 100):
+        batch = to_delete[i:i + 100]
+        try:
+            supabase.storage.from_(BUCKET_NAME).remove(batch)
+            deleted += len(batch)
+        except Exception as e:
+            errors.append(str(e))
+
+    result = {
+        "totalFiles": len(files),
+        "eligibleFiles": len(to_delete),
+        "deletedFiles": deleted,
+        "freedBytes": freed_bytes,
+        "freedMb": round(freed_bytes / (1024 * 1024), 1),
+        "retentionDays": retention_days,
+        "skippedNoDate": skipped_no_date,
+        "errors": errors,
+    }
+    print(f"[StorageCleanup] {result}")
+    return result
+
+
 def insert_image_results(job_id: str, matches: list, zip_url: str):
     """
     Insere os registros das imagens extraídas e atualiza o Job com o link do ZIP.

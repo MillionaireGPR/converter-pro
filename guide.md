@@ -1462,6 +1462,75 @@ testado.
 
 ---
 
+### 14.29 PETRIN — preço DE/POR ia pro código errado por ordem de leitura, não posição (22/09/2026)
+
+Retestagem do Josef: RD1602 (pág. 163) tem o card impresso "DE R$16,00 POR
+R$8,00 PREÇO FINAL", mas saía na exportação com `preco: 35,00` (o preço do
+RD1604, vizinho). E o par DE/POR certo aparecia associado ao RD1098-1 — um
+código de OUTRO produto, bem mais acima e longe na página.
+
+**Causa (medida):** a IA (Gemini, texto corrido) recebe a página como uma
+sequência linear de texto, não como coordenadas. Quando um rótulo promocional
+aparece no meio do bloco, o modelo associa ao código que "vier a calhar" na
+ordem em que o texto foi lido — não necessariamente o mais próximo
+visualmente. Geometria real da pág. 163: RD1602 fica a ~30pt do rótulo "POR";
+RD1098-1 fica a ~280pt.
+
+**Fix (genérico, sem `if PETRIN`):** `_fix_labeled_promo_price`
+(`gemini_extractor.py`) abre o PDF, localiza as linhas de texto "DE" e "POR"
+por página (`page.get_text("dict")`), acha os dois valores de preço mais
+próximos de cada rótulo (dentro de uma janela de 20pt em X e 20pt em Y abaixo
+do rótulo), e localiza no MESMO texto da página qual código de produto tem o
+retângulo (`page.search_for`) geometricamente mais próximo do rótulo "POR".
+Só substitui `preco`/`precoPromocional` quando o candidato mais próximo tem
+uma vantagem clara sobre o 2º mais próximo (gap ≥15pt) — catálogo sem padrão
+claro não é tocado, e cards sem rótulo DE/POR nem são considerados.
+
+**Medido:** `test_promo_de_por.py` (PDF sintético reproduzindo a geometria
+real da pág. 163 — `insert_text` posiciona pela baseline enquanto
+`get_text("dict")` mede pelo topo do glifo, então as coordenadas de teste
+somam o offset medido de ~11pt pra bater exatamente com o real). Rodado
+contra o catálogo Petrin real (800 produtos): **1 mudança** (RD1602:
+35,00 → 16,00/8,00, `promocional=True`), RD1604 sem rótulo fica intocado.
+Rodado contra o DUTE completo: **0 mudanças** (sem falso positivo em
+catálogo sem esse padrão de rótulo). Suíte Python 52/52 sem regressão.
+
+---
+
+### 14.30 Supabase Storage no limite — bucket de 1GB sem limpeza de ZIPs antigos (22/09/2026)
+
+Alerta do painel Supabase (22/09): "Organization exceeded its quota", bucket
+`source-files` em **1,71GB de 1GB grátis**, com corte de projeto previsto pra
+21/10/2026 se não resolvido. Achado pelo usuário, não pelo Josef.
+
+**Causa (medida):** todo job de `/process` (casamento de imagens) sobe um ZIP
+em `{jobId}/imagens_extraidas.zip` via `upload_file_to_supabase` — e nunca
+existia nenhuma limpeza. Meses de catálogos testados (BM36, DUTE, PETRIN,
+FOLIA, VAESO...) foram acumulando ZIP sobre ZIP no bucket. O usuário baixa o
+ZIP na hora da conversão; não há motivo pra manter permanentemente.
+
+**Fix (genérico, não depende de tabela nenhuma):** `cleanup_old_storage_files`
+(`storage.py`) lista o bucket inteiro pela própria API do Storage (`.list()`
+por pasta, que já devolve tamanho e data de modificação de cada arquivo — sem
+precisar cruzar com `image_extraction_jobs` ou qualquer outra tabela) e apaga
+(`.remove()`, em lotes de 100) tudo com `updated_at` mais antigo que
+`STORAGE_RETENTION_DAYS` (env var, padrão 10 dias). Roda:
+1. Automaticamente 1x/dia, numa thread de fundo iniciada no boot do processo
+   (`_storage_cleanup_loop` em `main.py`) — já dispara uma vez assim que o
+   servidor sobe, sem esperar 24h pra primeira limpeza.
+2. Sob demanda via `POST /admin/storage/cleanup?days=N` (protegido pelo mesmo
+   `X-Admin-Token` dos outros endpoints `/admin/*`), pra conferir o resultado
+   na hora ou forçar uma retenção diferente.
+
+**Medido:** `test_storage_cleanup.py` (3 testes com dublê da API do Storage,
+sem tocar o bucket real): só apaga o que passou da retenção, não mexe em nada
+quando nada venceu, ignora com segurança arquivo sem data de modificação.
+**Rodado em produção no próprio deploy** (primeira execução do loop, ao
+subir o container): bucket tinha 106 arquivos, **90 apagados, 695,8MB
+liberados** — volta pra bem dentro do 1GB grátis.
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
