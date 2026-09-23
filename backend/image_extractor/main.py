@@ -843,7 +843,7 @@ class _ResourceMonitor:
         }
 
 
-def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, output_folder: str, page_heights: dict, total_pages: int, supplier: str = "", use_ai_picker: bool = False):
+def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, output_folder: str, page_heights: dict, total_pages: int, supplier: str = "", use_ai_picker: bool = False, foto_composta: bool = False):
     _monitor = _ResourceMonitor()
     with _monitor:
       try:
@@ -859,10 +859,11 @@ def _run_extraction_task(jobId: str, pdf_local_path: str, skus_list: list, outpu
             # 5. Extração via OpenCV: nova estratégia Column-First
             # v21: se use_ai_picker=True, Gemini Vision decide qual imagem é a do produto
             # (resolve casos heurística não cobre — DAGIA tag de preço, kit xícara, etc).
-            print(f"[Main] Extração de imagens (supplier={supplier}, ai_picker={use_ai_picker})")
+            print(f"[Main] Extração de imagens (supplier={supplier}, ai_picker={use_ai_picker}, foto_composta={foto_composta})")
             matches, unmatched = extract_cells_via_cv(
                 pdf_local_path, skus_list, output_folder,
                 supplier_id=supplier, use_ai_picker=use_ai_picker,
+                foto_composta=foto_composta,
             )
             total_images = len(matches)
 
@@ -925,7 +926,8 @@ async def process_pdf(
     supplier: str = Form(...),
     totalProducts: str = Form("0"),
     skus: str = Form("[]"),
-    useAiPicker: str = Form("false"),  # v21: Gemini Vision decide imagem (DAGIA)
+    useAiPicker: str = Form("false"),  # opção do fornecedor: IA escolhe a foto (1 chamada/pág)
+    fotoComposta: str = Form("false"),  # opção do fornecedor: foto montada por várias imagens
 ):
     print(f"\n--- Iniciando Job: {jobId} ---")
     print(f"Arquivo: {file.filename}, Fornecedor: {supplier}")
@@ -957,9 +959,6 @@ async def process_pdf(
         # KILL-SWITCH: AI_PICKER_DISABLED=1 desliga sem rollback de código.
         ai_picker_flag = str(useAiPicker).strip().lower() in ("true", "1", "yes", "on")
         picker_killed = os.environ.get("AI_PICKER_DISABLED", "").lower() in ("1", "true", "on")
-        if not picker_killed and not ai_picker_flag and supplier and supplier.lower() in ("dagia", "dagía"):
-            ai_picker_flag = True
-            print(f"[Main] AI picker v24 auto-ativado para supplier={supplier}")
         if picker_killed:
             ai_picker_flag = False
             print("[Main] AI picker DESLIGADO via kill-switch AI_PICKER_DISABLED")
@@ -975,6 +974,7 @@ async def process_pdf(
             total_pages,
             supplier,
             ai_picker_flag,
+            str(fotoComposta).strip().lower() in ("true", "1", "yes", "on"),
         )
 
         return {"status": "processing", "jobId": jobId}

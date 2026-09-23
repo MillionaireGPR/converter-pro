@@ -15,6 +15,7 @@ import json
 import base64
 import re
 import time
+from collections import Counter
 from typing import List, Dict, Any, Optional, Tuple
 
 import fitz  # PyMuPDF: renderiza páginas PDF como JPEG para enviar ao Gemini Vision
@@ -1347,8 +1348,9 @@ def _extract_vision_chunk(
     return [], False
 
 
-def _folia_expected_card_count(page: fitz.Page) -> int:
-    """Conta os cards visuais da Folia sem depender do texto (que não existe)."""
+def _expected_card_count(page: fitz.Page) -> int:
+    """Conta os cards visuais grandes da página sem depender do texto (que não
+    existe nos catálogos que chegam na leitura por imagem)."""
     count = 0
     for info in page.get_image_info(xrefs=True):
         bbox = info.get("bbox")
@@ -1398,11 +1400,13 @@ def extract_with_vision_chunked(pdf_path: str, supplier: str = "", client_rules:
             index + 1: (float(page.rect.width), float(page.rect.height))
             for index, page in enumerate(doc)
         }
-        is_folia = "FOLIA" in (supplier or "").strip().upper()
+        # Cards grandes por página (achado na Folia): se a IA devolver MENOS
+        # produtos que cards, relê a página uma vez. Só roda neste caminho,
+        # que já é exclusivo de catálogo sem texto; vale pra qualquer nome.
         expected_cards = {
-            index + 1: _folia_expected_card_count(page)
+            index + 1: _expected_card_count(page)
             for index, page in enumerate(doc)
-        } if is_folia else {}
+        }
         doc.close()
     except Exception as e:
         return {"success": False, "produtos": [], "error": f"Falha ao ler PDF: {e}", "model": MODEL_FLASH}
@@ -1434,7 +1438,7 @@ def extract_with_vision_chunked(pdf_path: str, supplier: str = "", client_rules:
         for fut in as_completed(futuros):
             produtos, ok = fut.result()
             paginas, lote = futuros[fut]
-            if is_folia and len(paginas) == 1:
+            if len(paginas) == 1:
                 page_number = paginas[0]
                 expected = expected_cards.get(page_number, 0)
                 unique_count = len({
@@ -1452,7 +1456,7 @@ def extract_with_vision_chunked(pdf_path: str, supplier: str = "", client_rules:
                     produtos = _merge_vision_products(produtos, retried, expected)
                     ok = ok or retry_ok
                     print(
-                        f"[Gemini Vision] Folia pág {page_number}: "
+                        f"[Gemini Vision] pág {page_number}: "
                         f"{unique_count}/{expected} únicos → "
                         f"{len(produtos)} após releitura"
                     )
@@ -2098,35 +2102,44 @@ def extract_via_template(pdf_path: str, supplier: str = "", client_rules: str = 
     }
 
 
-# Fornecedores cujo código tem prefixo fixo obrigatório que a IA às vezes
-# omite (normaliza pro número puro apesar do hint pedir pra manter). Reunião
-# 22/07/2026 (Josef): Goal Kids perdendo o "GK" na extração de catálogo PDF.
-# Fix determinístico pós-extração — mais confiável que só reforçar o prompt,
-# já que cobre qualquer caminho de extração (template/text-chunked/vision/pro).
-SUPPLIER_CODE_PREFIX = {
-    "GOAL KIDS": "GK",
-}
+_PREFIXED_CODE_RE = re.compile(r"^([A-Z]{1,4})(-?)(\d{3,})$")
+_NUMERIC_CODE_RE = re.compile(r"^\d{3,}$")
 
 
-def _fix_supplier_code_prefix(produtos: list, supplier: str) -> list:
-    """Reprefixa códigos que vieram puramente numéricos quando o fornecedor
-    tem prefixo fixo conhecido (ex: Goal Kids sempre usa GK####)."""
-    supplier_upper = (supplier or "").strip().upper()
-    prefix = next(
-        (pfx for name, pfx in SUPPLIER_CODE_PREFIX.items()
-         if name in supplier_upper or supplier_upper in name),
-        None,
-    )
-    if not prefix:
-        return produtos
-    fixed = 0
+def _fix_missing_code_prefix(produtos: list) -> list:
+    """Completa o prefixo de letras que a IA às vezes tira do código
+    (Goal Kids: "GK1234" saía "1234" — reunião 22/07/2026).
+
+    O prefixo é MEDIDO no próprio lote, não vem de uma tabela por fornecedor:
+    só age quando >=80% dos códigos (e pelo menos 10) usam o MESMO prefixo e
+    o código só-número tem a mesma quantidade de dígitos que eles. Catálogo
+    que mistura códigos numéricos e com prefixo de verdade não passa no corte.
+    """
+    prefixed: Dict[str, List[Tuple[str, int]]] = {}
+    numeric = []
     for p in produtos:
-        codigo = str(p.get("codigo") or "").strip()
-        if codigo and not codigo.upper().startswith(prefix) and codigo.replace("-", "").isdigit():
-            p["codigo"] = f"{prefix}{codigo}"
+        codigo = str(p.get("codigo") or "").strip().upper()
+        m = _PREFIXED_CODE_RE.match(codigo)
+        if m:
+            prefixed.setdefault(m.group(1), []).append((m.group(2), len(m.group(3))))
+        elif _NUMERIC_CODE_RE.match(codigo):
+            numeric.append(p)
+    if not numeric or not prefixed:
+        return produtos
+    total = sum(1 for p in produtos if str(p.get("codigo") or "").strip())
+    prefix, amostras = max(prefixed.items(), key=lambda item: len(item[1]))
+    if len(amostras) < 10 or len(amostras) < 0.8 * total:
+        return produtos
+    separador = Counter(sep for sep, _ in amostras).most_common(1)[0][0]
+    digitos = Counter(n for _, n in amostras).most_common(1)[0][0]
+    fixed = 0
+    for p in numeric:
+        codigo = str(p.get("codigo")).strip()
+        if len(codigo) == digitos:
+            p["codigo"] = f"{prefix}{separador}{codigo}"
             fixed += 1
     if fixed:
-        print(f"[Gemini] Corrigido prefixo '{prefix}' ausente em {fixed} código(s) ({supplier})")
+        print(f"[Gemini] Prefixo '{prefix}' da maioria do lote completado em {fixed} código(s)")
     return produtos
 
 
@@ -2183,21 +2196,22 @@ def _fix_ocr_digit_letter_confusion(produtos: list) -> list:
     return produtos
 
 
-FORTAL_UNIT_PRICE_LINE = re.compile(
+UNIT_PRICE_LABEL_LINE = re.compile(
     r"^\[(?P<x>\d+),(?P<y>\d+)\]\s+UND\s*:\s*R\$\s*(?P<price>[\d.,]+)",
     re.IGNORECASE,
 )
 
 
-def _fix_fortal_unit_prices(pdf_path: str, produtos: list, supplier: str) -> list:
+def _fix_labeled_unit_prices(pdf_path: str, produtos: list) -> list:
     """Troca deterministicamente o total da embalagem pelo preço `UND:`.
 
-    No catálogo Fortal há dois valores no mesmo card, por exemplo
-    `UND: R$ 7,20` e logo abaixo `R$ 72,00`. O modelo acertava o card, mas
-    devolvia o segundo valor. A posição do código e da linha `UND:` permite
-    corrigir isso sem adivinhar e sem alterar outros fornecedores.
+    Achado na Fortal: dois valores no mesmo card, `UND: R$ 7,20` e logo
+    abaixo `R$ 72,00`; o modelo acertava o card, mas devolvia o segundo.
+    Vale pra qualquer catálogo: o rótulo impresso "UND:" é o preço unitário
+    (o que o Mercos usa), e a correção só age onde esse rótulo existe perto do
+    código — catálogo sem o rótulo não é tocado.
     """
-    if "FORTAL" not in (supplier or "").strip().upper() or not produtos:
+    if not produtos:
         return produtos
 
     by_page: Dict[int, List[Dict[str, Any]]] = {}
@@ -2219,7 +2233,7 @@ def _fix_fortal_unit_prices(pdf_path: str, produtos: list, supplier: str) -> lis
             page = doc.load_page(page_number - 1)
             candidates = []
             for line in page_text_for_ai(page).splitlines():
-                match = FORTAL_UNIT_PRICE_LINE.match(line)
+                match = UNIT_PRICE_LABEL_LINE.match(line)
                 if not match:
                     continue
                 price = _norm_price(match.group("price"), "BR")
@@ -2259,11 +2273,11 @@ def _fix_fortal_unit_prices(pdf_path: str, produtos: list, supplier: str) -> lis
                 confirmed += 1
         doc.close()
     except Exception as error:
-        print(f"[FortalPrecoUND] falha segura, mantendo preços da IA: {error}")
+        print(f"[PrecoUND] falha segura, mantendo preços da IA: {error}")
         return produtos
 
     print(
-        f"[FortalPrecoUND] {confirmed} preços unitários confirmados; "
+        f"[PrecoUND] {confirmed} preços unitários confirmados; "
         f"{fixed} corrigidos"
     )
     return produtos
@@ -2609,14 +2623,13 @@ def _marcar_nomes_duplicados(produtos: list) -> list:
 def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str = "") -> Dict[str, Any]:
     """Wrapper único: chama a extração real e aplica correções pós-processamento
     (ex: prefixo de código) independente de qual caminho interno foi usado
-    (template/text-chunked/vision/escalada Pro) — ver _fix_supplier_code_prefix."""
+    (template/text-chunked/vision/escalada Pro). Nenhuma delas depende do
+    nome do fornecedor: cada uma mede o sinal no próprio lote/PDF."""
     result = _extract_with_fallback_impl(pdf_path, supplier, client_rules)
     if result and result.get("produtos"):
-        result["produtos"] = _fix_supplier_code_prefix(result["produtos"], supplier)
+        result["produtos"] = _fix_missing_code_prefix(result["produtos"])
         result["produtos"] = _fix_ocr_digit_letter_confusion(result["produtos"])
-        result["produtos"] = _fix_fortal_unit_prices(
-            pdf_path, result["produtos"], supplier,
-        )
+        result["produtos"] = _fix_labeled_unit_prices(pdf_path, result["produtos"])
         result["produtos"] = _fix_labeled_promo_price(pdf_path, result["produtos"])
         result["produtos"], result["avisosPrecoCorrigido"] = _verify_prices_by_geometry(
             pdf_path, result["produtos"],

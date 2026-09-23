@@ -1,4 +1,5 @@
-"""Regressão: Fortal deve usar `UND: R$ 7,20`, não o total `R$ 72,00`."""
+"""Regressão (achado na Fortal, vale pra qualquer fornecedor): preço com
+rótulo `UND: R$ 7,20` ganha do total da caixa `R$ 72,00`, sem depender do nome."""
 import fitz
 
 import gemini_extractor as ge
@@ -44,11 +45,12 @@ try:
         {"codigo": "BDZ-2523", "preco": 72.0, "paginaOrigem": 10},
         {"codigo": "BDZ-2524", "preco": 83.0, "paginaOrigem": 10},
     ]
-    fixed = ge._fix_fortal_unit_prices("fortal.pdf", produtos, "FORTAL")
+    fixed = ge._fix_labeled_unit_prices("catalogo.pdf", produtos)
     assert [produto["preco"] for produto in fixed] == [7.2, 8.3]
 
+    # Código que não está perto de nenhum rótulo "UND:" fica como veio.
     untouched = [{"codigo": "X", "preco": 72.0, "paginaOrigem": 10}]
-    ge._fix_fortal_unit_prices("outro.pdf", untouched, "OUTRO")
+    ge._fix_labeled_unit_prices("outro.pdf", untouched)
     assert untouched[0]["preco"] == 72.0
 finally:
     ge.fitz.open = original_open

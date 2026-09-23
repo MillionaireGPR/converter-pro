@@ -19,6 +19,7 @@ import { useSyncExternalStore } from 'react';
 import type { ImportMetadata } from '../types/productPipeline';
 import type { ResultadoExtracaoImagens } from '../images/imageTypes';
 import type { ColumnMappings } from '../supplierRules/applyColumnMappings';
+import type { OpcoesCatalogo } from '../../context/types';
 
 export interface CatalogJob {
   id: string;
@@ -30,6 +31,7 @@ export interface CatalogJob {
   novoFornecedorNome: string;
   regrasNovoFornecedor: string;
   mappingsNovoFornecedor: ColumnMappings;
+  opcoesNovoFornecedor?: OpcoesCatalogo;
   tipoArquivo: string; // só decorativo (ícone do painel)
   fornecedorNome: string;
   status: 'processing' | 'done' | 'error';

@@ -15,6 +15,15 @@ export interface Fornecedor {
   columnMappings?: Record<string, string>;
   /** Regras em texto livre pra orientar a IA na leitura de catálogos PDF. */
   regrasExtracao?: string;
+  /** Como tratar as fotos do catálogo PDF — escolha do cadastro, não do nome. */
+  opcoesCatalogo?: OpcoesCatalogo;
+}
+
+export interface OpcoesCatalogo {
+  /** Cada produto aparece montado por várias imagens (ex.: caixa + brinquedo). */
+  fotoComposta?: boolean;
+  /** A IA escolhe a foto de cada produto (mais lento; 1 chamada de IA por página). */
+  iaEscolheFoto?: boolean;
 }
 
 export interface ArquivoProcessado {

@@ -56,6 +56,7 @@ export function FornecedoresProvider({ children }: { children: ReactNode }) {
           ultimoProcessamento: f.last_processed || '', totalProdutos: f.total_products || 0, status: f.status as any,
           columnMappings: f.column_mappings || undefined,
           regrasExtracao: f.extraction_rules || undefined,
+          opcoesCatalogo: f.opcoes_catalogo || undefined,
         })));
 
         // Reconstrói as regras de mapeamento a partir do banco. Antes elas
@@ -104,6 +105,7 @@ export function FornecedoresProvider({ children }: { children: ReactNode }) {
         // só quando veio no update, pra não apagar o que já existe quando a
         // tela salvar apenas desconto/IPI.
         ...(updates.regrasExtracao !== undefined ? { extraction_rules: updates.regrasExtracao } : {}),
+        ...(updates.opcoesCatalogo !== undefined ? { opcoes_catalogo: updates.opcoesCatalogo } : {}),
       }).eq('id', id);
       if (error) throw error;
       setFornecedores(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
