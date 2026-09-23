@@ -1514,7 +1514,7 @@ ZIP na hora da conversão; não há motivo pra manter permanentemente.
 por pasta, que já devolve tamanho e data de modificação de cada arquivo — sem
 precisar cruzar com `image_extraction_jobs` ou qualquer outra tabela) e apaga
 (`.remove()`, em lotes de 100) tudo com `updated_at` mais antigo que
-`STORAGE_RETENTION_DAYS` (env var, padrão 10 dias). Roda:
+`STORAGE_RETENTION_DAYS` (env var, padrão **3 dias**). Roda:
 1. Automaticamente 1x/dia, numa thread de fundo iniciada no boot do processo
    (`_storage_cleanup_loop` em `main.py`) — já dispara uma vez assim que o
    servidor sobe, sem esperar 24h pra primeira limpeza.
@@ -1526,8 +1526,28 @@ precisar cruzar com `image_extraction_jobs` ou qualquer outra tabela) e apaga
 sem tocar o bucket real): só apaga o que passou da retenção, não mexe em nada
 quando nada venceu, ignora com segurança arquivo sem data de modificação.
 **Rodado em produção no próprio deploy** (primeira execução do loop, ao
-subir o container): bucket tinha 106 arquivos, **90 apagados, 695,8MB
-liberados** — volta pra bem dentro do 1GB grátis.
+subir o container, com o padrão inicial de 10 dias): bucket tinha 106
+arquivos, **90 apagados, 695,8MB liberados**.
+
+**Retestagem do usuário (mesmo dia) — painel do Supabase continuava
+mostrando "1,69GB / 169%".** Não era o fix falhando: é a diferença entre dado
+AO VIVO e a métrica de cota do Supabase. "Storage Size" no painel é billed
+em **GB-Hrs prorateado por hora ao longo do ciclo de faturamento inteiro**
+(20/09-20/10), não o tamanho atual do bucket — o gráfico "Average Storage
+Size per day" mostrou os dias 20 e 21/09 (antes do fix) em ~1,6GB cada, e
+como o ciclo tinha só 2-3 dias corridos, a média ainda estava dominada por
+esses 2 dias ruins. Confirmado com `storage.list_bucket_files()` direto no
+container: bucket AO VIVO estava em **295,6MB**, não 1,69GB — a média do
+painel só cai conforme mais horas se acumulam com armazenamento baixo, não
+existe como "zerar" retroativamente as horas já contadas.
+
+O usuário também pediu explicitamente retenção mais curta ("dois, três
+dias", já que o fluxo é sempre baixar na hora, sem precisar pesquisar
+histórico depois). Padrão trocado de 10 → **3 dias**; segunda rodada de
+limpeza (agora com 3 dias) apagou mais 29 arquivos, **217,3MB**, deixando o
+bucket ao vivo em **78,4MB / 1GB (7,8%)**. A média do painel do Supabase vai
+continuar caindo dia após dia enquanto o armazenamento ao vivo ficar baixo —
+não é instantâneo, é o preço de ser uma métrica de ciclo inteiro.
 
 ---
 

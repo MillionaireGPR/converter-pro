@@ -138,7 +138,7 @@ def list_bucket_files() -> list:
     return files
 
 
-def cleanup_old_storage_files(retention_days: int = 10) -> dict:
+def cleanup_old_storage_files(retention_days: int = 3) -> dict:
     """
     Apaga do bucket `source-files` os ZIPs de resultado mais antigos que
     `retention_days`. Sem essa limpeza, cada job de imagens deixa um ZIP

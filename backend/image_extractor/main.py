@@ -241,7 +241,7 @@ async def admin_jobs(limit: int = 50, admin_token: str = Depends(_require_admin)
     return _jobs_snapshot(limit)
 
 
-_STORAGE_RETENTION_DAYS = max(1, int(os.environ.get("STORAGE_RETENTION_DAYS", "10")))
+_STORAGE_RETENTION_DAYS = max(1, int(os.environ.get("STORAGE_RETENTION_DAYS", "3")))
 
 
 @app.post("/admin/storage/cleanup")
