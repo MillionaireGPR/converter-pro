@@ -37,6 +37,9 @@ def extract_cells_via_cv(
     use_ai_picker: bool = False,        # v21: se True, Gemini decide qual
                                         # imagem entre candidatos representa
                                         # cada SKU (substitui heurística).
+    foto_composta: bool = False,        # opção do cadastro do fornecedor: a
+                                        # foto do produto é montada por várias
+                                        # imagens (caixa + brinquedo...).
 ) -> Tuple[List[Dict], List[Dict]]:
     """
     Extrai a imagem do produto para cada SKU.
@@ -78,11 +81,10 @@ def extract_cells_via_cv(
             deduped.append(sku)
     skus_list = deduped
 
-    # A Folia grava cada card como uma imagem quadrada, mas código/nome/preço
-    # viram curvas da arte e não existem na camada de texto. Quando a extração
-    # por visão ainda não trouxe coordenada, usamos a ordem visual devolvida
-    # pela IA para colocar cada SKU no centro do seu card real.
-    if _is_folia_supplier(supplier_id):
+    # Catálogo em que cada produto é UM card-imagem e o código não existe como
+    # texto (achado na Folia). Medido no próprio arquivo, não pelo nome.
+    grade_de_cards = _detectar_grade_de_cards(doc, skus_list, logo_xrefs, logo_digests)
+    if grade_de_cards:
         _assign_folia_card_positions(
             doc, skus_list, logo_xrefs, logo_digests,
         )
@@ -139,8 +141,8 @@ def extract_cells_via_cv(
         pct = int((page_idx + 1) / total_pages * 100)
         print(f"[CV] [{page_idx+1}/{total_pages} {pct}%] Pág {page_num}: {n_interior_v} V-int | {len(page_imgs)} imgs", end="")
 
-        if _is_folia_supplier(supplier_id):
-            print(" → FOLIA CARDS")
+        if grade_de_cards:
+            print(" → GRADE DE CARDS")
             pm, pu = _match_folia_cards(
                 doc, page, raster, page_skus, page_imgs,
                 scale, output_folder, page_num,
@@ -149,7 +151,7 @@ def extract_cells_via_cv(
             print(f" → GRID ({len(h_coords)}H×{len(v_coords)}V)")
             pm, pu = _match_via_grid(doc, page, raster, h_coords, v_coords,
                                      page_skus, page_imgs, scale, output_folder, page_num,
-                                     supplier_id=supplier_id, orientacao=orientacao)
+                                     orientacao=orientacao, foto_composta=foto_composta)
         else:
             print(f" → EMBEDDED")
             pm, pu = _match_via_embedded(doc, raster, page_skus, page_imgs,
@@ -157,14 +159,15 @@ def extract_cells_via_cv(
                                          orientacao=orientacao)
 
         # ─── v24: GEMINI VISION PICKER memory-safe (substitui heurística) ───
-        # Quando use_ai_picker=True e supplier=DAGIA, manda a página JÁ
+        # Quando use_ai_picker=True (opção "IA escolhe a foto" no cadastro do
+        # fornecedor — nasceu na DAGIA; custa 1 chamada por página), manda a página JÁ
         # renderizada (1 imagem, com números desenhados nas candidatas) pro
         # Gemini decidir qual número é a foto de cada SKU. Extrai SÓ a escolhida.
         #
         # MEMÓRIA (vs v21 que causou OOM): NÃO extrai todas as candidatas como
         # arrays. Passa só os rects + o raster que já existe. 1 cópia anotada
         # downscalada + 1 chamada Gemini por página. Footprint ~igual ao atual.
-        if use_ai_picker and supplier_id and supplier_id.lower() in ("dagia", "dagía") and page_skus:
+        if use_ai_picker and page_skus:
             try:
                 from gemini_image_picker import pick_images_for_page
 
@@ -187,7 +190,7 @@ def extract_cells_via_cv(
                         {"sku": s.get("sku"), "name": s.get("name", "")}
                         for s in page_skus if s.get("sku")
                     ]
-                    print(f"[CV] AI PICKER v24 (DAGIA) pág {page_num}: {len(skus_for_ai)} SKUs, {len(candidates_for_ai)} candidatas")
+                    print(f"[CV] AI PICKER v24 pág {page_num}: {len(skus_for_ai)} SKUs, {len(candidates_for_ai)} candidatas")
                     # Passa o raster já renderizado + rects. Sem extração prévia.
                     picks = pick_images_for_page(
                         raster, candidates_for_ai, page_num, skus_for_ai, scale
@@ -549,16 +552,48 @@ def _cluster_coords(coords: List[float], tolerance: float = 20.0) -> List[float]
     return clusters
 
 
-def _is_dute_supplier(supplier_id: Optional[str]) -> bool:
-    """Reconhece as variacoes de nome usadas para o fornecedor Dute Toys."""
-    compact = "".join(ch for ch in str(supplier_id or "").casefold() if ch.isalnum())
-    return "dute" in compact
+def _detectar_grade_de_cards(
+    doc: fitz.Document,
+    skus_list: list,
+    logo_xrefs: set,
+    logo_digests: set,
+) -> bool:
+    """O catálogo é uma grade de cards, em que cada produto é UMA imagem com
+    foto + código + preço desenhados na arte (achado na Folia)?
 
-
-def _is_folia_supplier(supplier_id: Optional[str]) -> bool:
-    """Reconhece as variações de nome usadas para Folia Brinquedos."""
-    compact = "".join(ch for ch in str(supplier_id or "").casefold() if ch.isalnum())
-    return "folia" in compact
+    Dois sinais medidos no próprio arquivo, os dois necessários:
+    1. os códigos não existem como texto no PDF (a busca textual não achou
+       posição pra >=60% dos SKUs) — num catálogo com texto isso é ~0%;
+    2. nas páginas conferidas, há pelo menos um card grande por SKU em >=60%
+       delas (mesmo critério de tamanho/formato de `_folia_card_candidates`).
+    Medido em 23/09/2026: FOLIA Utilidades e Brinquedos passam; BM36, DAGIA,
+    DUTE, FORTAL, GIRA, PETRIN e VAESO têm 0% de SKU sem posição e não passam.
+    """
+    if not skus_list:
+        return False
+    sem_posicao = [s for s in skus_list if not s.get("spatialContext")]
+    if len(sem_posicao) < 0.6 * len(skus_list):
+        return False
+    por_pagina: Dict[int, int] = {}
+    for sku in sem_posicao:
+        pagina = sku.get("page")
+        if isinstance(pagina, int) and 1 <= pagina <= len(doc):
+            por_pagina[pagina] = por_pagina.get(pagina, 0) + 1
+    if not por_pagina:
+        return False
+    paginas = sorted(por_pagina)
+    passo = max(1, len(paginas) // 20)
+    conferidas = paginas[::passo]
+    com_cards = 0
+    for pagina in conferidas:
+        page = doc.load_page(pagina - 1)
+        imgs = _get_page_embedded_images(page, logo_xrefs, logo_digests)
+        if len(_folia_card_candidates(page, imgs)) >= por_pagina[pagina]:
+            com_cards += 1
+    detectado = com_cards >= 0.6 * len(conferidas)
+    print(f"[CV] Grade de cards: {len(sem_posicao)}/{len(skus_list)} SKUs sem texto, "
+          f"{com_cards}/{len(conferidas)} páginas com card por SKU → {'SIM' if detectado else 'não'}")
+    return detectado
 
 
 def _folia_card_candidates(page: fitz.Page, page_imgs: List[Dict]) -> List[Dict]:
@@ -1303,8 +1338,8 @@ def _match_via_grid(
     scale: float,
     output_folder: str,
     page_num: int,
-    supplier_id: Optional[str] = None,
     orientacao: str = "acima",
+    foto_composta: bool = False,
 ) -> Tuple[List[Dict], List[Dict]]:
     """
     Estratégia Column-First:
@@ -1345,12 +1380,14 @@ def _match_via_grid(
     raw_page_imgs = page_imgs
     page_imgs = _descartar_selos(page_imgs, "ColMatch")
 
-    # DUTE TOYS (catalogo real de 08/09/2026): uma unica foto comercial e
+    # FOTO COMPOSTA (achado no Dute, 08/09/2026): uma unica foto comercial e
     # montada por varios objetos independentes no PDF (caixa + brinquedo +
     # acessorios). Agrupar so imagens com centro no mesmo Y salvava apenas um
-    # pedaco. O caminho fica restrito ao Dute para nao mudar fornecedores cuja
-    # regra correta continua sendo escolher uma unica foto.
-    if _is_dute_supplier(supplier_id):
+    # pedaco. Liga pela opcao do cadastro do fornecedor, nao pelo nome: medido
+    # em 23/09 em 9 catalogos reais, a PETRIN (varias fotos de variacao,
+    # regra certa = 1 foto) fica perto demais do Dute pra decidir sozinho
+    # sem risco (28% x 19% de imagens sobrepostas). Ver guide.md.
+    if foto_composta:
         coordinate_unmatched = list(unmatched)
         matches, cell_unmatched = _match_dute_compositions(
             doc, raster, h_coords, v_coords, valid_skus, page_imgs,

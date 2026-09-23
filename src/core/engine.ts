@@ -6,6 +6,7 @@ import { validarProduto } from './validators';
 import { detectColumnMapping } from './autoMapper';
 import { runImportPipeline, PipelineOptions } from './pipeline/importPipeline';
 import { getAdapterById } from './supplierRules/registry';
+import type { OpcoesCatalogo } from '../context/types';
 
 export interface ConversionResult {
   produtos: ProdutoNormalizado[];
@@ -49,7 +50,9 @@ export const processarArquivoV2 = async (
    *  Vence a detecção automática de colunas (só afeta planilhas). */
   columnMappings?: Record<string, string>,
   /** Regras em texto livre do cliente p/ orientar a IA na leitura do PDF. */
-  supplierRules?: string
+  supplierRules?: string,
+  /** Opções de foto do cadastro do fornecedor (foto composta / IA escolhe). */
+  opcoesCatalogo?: OpcoesCatalogo
 ): Promise<ConversionResultV2> => {
   const options: PipelineOptions = {
     supplierId,
@@ -193,7 +196,7 @@ export const processarArquivoV2 = async (
 
      console.log(`[Engine] Iniciando extração de imagens (aguardando via Polling)...`);
 
-     imageResults = await runImageExtraction(file, result.produtosNormalizados, options.supplierName || 'desconhecido');
+     imageResults = await runImageExtraction(file, result.produtosNormalizados, options.supplierName || 'desconhecido', opcoesCatalogo);
 
   } catch(e) {
      console.error("[Engine] Erro ao extrair imagens:", e);

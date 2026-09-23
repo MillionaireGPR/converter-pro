@@ -8,6 +8,8 @@ import { useFornecedores } from "@/context/FornecedoresContext";
 import { Building2, Edit, Package, Calendar, Trash2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { OpcoesFotoCatalogo } from "@/components/OpcoesFotoCatalogo";
+import type { OpcoesCatalogo } from "@/context/types";
 
 export default function Fornecedores() {
   const { fornecedores, updateFornecedor, removeFornecedor } = useFornecedores();
@@ -17,18 +19,20 @@ export default function Fornecedores() {
   const [editDesconto, setEditDesconto] = useState("");
   const [editIpi, setEditIpi] = useState("");
   const [editRegras, setEditRegras] = useState("");
+  const [editOpcoes, setEditOpcoes] = useState<OpcoesCatalogo>({});
 
   const openEdit = (f: typeof fornecedores[0]) => {
     setEditId(f.id);
     setEditDesconto(String(f.descontoPadrao));
     setEditIpi(String(f.ipiPadrao));
     setEditRegras(f.regrasExtracao || "");
+    setEditOpcoes(f.opcoesCatalogo || {});
   };
 
   const saveEdit = async () => {
     if (!editId) return;
     try {
-      await updateFornecedor(editId, { descontoPadrao: parseFloat(editDesconto) || 0, ipiPadrao: parseFloat(editIpi) || 0, regrasExtracao: editRegras.trim() });
+      await updateFornecedor(editId, { descontoPadrao: parseFloat(editDesconto) || 0, ipiPadrao: parseFloat(editIpi) || 0, regrasExtracao: editRegras.trim(), opcoesCatalogo: editOpcoes });
       toast.success("Fornecedor atualizado!");
       setEditId(null);
     } catch (err) {
@@ -148,6 +152,10 @@ export default function Fornecedores() {
                 onChange={e => setEditRegras(e.target.value)}
                 placeholder="Ex.: a quantidade da caixa vem escrita como CAIXA MASTER no topo da página e vale para todos os itens dela."
               />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Fotos do catálogo (PDF)</label>
+              <OpcoesFotoCatalogo value={editOpcoes} onChange={setEditOpcoes} />
             </div>
           </div>
           <DialogFooter>

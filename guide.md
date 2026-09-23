@@ -1581,6 +1581,54 @@ A exportação JaWeb de PEDIDOS é real e continua em Conversão de Pedidos.
 
 ---
 
+### 14.32 Fornecedor novo: tratamento de catálogo deixa de depender do NOME (23/09/2026)
+
+**Contexto:** antes de o Josef apagar os fornecedores antigos e recadastrar
+pelo fluxo atual, o código ainda tinha 6 comportamentos que só ligavam pelo
+nome do fornecedor. Recadastrar com outro nome desligaria esses comportamentos
+sem nenhum aviso.
+
+| Onde | Antes (nome) | Agora |
+|---|---|---|
+| Fotos em grade de cards sem texto (`cv_extractor`) | `"folia" in nome` | `_detectar_grade_de_cards`: código não existe como texto (>=60% dos SKUs sem posição) **e** >=1 card grande por SKU em >=60% das páginas |
+| Releitura "página tem N cards" (`gemini_extractor`, leitura por imagem) | `"FOLIA" in nome` | vale pra qualquer catálogo que cai na leitura por imagem (já é exclusiva de PDF sem texto) |
+| Preço `UND: R$` vs total da caixa | `"FORTAL" in nome` | `_fix_labeled_unit_prices`: age onde o rótulo "UND:" existe perto do código |
+| Prefixo de código que a IA tira | tabela `{"GOAL KIDS": "GK"}` | `_fix_missing_code_prefix`: prefixo de >=80% do lote (mín. 10), mesmo nº de dígitos |
+| Foto montada por várias imagens | `"dute" in nome` | opção **"Foto do produto é montada por várias imagens"** no cadastro |
+| IA escolhe a foto (1 chamada/página) | `"DAGIA"` no front e no back | opção **"IA escolhe a foto de cada produto"** no cadastro |
+
+**Por que as 2 últimas viraram opção e não detecção:** medido em 9 catálogos
+reais. A PETRIN (várias fotos de variação por produto, regra certa = 1 foto)
+fica perto demais do DUTE (caixa + brinquedo sobrepostos, regra certa = juntar)
+em todas as medidas testadas: fração de imagens sobrepostas 0,28 × 0,19,
+páginas com colagem 43% × 37%, imagens/produto 2,5 × 2,3. Um limite
+automático no meio erraria num catálogo novo, e esse erro estraga as fotos do
+catálogo inteiro. O AI picker custa 1 chamada de IA por página, então ligar
+sozinho também não é aceitável. As opções ficam em `suppliers.opcoes_catalogo`
+(jsonb, migration `20260923_suppliers_opcoes_catalogo.sql`, aplicada), aparecem
+no formulário de fornecedor novo da tela de upload (PDF) e no Editar de
+Fornecedores. A migration já marcou DUTE PDF / DUTE TOYS (foto composta) e
+DAGIA (IA escolhe), pra nada mudar até o recadastro.
+
+**Prova (sem gastar API):** cada catálogo rodado pelo código anterior com o
+nome real e pelo código novo com nome neutro ("FORNECEDOR NOVO"), comparando o
+MD5 de cada foto gerada: **BM36 1188, DAGIA 70, DUTE 650 (com a opção), FOLIA
+Brinquedos 288, FOLIA Utilidades 297, GIRA 177, PETRIN 787, VAESO 146, FORTAL
+[FORTAL_RESULT] — 0 arquivos diferentes**. "UND:" sem nome: FORTAL restaura os mesmos
+82 preços; 8 outros catálogos 0 mudanças. Prefixo: 0 mudanças nos 9 catálogos.
+
+**Ainda por nome (conhecido, não mudou nesta rodada):**
+- Dicas de extração por fornecedor (`SUPPLIER_HINTS`, 12 nomes) — sem nome
+  conhecido, entram a auto-análise de fornecedor novo (Phase 0) + as
+  Particularidades. Recadastrar com o MESMO nome de marca mantém as dicas.
+- Leitores de planilha por fornecedor (`src/core/supplierRules/*.ts`): o nome
+  escolhe o leitor (casa por nome ou prefixo, ex. "GIRA PAPELARIA" → GIRA). Nome
+  novo cai no leitor genérico + Conferência de colunas. Não mexido: não há
+  planilhas reais pra provar que a troca não piora.
+- Heurística de "caixa do kit" por prefixo de código `DZ`/`DXPD` (DAGIA).
+
+---
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por

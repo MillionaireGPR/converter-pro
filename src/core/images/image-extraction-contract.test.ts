@@ -1,47 +1,49 @@
 /**
- * 🔒 v21 — Contrato do AI Picker no payload /process
+ * 🔒 Contrato do payload /process — opções de foto (23/09/2026)
  *
- * Garante que o frontend SEMPRE envia `useAiPicker=true` para fornecedores
- * mapeados (DAGIA hoje, expansível). Se alguém remover a flag ou mudar
- * o nome sem critério, este teste falha.
- *
- * Por que existe: cliente pediu Gemini Vision pra DAGIA depois de ver
- * heurística pegar tag de preço em vez de produto. Esta trava previne
- * regressão silenciosa (frontend manda flag errada → backend roda heurística
- * sem AI → cliente vê o mesmo bug de novo).
+ * O tratamento das fotos (IA escolhe a foto / foto montada por várias
+ * imagens) vem das OPÇÕES do cadastro do fornecedor. Antes era uma lista fixa
+ * de nomes aqui (['DAGIA']) e "dute" no backend: fornecedor recadastrado com
+ * outro nome perdia o tratamento sem aviso. Este teste chama a função real e
+ * lê o FormData que vai pro servidor.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const AI_PICKER_SUPPLIERS = ['DAGIA'];
+vi.mock('../backendResolver', () => ({
+  getBackendUrl: async () => 'http://backend.test',
+  invalidateBackend: () => {},
+}));
 
-function shouldUseAiPicker(fornecedor: string): boolean {
-  return AI_PICKER_SUPPLIERS.includes((fornecedor || '').toUpperCase());
+import { extractImagesViaBackend } from './imageExtractionApi';
+import type { OpcoesCatalogo } from '../../context/types';
+
+async function payloadEnviado(fornecedor: string, opcoes?: OpcoesCatalogo): Promise<FormData> {
+  let enviado: FormData | null = null;
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.body instanceof FormData) enviado = init.body;
+    return new Response(JSON.stringify({ detail: 'parar aqui' }), { status: 400 });
+  }));
+  const file = new File([new Uint8Array([37, 80, 68, 70])], 'catalogo.pdf', { type: 'application/pdf' });
+  await extractImagesViaBackend(file, [], fornecedor, opcoes);
+  expect(enviado).not.toBeNull();
+  return enviado as unknown as FormData;
 }
 
-describe('🔒 v21 AI Picker — contrato de ativação por fornecedor', () => {
-  it('DAGIA deve usar AI Picker', () => {
-    expect(shouldUseAiPicker('DAGIA')).toBe(true);
-    expect(shouldUseAiPicker('dagia')).toBe(true);
-    expect(shouldUseAiPicker('Dagia')).toBe(true);
+describe('🔒 /process — opções de foto vêm do cadastro, não do nome', () => {
+  beforeEach(() => { vi.spyOn(console, 'log').mockImplementation(() => {}); vi.spyOn(console, 'error').mockImplementation(() => {}); vi.spyOn(console, 'warn').mockImplementation(() => {}); });
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  it('opções marcadas chegam no pedido, com qualquer nome de fornecedor', async () => {
+    const fd = await payloadEnviado('FORNECEDOR NOVO', { iaEscolheFoto: true, fotoComposta: true });
+    expect(fd.get('useAiPicker')).toBe('true');
+    expect(fd.get('fotoComposta')).toBe('true');
   });
 
-  it('Fornecedores não-DAGIA NÃO devem usar AI Picker (custo)', () => {
-    const others = ['NIX HOUSE', 'BM36', 'CLINK', 'FOLIA', 'GIRA', 'FREECOM', 'MOMENT', 'FLASH', 'NeoFestas', 'LilaHome', 'Petrin', 'Levivan', 'GoalKids'];
-    others.forEach(s => {
-      expect(shouldUseAiPicker(s)).toBe(false);
-    });
-  });
-
-  it('Fornecedor vazio/undefined NÃO ativa AI Picker', () => {
-    expect(shouldUseAiPicker('')).toBe(false);
-    expect(shouldUseAiPicker(undefined as any)).toBe(false);
-    expect(shouldUseAiPicker(null as any)).toBe(false);
-  });
-
-  it('🔒 A lista de fornecedores com AI deve estar travada em código (não env)', () => {
-    // Se alguém vier e fizer AI_PICKER_SUPPLIERS = []  pra "desligar custo",
-    // este teste falha — força reflexão antes da regressão.
-    expect(AI_PICKER_SUPPLIERS.length).toBeGreaterThanOrEqual(1);
-    expect(AI_PICKER_SUPPLIERS).toContain('DAGIA');
+  it('o nome sozinho não liga nada (DAGIA/DUTE sem opção = desligado)', async () => {
+    for (const nome of ['DAGIA', 'DUTE PDF']) {
+      const fd = await payloadEnviado(nome);
+      expect(fd.get('useAiPicker')).toBe('false');
+      expect(fd.get('fotoComposta')).toBe('false');
+    }
   });
 });

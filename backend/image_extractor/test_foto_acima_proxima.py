@@ -48,7 +48,7 @@ imgs = [
 ]
 raster = np.zeros((842, 595, 3), dtype=np.uint8)
 matches, unmatched = cv._match_via_grid(
-    None, None, raster, [0.0, 842.0], [0.0, 595.0], skus, imgs, 1.0, "tmp", 84, supplier_id="BM36",
+    None, None, raster, [0.0, 842.0], [0.0, 595.0], skus, imgs, 1.0, "tmp", 84,
 )
 assert not unmatched, unmatched
 esperado = {"WC409938": 1024, "WC409917": 1027, "WC409929": 1029, "WC409934": 1032}

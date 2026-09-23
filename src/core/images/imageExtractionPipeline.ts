@@ -1,3 +1,4 @@
+import type { OpcoesCatalogo } from '../../context/types';
 import { ResultadoExtracaoImagens, ImagemAssociadaProduto, ImagemExtraida } from './imageTypes';
 import { extractImagesViaBackend } from './imageExtractionApi';
 import { extractImagesFromExcel } from './imageExtractorExcel';
@@ -200,7 +201,8 @@ const matchExcelImagesToProducts = (
 export const runImageExtraction = async (
   file: File,
   produtos: ProdutoNormalizadoV2[],
-  fornecedor?: string
+  fornecedor?: string,
+  opcoes?: OpcoesCatalogo
 ): Promise<ResultadoExtracaoImagens | null> => {
   const extension = file.name.substring(file.name.lastIndexOf('.') + 1).toLowerCase();
   
@@ -212,7 +214,7 @@ export const runImageExtraction = async (
   // Para PDFs: usa backend Python (PyMuPDF - mais eficiente que pdfjs)
   if (extension === 'pdf') {
     console.log(`[ImageExtractionPipeline] Usando backend Python para PDF: ${file.name}`);
-    return await extractImagesViaBackend(file, produtos, fornecedor || 'desconhecido');
+    return await extractImagesViaBackend(file, produtos, fornecedor || 'desconhecido', opcoes);
   }
   
   // ✅ NOVO: Para Excel (xlsx, xls): extração local com suporte a múltiplas sheets

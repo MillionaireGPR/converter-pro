@@ -61,7 +61,7 @@ cv._save_image = _fake_save
 def test_ambos_frascos_com_mesmo_xref_recebem_foto():
     matches, unmatched = cv._match_via_grid(
         None, None, __import__("numpy").zeros((842, 595, 3), dtype="uint8"),
-        [0.0, 842.0], [0.0, 595.0], skus, imgs, 1.0, "tmp", 119, supplier_id="BM36",
+        [0.0, 842.0], [0.0, 595.0], skus, imgs, 1.0, "tmp", 119,
     )
     assert not unmatched, unmatched
     assert _usado.get("WC410003") and _usado.get("WC410004")

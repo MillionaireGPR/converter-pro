@@ -2,6 +2,7 @@ import { ResultadoExtracaoImagens } from './imageTypes';
 import { ProdutoNormalizadoV2 } from '../types/productPipeline';
 import { getBackendUrl, invalidateBackend } from '../backendResolver';
 import { uploadTimeoutForAttempt } from '../net/uploadTimeout';
+import type { OpcoesCatalogo } from '../../context/types';
 
 /**
  * Extrai imagens de PDF usando o backend Python (PyMuPDF)
@@ -10,7 +11,8 @@ import { uploadTimeoutForAttempt } from '../net/uploadTimeout';
 export const extractImagesViaBackend = async (
   file: File,
   produtos: ProdutoNormalizadoV2[],
-  fornecedor: string
+  fornecedor: string,
+  opcoes?: OpcoesCatalogo
 ): Promise<ResultadoExtracaoImagens | null> => {
   try {
     console.log('[ImageExtractionApi] Iniciando extração via backend Python...');
@@ -44,15 +46,12 @@ export const extractImagesViaBackend = async (
     }
     formData.append('skus', JSON.stringify(allSkus));
 
-    // v24 (09/06/2026): AI Picker REATIVADO com redesenho memory-safe.
-    // (v21 causou OOM; v24 manda só a página anotada + extrai a escolhida.)
-    // Backend também auto-ativa pra DAGIA; mandamos explícito pra documentar.
-    const aiPickerSuppliers = ['DAGIA'];
-    const useAiPicker = aiPickerSuppliers.includes((fornecedor || '').toUpperCase());
+    // Tratamento das fotos vem das OPÇÕES do cadastro do fornecedor, não do
+    // nome (23/09/2026). Antes: lista fixa ['DAGIA'] aqui e "dute" no backend.
+    const useAiPicker = !!opcoes?.iaEscolheFoto;
     formData.append('useAiPicker', useAiPicker ? 'true' : 'false');
-    if (useAiPicker) {
-      console.log(`[ImageExtractionApi] AI Picker v24 ATIVADO para fornecedor=${fornecedor}`);
-    }
+    formData.append('fotoComposta', opcoes?.fotoComposta ? 'true' : 'false');
+    console.log(`[ImageExtractionApi] Opções de foto: IA escolhe=${useAiPicker}, composta=${!!opcoes?.fotoComposta}`);
 
     // 3. Chamar backend Python (com retry agressivo p/ ERR_HTTP2_PROTOCOL_ERROR)
     // Resolve o backend UMA vez e usa a mesma URL até o fim: o job só existe

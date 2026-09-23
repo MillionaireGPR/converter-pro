@@ -25,6 +25,8 @@ import { buildAndDownloadZip } from "@/core/images/imageZipBuilder";
 import { ResultadoExtracaoImagens } from "@/core/images/imageTypes";
 import { classifyImageError } from "@/core/images/imageErrorClassifier";
 import { ConferenciaColunas } from "@/components/ConferenciaColunas";
+import { OpcoesFotoCatalogo } from "@/components/OpcoesFotoCatalogo";
+import type { OpcoesCatalogo } from "@/context/types";
 import type { ColumnMappings } from "@/core/supplierRules/applyColumnMappings";
 import { getBackendUrl, backendLabel } from "@/core/backendResolver";
 import {
@@ -71,6 +73,7 @@ export default function ConversaoProdutos() {
   // novo, quer escrever a regra no mesmo passo, sem precisar voltar depois.
   const [regrasNovoFornecedor, setRegrasNovoFornecedor] = useState("");
   const [mappingsNovoFornecedor, setMappingsNovoFornecedor] = useState<ColumnMappings>({});
+  const [opcoesNovoFornecedor, setOpcoesNovoFornecedor] = useState<OpcoesCatalogo>({});
   const [regrasExistente, setRegrasExistente] = useState("");
   const [salvandoRegrasExistente, setSalvandoRegrasExistente] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -119,6 +122,7 @@ export default function ConversaoProdutos() {
     if (fornecedor !== 'novo') {
       setRegrasNovoFornecedor("");
       setMappingsNovoFornecedor({});
+      setOpcoesNovoFornecedor({});
     }
   }, [fornecedor]);
 
@@ -337,7 +341,8 @@ export default function ConversaoProdutos() {
           ipiPadrao: 0,
           ultimoProcessamento: new Date().toISOString(),
           totalProdutos: 0,
-          status: "ativo"
+          status: "ativo",
+          opcoesCatalogo: job.opcoesNovoFornecedor,
         };
         console.log(`[Pipeline] Fornecedor dinâmico: ${supplier.nome}`);
 
@@ -351,6 +356,8 @@ export default function ConversaoProdutos() {
           // segunda visita a Fornecedores ou Regras de Colunas.
           ...(job.regrasNovoFornecedor.trim() ? { extraction_rules: job.regrasNovoFornecedor.trim() } : {}),
           ...(Object.keys(job.mappingsNovoFornecedor).length ? { column_mappings: job.mappingsNovoFornecedor } : {}),
+          ...(job.opcoesNovoFornecedor && Object.values(job.opcoesNovoFornecedor).some(Boolean)
+            ? { opcoes_catalogo: job.opcoesNovoFornecedor } : {}),
         }).select().single();
 
         if (insertError) {
@@ -404,7 +411,8 @@ export default function ConversaoProdutos() {
         supplierId,
         supplier.nome,
         supplier.columnMappings,
-        supplier.regrasExtracao
+        supplier.regrasExtracao,
+        supplier.opcoesCatalogo
       );
       clearInterval(imgProgressInterval);
 
@@ -583,6 +591,7 @@ export default function ConversaoProdutos() {
       novoFornecedorNome: novoFornecedor,
       regrasNovoFornecedor,
       mappingsNovoFornecedor,
+      opcoesNovoFornecedor,
       fornecedorNome: fornecedor === 'novo' ? novoFornecedor.trim() : (fornecedorExistente?.nome || ''),
       tipoArquivo,
       status: 'processing',
@@ -608,6 +617,7 @@ export default function ConversaoProdutos() {
     setTipoArquivo("");
     setRegrasNovoFornecedor("");
     setMappingsNovoFornecedor({});
+    setOpcoesNovoFornecedor({});
     setRegrasExistente("");
   };
 
@@ -753,6 +763,7 @@ export default function ConversaoProdutos() {
                     placeholder='Ex.: "o preço aparece uma vez só no topo e vale pra todas as cores da página"'
                     className="text-sm min-h-[70px]"
                   />
+                  <OpcoesFotoCatalogo value={opcoesNovoFornecedor} onChange={setOpcoesNovoFornecedor} />
                 </div>
               )}
               {tipoArquivo === 'pdf' && fornecedor && fornecedor !== 'novo' && (

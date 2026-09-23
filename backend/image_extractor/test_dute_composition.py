@@ -76,7 +76,7 @@ matches_11, unmatched_11 = cv._match_via_grid(
     None, None, raster_11,
     [0.0, 19.8, 94.4, 283.2, 504.6, 595.0],
     [0.0, 42.5, 441.3, 855.0],
-    skus_11, images_11, 1.0, "tmp", 11, supplier_id="Dute Toys",
+    skus_11, images_11, 1.0, "tmp", 11, foto_composta=True,
 )
 by_sku_11 = {item["sku"]: item for item in matches_11}
 check("os quatro SKUs continuam associados", len(matches_11) == 4, f"matches={len(matches_11)} unmatched={unmatched_11}")
@@ -107,7 +107,7 @@ matches_12, unmatched_12 = cv._match_via_grid(
         image(293, 564.1, 291.9, 836.6, 524.2),
         image(297, 445.5, 407.1, 564.7, 529.2),
     ],
-    1.0, "tmp", 12, supplier_id="Dute Toys",
+    1.0, "tmp", 12, foto_composta=True,
 )
 check("os tres produtos triangulares recebem imagem", len(matches_12) == 3 and not unmatched_12, str(unmatched_12))
 _, ranges_116 = cv._dute_axis_partitions(
@@ -140,7 +140,7 @@ matches_162, unmatched_162 = cv._match_via_grid(
         image(502, 430.0, 100.0, 800.0, 260.0),   # peixe
         image(503, 470.0, 380.0, 800.0, 500.0),   # tartaruga
     ],
-    1.0, "tmp", 162, supplier_id="Dute Toys",
+    1.0, "tmp", 162, foto_composta=True,
 )
 by_sku_162 = {item["sku"]: item for item in matches_162}
 check("os tres produtos da pagina 162 recebem imagem", len(matches_162) == 3, str(unmatched_162))
@@ -169,7 +169,7 @@ matches_95, unmatched_95 = cv._match_via_grid(
         image(402, 650.0, 106.0, 782.0, 485.0),
         image(403, 522.0, 257.0, 652.0, 469.0),
     ],
-    1.0, "tmp", 95, supplier_id="DUTE",
+    1.0, "tmp", 95, foto_composta=True,
 )
 by_sku_95 = {item["sku"]: item for item in matches_95}
 check("os dois produtos ficam separados", len(matches_95) == 2 and not unmatched_95, str(unmatched_95))
@@ -177,15 +177,15 @@ check("peca esquerda em x=323 continua com DT10142", by_sku_95.get("DT10142", {}
 check("pecas direitas formam DT10036", by_sku_95.get("DT10036", {}).get("local_path") == "DT10036__260x379.jpg", str(by_sku_95.get("DT10036")))
 
 
-print("REGRESSAO -- outro fornecedor continua no algoritmo antigo")
+print("REGRESSAO -- sem a opcao foto composta continua no algoritmo de 1 foto")
 other_matches, _ = cv._match_via_grid(
     None, None, np.zeros((400, 400, 3), dtype=np.uint8),
     [0.0, 400.0], [0.0, 200.0, 400.0],
     [sku("OUTRO1", 50.0, 250.0)],
     [image(501, 20.0, 100.0, 120.0, 200.0), image(502, 20.0, 10.0, 120.0, 60.0)],
-    1.0, "tmp", 1, supplier_id="Outro Fornecedor",
+    1.0, "tmp", 1,
 )
-check("fornecedor nao-Dute nao entra na composicao por celula", other_matches[0]["match_type"] == "col_match", str(other_matches[0]))
+check("sem foto composta nao entra na composicao por celula", other_matches[0]["match_type"] == "col_match", str(other_matches[0]))
 
 
 print("PAGINA 142 -- imagem gigante nao pode esconder os dois outros produtos")
@@ -210,7 +210,7 @@ matches_142, unmatched_142 = cv._match_via_grid(
         image(4299, 88.5, 421.5, 205.3, 519.0),
         image(4291, 442.5, 405.3, 540.5, 507.4),
     ],
-    1.0, "tmp", 142, supplier_id="Dute Toys",
+    1.0, "tmp", 142, foto_composta=True,
 )
 check(
     "fallback recupera os tres SKUs da pagina 142",
@@ -223,7 +223,7 @@ matches_missing, unmatched_missing = cv._match_via_grid(
     [0.0, 200.0], [0.0, 100.0, 200.0],
     [sku("DUTE-OK", 20.0, 100.0), {"sku": "DUTE-SEM-COORD"}],
     [image(600, 30.0, 40.0, 150.0, 150.0)],
-    1.0, "tmp", 1, supplier_id="Dute Toys",
+    1.0, "tmp", 1, foto_composta=True,
 )
 check(
     "SKU Dute sem coordenada continua aparecendo no relatorio de falhas",
