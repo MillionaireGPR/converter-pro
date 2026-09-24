@@ -1629,6 +1629,46 @@ Brinquedos 288, FOLIA Utilidades 297, GIRA 177, PETRIN 787, VAESO 146, FORTAL
 
 ---
 
+### 14.33 Retestagem após o recadastro: FOLIA, BM36 e PETRIN (23/09/2026)
+
+Josef apagou os fornecedores antigos e recadastrou com Particularidades
+("FOLIA UTILIDADES", "BM36", "PETRIN PDF"). Quatro problemas, três causas:
+
+1. **FOLIA exportou o card inteiro (foto + preço).** O detector de grade de
+   cards do #14.32 exigia ">=60% dos SKUs sem posição" como prova de que o
+   código não existe como texto. Em produção a leitura por VISÃO devolve
+   posição aproximada pra cada produto (298/301), então a grade não era
+   detectada e a página ia pro caminho GRID, que recorta o card inteiro. O
+   A/B do #169 não pegou porque montava os SKUs só com código+página (sem a
+   posição da visão). **Correção:** o sinal 1 agora procura o código na
+   camada de texto da própria página do PDF (amostra de até 200 SKUs).
+   Particularidade escrita pelo cliente não muda recorte de foto — só a
+   leitura de dados — por isso "não pegar o valor" não teve efeito.
+2. **BM36 BM361548 com o nome do vizinho.** O NOME sintetizado ancora na
+   linha `CD: <EAN>`; o BM361548 não tem EAN, então o nome mais próximo era
+   o do produto seguinte. **Correção:** `_apply_template` mede no catálogo
+   de que lado do código o nome fica (antes/depois); se um lado tem >=80% dos
+   casos, só aceita nome desse lado. Sem match, usa a linha anterior.
+3. **BM36 ímãs GH-1/GH-2BI fora.** O CODE regex aprendido na amostra era
+   `CD: (BM\d{6}|WC\d{6,7})`. **Correção:** `_codigos_fora_do_padrao` mantém
+   o rótulo fixo do CODE (`CD: `), aceita qualquer código com dígito, e só
+   o transforma em produto se o bloco até o próximo código tiver PREÇO do
+   template (a linha `CD: <EAN>` não tem). Rótulo sem 2 letras não é usado;
+   se os extras passarem de 10% do total, todos são descartados.
+4. **PETRIN RD1820 com o preço do RD1819.** Preço único do card a 13pt da
+   assinatura (tolerância 12pt) → tratado como ambíguo → a IA mantinha o
+   preço do vizinho. **Correção:** preço ÚNICO no card, do qual nenhum outro
+   código está mais perto pela assinatura (`_preco_mais_perto_de`), é aceito.
+   Card com 2+ preços (FORTAL UND + caixa) continua intocado.
+
+**Prova (sem API):** FOLIA com as posições reais do resultado de produção:
+297/297 fotos idênticas ao código anterior ao #169 com o nome FOLIA; detector
+nos 9 catálogos só marca as 2 FOLIA. BM36 com o template real do job: +GH-1,
++GH-2BI, +439890 (produto real que também sumia), BM361548 com nome certo,
+1257 outros idênticos. Geometria nos 9 catálogos: só o RD1820 muda.
+Testes: `test_grade_de_cards_texto.py`, `test_template_codigo_e_nome.py`,
+`test_preco_geometria_card_unico.py`.
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por

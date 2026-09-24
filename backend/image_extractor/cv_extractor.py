@@ -13,6 +13,7 @@ ESTRATÉGIA:
 SAÍDA: {sku}.jpg contendo APENAS a foto do produto (sem textos, bordas, grid)
 """
 import os
+import re
 import cv2
 import numpy as np
 import fitz
@@ -562,25 +563,45 @@ def _detectar_grade_de_cards(
     foto + código + preço desenhados na arte (achado na Folia)?
 
     Dois sinais medidos no próprio arquivo, os dois necessários:
-    1. os códigos não existem como texto no PDF (a busca textual não achou
-       posição pra >=60% dos SKUs) — num catálogo com texto isso é ~0%;
+    1. os códigos não existem como texto no PDF (>=60% dos SKUs amostrados
+       não aparecem na camada de texto da própria página) — num catálogo
+       com texto isso é ~0%;
     2. nas páginas conferidas, há pelo menos um card grande por SKU em >=60%
        delas (mesmo critério de tamanho/formato de `_folia_card_candidates`).
+    O sinal 1 olha o TEXTO DO PDF, não o `spatialContext` do SKU: a leitura
+    por visão devolve posição aproximada pra cada produto, então "SKU sem
+    posição" não prova ausência de texto (regressão em produção 23/09/2026,
+    FOLIA recadastrada: 298/301 SKUs com posição da visão → grade não
+    detectada → card inteiro exportado com preço).
     Medido em 23/09/2026: FOLIA Utilidades e Brinquedos passam; BM36, DAGIA,
-    DUTE, FORTAL, GIRA, PETRIN e VAESO têm 0% de SKU sem posição e não passam.
+    DUTE, FORTAL, GIRA, PETRIN e VAESO têm ~0% de código fora do texto.
     """
     if not skus_list:
         return False
-    sem_posicao = [s for s in skus_list if not s.get("spatialContext")]
-    if len(sem_posicao) < 0.6 * len(skus_list):
+
+    def _pagina(sku: dict) -> Optional[int]:
+        pagina = sku.get("page") or (sku.get("spatialContext") or {}).get("page")
+        return pagina if isinstance(pagina, int) and 1 <= pagina <= len(doc) else None
+
+    com_pagina = [(s, _pagina(s)) for s in skus_list if s.get("sku")]
+    com_pagina = [(s, pg) for s, pg in com_pagina if pg]
+    if not com_pagina:
+        return False
+    passo_sku = max(1, len(com_pagina) // 200)
+    amostra = com_pagina[::passo_sku]
+    textos: Dict[int, str] = {}
+    fora_do_texto = 0
+    for sku, pagina in amostra:
+        if pagina not in textos:
+            textos[pagina] = re.sub(r"\s+", "", doc.load_page(pagina - 1).get_text()).upper()
+        codigo = re.sub(r"\s+", "", str(sku["sku"])).upper()
+        if codigo not in textos[pagina]:
+            fora_do_texto += 1
+    if fora_do_texto < 0.6 * len(amostra):
         return False
     por_pagina: Dict[int, int] = {}
-    for sku in sem_posicao:
-        pagina = sku.get("page")
-        if isinstance(pagina, int) and 1 <= pagina <= len(doc):
-            por_pagina[pagina] = por_pagina.get(pagina, 0) + 1
-    if not por_pagina:
-        return False
+    for _sku, pagina in com_pagina:
+        por_pagina[pagina] = por_pagina.get(pagina, 0) + 1
     paginas = sorted(por_pagina)
     passo = max(1, len(paginas) // 20)
     conferidas = paginas[::passo]
@@ -591,7 +612,7 @@ def _detectar_grade_de_cards(
         if len(_folia_card_candidates(page, imgs)) >= por_pagina[pagina]:
             com_cards += 1
     detectado = com_cards >= 0.6 * len(conferidas)
-    print(f"[CV] Grade de cards: {len(sem_posicao)}/{len(skus_list)} SKUs sem texto, "
+    print(f"[CV] Grade de cards: {fora_do_texto}/{len(amostra)} códigos fora do texto do PDF, "
           f"{com_cards}/{len(conferidas)} páginas com card por SKU → {'SIM' if detectado else 'não'}")
     return detectado
 

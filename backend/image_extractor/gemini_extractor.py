@@ -1870,6 +1870,77 @@ def _nome_linha_anterior(texto: str, codigo: str, skip_res: List["re.Pattern"]) 
     return ""
 
 
+def _prefixo_do_codigo(pattern: str) -> Optional[str]:
+    """Trecho do CODE regex ANTES do primeiro grupo de captura (o rótulo fixo
+    do código, ex.: "CD: "). None se não houver grupo de captura."""
+    i, n = 0, len(pattern)
+    while i < n:
+        ch = pattern[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "[":
+            j = i + 1
+            if j < n and pattern[j] == "]":
+                j += 1
+            while j < n and pattern[j] != "]":
+                if pattern[j] == "\\":
+                    j += 1
+                j += 1
+            i = j + 1
+            continue
+        if ch == "(" and (pattern[i:i + 2] != "(?" or pattern[i:i + 4] == "(?P<"):
+            return pattern[:i]
+        i += 1
+    return None
+
+
+def _codigos_fora_do_padrao(txt: str, code_pattern: str, fixos: List[Tuple[int, int, str]],
+                            rx_preco: Optional["re.Pattern"]) -> List[Tuple[int, int, str]]:
+    """Produtos cujo código tem o MESMO rótulo do padrão ("CD: ") mas formato
+    diferente do que a IA generalizou na amostra — BM36 23/09/2026: o
+    template aprendeu `CD: (BM\\d{6}|WC\\d{6,7})` e os ímãs "CD: GH-1" /
+    "CD: GH-2BI" sumiram da exportação.
+
+    Medido no próprio texto, sem lista de prefixos: mantém o rótulo fixo que
+    vem antes do grupo de captura e troca o formato do código por um token
+    genérico. Um candidato só vira produto se o bloco dele (até o próximo
+    código) tiver um PREÇO do template — é isso que separa um produto de
+    outra linha com o mesmo rótulo (ex.: "CD: <EAN>" logo acima do código
+    real, sem preço entre os dois). Rótulo sem pelo menos 2 letras (ex.: só
+    "^") não é usado: casaria qualquer linha.
+    """
+    if rx_preco is None:
+        return []
+    prefixo = _prefixo_do_codigo(code_pattern)
+    if not prefixo or len(re.findall(r"(?<!\\)[A-Za-z]", prefixo)) < 2:
+        return []
+    try:
+        rx = re.compile(prefixo + r"([A-Za-z0-9][A-Za-z0-9\-./]{0,23})(?![A-Za-z0-9\-./])", re.M)
+    except re.error:
+        return []
+    candidatos = []
+    for m in rx.finditer(txt):
+        codigo = m.group(1).strip()
+        if any(ini <= m.start(1) < fim for ini, fim, _c in fixos):
+            continue
+        if not re.search(r"\d", codigo) or not _code_looks_valid(codigo):
+            continue
+        candidatos.append((m.start(), m.end(), codigo))
+    if not candidatos:
+        return []
+    todos = sorted([(ini, fim, c, True) for ini, fim, c in fixos]
+                   + [(ini, fim, c, False) for ini, fim, c in candidatos])
+    extras = []
+    for k, (ini, fim, codigo, fixo) in enumerate(todos):
+        if fixo:
+            continue
+        prox = todos[k + 1][0] if k + 1 < len(todos) else len(txt)
+        if rx_preco.search(txt[fim:prox]):
+            extras.append((ini, fim, codigo))
+    return extras
+
+
 def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str, Any]]:
     """Aplica o template em TODAS as páginas (determinístico, instantâneo)."""
     code_re = re.compile(tpl["CODE"], re.M)
@@ -1892,12 +1963,64 @@ def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str
     # nesse caso o nome do produto atual fica no texto ANTES do match de
     # CODE, não depois. Ver `_widen_nome_capture` e o histórico do achado.
     rx_nome, rx_preco, rx_qtd = mk("NOME", widen=True), mk("PRECO"), mk("QTD")
+
+    # 1) códigos por página: os do padrão + os fora do padrão com o mesmo
+    #    rótulo e preço no bloco (ver `_codigos_fora_do_padrao`). Se os "fora
+    #    do padrão" passarem de 10% do total, o rótulo é genérico demais pra
+    #    confiar — descarta todos (falha segura = comportamento anterior).
+    por_pagina: List[List[Tuple[int, int, str]]] = []
+    fixos_por_pagina: List[List[Tuple[int, int, str]]] = []
+    total_fixos, total_extras = 0, 0
+    for txt in page_texts:
+        fixos = []
+        for mm in code_re.finditer(txt):
+            codigo = (mm.group(1) if mm.groups() else mm.group(0)) or ""
+            fixos.append((mm.start(), mm.end(), codigo.strip()))
+        extras = _codigos_fora_do_padrao(txt, tpl["CODE"], fixos, rx_preco)
+        total_fixos += len(fixos)
+        total_extras += len(extras)
+        fixos_por_pagina.append(fixos)
+        por_pagina.append(sorted(fixos + extras))
+    if total_extras:
+        if total_extras > 0.10 * max(total_fixos, 1):
+            print(f"[Template] {total_extras} códigos fora do padrão (> 10% de {total_fixos}) — rótulo genérico demais, ignorados")
+            por_pagina = fixos_por_pagina
+        else:
+            print(f"[Template] {total_extras} código(s) fora do padrão do template incluído(s) (mesmo rótulo, com preço no bloco)")
+
+    # 2) lado do NOME em relação ao código, MEDIDO no catálogo: para cada
+    #    código, o NOME mais próximo está antes ou depois? Se um lado domina
+    #    (>=80%), só aceita nome desse lado. Sem isso, um produto sem a linha
+    #    que ancora o NOME (BM36 23/09/2026: BM361548 sem EAN) pegava o nome
+    #    do PRÓXIMO produto, que ficava "mais perto" pelo outro lado.
+    lado_nome = None
+    if rx_nome:
+        votos = {"antes": 0, "depois": 0}
+        for pi, txt in enumerate(page_texts):
+            ms = por_pagina[pi]
+            for j, (ini, _fim, _c) in enumerate(ms):
+                lo = ms[j - 1][1] if j > 0 else 0
+                hi = ms[j + 1][0] if j + 1 < len(ms) else len(txt)
+                pos = ini - lo
+                melhor = None
+                for fm in rx_nome.finditer(txt[lo:hi]):
+                    if not fm.groups():
+                        continue
+                    dist = min(abs(fm.start() - pos), abs(fm.end() - pos))
+                    if melhor is None or dist < melhor[0]:
+                        melhor = (dist, "antes" if fm.end() <= pos else "depois")
+                if melhor:
+                    votos[melhor[1]] += 1
+        total_votos = votos["antes"] + votos["depois"]
+        for lado in ("antes", "depois"):
+            if total_votos and votos[lado] >= 0.8 * total_votos:
+                lado_nome = lado
+
     produtos: List[Dict[str, Any]] = []
     for pi, txt in enumerate(page_texts):
-        matches = list(code_re.finditer(txt))
-        for j, mm in enumerate(matches):
-            blk = txt[mm.start(): matches[j + 1].start() if j + 1 < len(matches) else len(txt)]
-            codigo = (mm.group(1) if mm.groups() else mm.group(0)).strip()
+        matches = por_pagina[pi]
+        for j, (m_ini, m_fim, codigo) in enumerate(matches):
+            blk = txt[m_ini: matches[j + 1][0] if j + 1 < len(matches) else len(txt)]
             if not codigo:
                 continue
             prod: Dict[str, Any] = {"codigo": codigo, "paginaOrigem": pi + 1}
@@ -1906,15 +2029,18 @@ def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str
                 # do PRÓXIMO — cobre tanto "nome depois do código" (padrão)
                 # quanto "nome antes do código" (BM36). Entre os matches de
                 # NOME dentro dessa janela, fica o mais PRÓXIMO da posição do
-                # código atual — é sempre o nome DESTE produto, nunca o do
-                # vizinho, nos dois layouts.
-                lo = matches[j - 1].end() if j > 0 else 0
-                hi = matches[j + 1].start() if j + 1 < len(matches) else len(txt)
+                # código atual, só do lado medido em `lado_nome`.
+                lo = matches[j - 1][1] if j > 0 else 0
+                hi = matches[j + 1][0] if j + 1 < len(matches) else len(txt)
                 wide_blk = txt[lo:hi]
-                code_pos = mm.start() - lo
+                code_pos = m_ini - lo
                 best = None
                 for fm in rx_nome.finditer(wide_blk):
                     if not fm.groups():
+                        continue
+                    if lado_nome == "antes" and fm.end() > code_pos:
+                        continue
+                    if lado_nome == "depois" and fm.start() < code_pos:
                         continue
                     dist = min(abs(fm.start() - code_pos), abs(fm.end() - code_pos))
                     if best is None or dist < best[0]:
@@ -1928,7 +2054,7 @@ def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str
                         prod["nome"] = nome
                 if not prod.get("nome"):
                     nome = _nome_linha_anterior(
-                        txt[lo:mm.start()], codigo,
+                        txt[lo:m_ini], codigo,
                         [r for r in (code_re, rx_preco, rx_qtd) if r],
                     )
                     if nome:
@@ -2425,6 +2551,19 @@ def _page_price_tokens(page) -> List[Dict[str, float]]:
     return out
 
 
+def _preco_mais_perto_de(token: Dict[str, float], rect: Any, located: list,
+                         med_dx: float, med_dy: float, dx_tol: float, dy_tol: float) -> bool:
+    """True se, pela assinatura de posição (dx, dy) do catálogo, o código em
+    `rect` é o dono mais provável do `token` de preço — estritamente mais
+    perto que qualquer outro código localizado na página."""
+    def dist(r: Any) -> float:
+        return (abs((token["x"] - r.x0) - med_dx) / dx_tol
+                + abs((token["y"] - r.y0) - med_dy) / dy_tol)
+
+    minha = dist(rect)
+    return all(dist(r) > minha for _p, r in located if r is not rect)
+
+
 def _verify_prices_by_geometry(pdf_path: str, produtos: list) -> Tuple[list, list]:
     """Confere o preço que a IA devolveu contra a GEOMETRIA da página.
 
@@ -2532,6 +2671,13 @@ def _verify_prices_by_geometry(pdf_path: str, produtos: list) -> Tuple[list, lis
                 if not cand:
                     janela[id(p)] = None
                 elif len(cand) == 1 and cand[0][1]:
+                    janela[id(p)] = cand[0][0]
+                elif len(cand) == 1 and _preco_mais_perto_de(tokens[cand[0][0]], rect, located, med_dx, med_dy, DX_TOL, DY_TOL):
+                    # Um ÚNICO preço no card, só um pouco fora da janela estreita
+                    # (Petrin pág. 91, RD1820: dy=+3 com assinatura dy=-10 → 13pt,
+                    # tolerância 12), e nenhum outro código está mais perto dele.
+                    # É o preço deste card; tratar como ambíguo deixava a IA
+                    # manter o preço do vizinho RD1819 (Josef 23/09/2026).
                     janela[id(p)] = cand[0][0]
                 else:
                     janela[id(p)] = -1
