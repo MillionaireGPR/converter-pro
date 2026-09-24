@@ -13,6 +13,7 @@ ESTRATÉGIA:
 SAÍDA: {sku}.jpg contendo APENAS a foto do produto (sem textos, bordas, grid)
 """
 import os
+import math
 import re
 import cv2
 import numpy as np
@@ -752,6 +753,43 @@ def _crop_folia_price_band(img_rgb: np.ndarray) -> np.ndarray:
     return img_rgb[:topo_faixa, :, :]
 
 
+def _folia_cards_por_ordem(skus: list, cards: List[Dict]) -> Optional[List[Tuple[dict, Dict]]]:
+    """Casa SKU↔card pela ORDEM de leitura (linha, depois coluna), não pela
+    distância. A posição que a leitura por visão devolve vem com a escala da
+    página errada — FOLIA pág. 16 (Josef 24/09/2026): linhas em y=173/304/434
+    com os cards em y=246/442/639; pela distância a 2ª linha caía na 1ª e os
+    9 produtos saíam com a foto de outro. A ORDEM relativa, porém, vem certa.
+
+    Só vale quando há exatamente um card por SKU: as linhas dos cards (medidas
+    no PDF) dizem quantos SKUs vão em cada linha; os SKUs ordenados por Y
+    enchem as linhas nessa ordem, e dentro da linha casam por X. Devolve None
+    (usa a distância) se as contas não baterem.
+    """
+    if not skus or len(skus) != len(cards):
+        return None
+    ordem_cards = sorted(cards, key=lambda c: c["cy"])
+    linhas: List[List[Dict]] = []
+    for card in ordem_cards:
+        altura = card["rect"].height
+        if linhas and abs(card["cy"] - linhas[-1][0]["cy"]) <= altura * 0.5:
+            linhas[-1].append(card)
+        else:
+            linhas.append([card])
+    por_y = sorted(skus, key=lambda s: (s["spatialContext"]["y"], s["spatialContext"]["x"]))
+    pares: List[Tuple[dict, Dict]] = []
+    inicio = 0
+    for linha in linhas:
+        grupo = por_y[inicio:inicio + len(linha)]
+        inicio += len(linha)
+        # a linha de SKUs precisa estar separada da próxima (senão a leitura
+        # misturou linhas e a ordem não é confiável)
+        if inicio < len(por_y) and por_y[inicio]["spatialContext"]["y"] <= grupo[-1]["spatialContext"]["y"]:
+            return None
+        grupo.sort(key=lambda s: s["spatialContext"]["x"])
+        pares.extend(zip(grupo, sorted(linha, key=lambda c: c["cx"])))
+    return pares
+
+
 def _match_folia_cards(
     doc: fitz.Document,
     page: fitz.Page,
@@ -775,6 +813,21 @@ def _match_folia_cards(
     height, width = raster.shape[:2]
 
     positioned = [sku for sku in page_skus if sku.get("spatialContext")]
+    por_ordem = _folia_cards_por_ordem(positioned, cards)
+    if por_ordem is not None:
+        for sku, chosen in por_ordem:
+            image = _extract_perfect_image(doc, chosen, raster, width, height, scale)
+            if image is None or image.size == 0:
+                unmatched.append({
+                    "sku": sku.get("sku"), "page": page_num,
+                    "reason": "folia_card_extract_failed",
+                })
+                continue
+            image = _crop_folia_price_band(image)
+            filepath = _save_image(image, sku["sku"], output_folder)
+            matches.append(_make_match(sku, page_num, filepath, "folia_card"))
+            del image
+        positioned = []
     # Resolve primeiro quem está mais perto de algum card. Isso evita que uma
     # coordenada imprecisa pegue o card de outra coordenada quase perfeita.
     ranked = []
@@ -993,6 +1046,59 @@ def _filtrar_imagens_fora_da_pagina(
     return mantidas
 
 
+def _dute_dono_de_cada_imagem(valid_skus: list, page_imgs: List[Dict], page_width: float) -> Dict[int, dict]:
+    """Dono de cada imagem num catálogo de foto composta: o código mais
+    próximo que fica ACIMA-À-ESQUERDA dela (no Dute o código abre o bloco, no
+    canto superior esquerdo, e as imagens ficam à direita/abaixo).
+
+    Candidato: canto do código com x <= centro da imagem e a imagem
+    descendo pelo menos 20pt abaixo do topo do código. Entre os candidatos vence o de menor vão horizontal + 2× vão
+    vertical (ver `distancia`). Medido nas págs. 17 e 105
+    (Josef 24/09/2026): a divisão pelo ponto médio entre códigos punha a
+    caixa do DT10052 na foto do DT10421 e juntava pedaços do DT10151/DTY1408
+    na do DT10231. Devolve {id(imagem): sku}.
+    """
+    donos: Dict[int, dict] = {}
+    cantos = []
+    for sku in valid_skus:
+        sc = sku["spatialContext"]
+        w, h = sc.get("width") or 0.0, sc.get("height") or 0.0
+        cantos.append((sku, sc["x"] - w / 2, sc["y"] - h / 2))
+    if not cantos:
+        return donos
+    for image in page_imgs:
+        rect = image["rect"]
+        # Faixa decorativa da largura da página (barra de navegação do rodapé
+        # do Dute, 821pt de 854) não é foto de produto de ninguém.
+        if rect.width >= 0.7 * page_width:
+            continue
+        candidatos = [
+            (sku, ax, ay) for sku, ax, ay in cantos
+            # a imagem precisa descer pelo menos 20pt abaixo do topo do código:
+            # imagem que termina logo ACIMA dele é do bloco de cima (pág. 29,
+            # varas da PESCARIA DT10284 terminando 12pt acima do DT10386)
+            if ax - 20 <= image["cx"] and ay <= rect.y1 - 20
+        ]
+        if not candidatos:
+            continue
+        # Distância = vão horizontal (código → borda esquerda da imagem) +
+        # 2× o vão vertical (zero quando a imagem cobre a linha do código).
+        # Pág. 179: os patinhos do DT10097 começam 44pt acima do código dele —
+        # cobrem a linha dele, vão vertical 0 — e não vão mais pro DT10096 lá
+        # no alto; pág. 105: a mola do DT10151 fica na altura do DT10231, mas
+        # 480pt à direita dele, e volta pro DT10151.
+        def distancia(c):
+            _sku, ax, ay = c
+            vao_h = max(0.0, rect.x0 - ax)
+            if rect.y0 - 30 <= ay <= rect.y1:
+                vao_v = 0.0
+            else:
+                vao_v = (rect.y0 - 30 - ay) if ay < rect.y0 - 30 else (ay - rect.y1)
+            return vao_h + 2 * vao_v
+        donos[id(image)] = min(candidatos, key=distancia)[0]
+    return donos
+
+
 def _match_dute_compositions(
     doc: fitz.Document,
     raster: np.ndarray,
@@ -1118,6 +1224,8 @@ def _match_dute_compositions(
                 y_min, y_max = row_ranges[row_index]
                 cells.append((sku, x_min, x_max, y_min, y_max, col_index, row_index))
 
+    donos = _dute_dono_de_cada_imagem(valid_skus, page_imgs, page_width)
+
     matches: List[Dict] = []
     unmatched: List[Dict] = []
     for sku, x_min, x_max, y_min, y_max, col_index, row_index in cells:
@@ -1129,6 +1237,12 @@ def _match_dute_compositions(
             if x_min <= image["cx"] < x_max
             and y_min <= image["cy"] < y_max
         ]
+        # Quem decide o dono de cada imagem é o código (ver
+        # `_dute_dono_de_cada_imagem`), não a faixa linha×coluna: a faixa
+        # partia no ponto médio entre códigos e cortava composições (DT10231
+        # pág. 105) ou vazava pedaço do vizinho (DT10421 pág. 17). A faixa
+        # fica só no log (col/row).
+        grouped = [image for image in page_imgs if donos.get(id(image)) is sku]
 
         if not grouped:
             unmatched.append({"sku": sku_code, "page": page_num, "reason": "no_img_in_dute_cell"})
@@ -1780,6 +1894,13 @@ def _match_via_embedded(
             ordem = s
             if orientacao == "acima" and rect_i is not None and rect_i.y0 > sku_y + 2.0:
                 ordem += 100.0
+            # Foto ABAIXO do código (medido no catálogo): foto inteira ACIMA do
+            # código é do cartão de cima. Na Petrin pág. 62 (Josef 24/09/2026)
+            # os códigos da 2ª linha ficavam mais perto das fotos da 1ª linha
+            # e as roubavam — a 1ª linha ficava sem foto (RD1891, RD1889) e a
+            # 2ª com a foto errada. Só reordena; o teto usa o score cru.
+            if orientacao == "abaixo" and rect_i is not None and rect_i.y1 < sku_y - 2.0:
+                ordem += 1000.0
             pairs.append((ordem, si, pi, s))
     pairs.sort(key=lambda t: t[0])
 
@@ -1870,6 +1991,42 @@ def _match_via_embedded(
             chosen_by_sku[si] = {"img": melhor, "score": 0.0, "row_shared": True}
             imgs_em_uso.add(id(melhor))
             print(f"    [Embedded] {sku.get('sku')}: foto grande logo acima da legenda (gap={melhor_gap:.1f}pt)")
+
+    # ── FOTO LOGO ABAIXO DO CÓDIGO (Petrin, 24/09/2026) ──
+    # Catálogo medido como "foto abaixo do código": a foto do produto começa
+    # logo abaixo dele, mas pode ser larga (guarda-chuva aberto da pág. 184,
+    # 296pt) e ter o CENTRO longe do código — o score ponderado a rejeitava
+    # (RD1147, RD1151, RD1142 sem foto). Mesmo cuidado da passada anterior:
+    # só pra quem não tem match aceitável, só com imagem sem dono, e só se
+    # nenhum outro código estiver entre o código e a foto.
+    if orientacao == "abaixo":
+        MARGEM_FOTO_ABAIXO_PT = 160.0
+        for si, sku in enumerate(valid_skus):
+            ja = chosen_by_sku.get(si)
+            if ja is not None and (ja.get("row_shared") or ja["score"] <= max_score):
+                continue
+            sku_x, sku_y = sku["spatialContext"]["x"], sku["spatialContext"]["y"]
+            melhor, melhor_gap = None, float("inf")
+            for img in page_imgs:
+                if id(img) in imgs_em_uso:
+                    continue
+                rect = img.get("rect")
+                if rect is None:
+                    continue
+                gap = rect.y0 - sku_y
+                if not (0 <= gap <= MARGEM_FOTO_ABAIXO_PT and rect.x0 - 10 <= sku_x <= rect.x1):
+                    continue
+                entre = any(
+                    o is not sku and sku_y < o["spatialContext"]["y"] < rect.y0
+                    and rect.x0 - 10 <= o["spatialContext"]["x"] <= rect.x1
+                    for o in valid_skus
+                )
+                if not entre and gap < melhor_gap:
+                    melhor_gap, melhor = gap, img
+            if melhor is not None:
+                chosen_by_sku[si] = {"img": melhor, "score": 0.0, "row_shared": True}
+                imgs_em_uso.add(id(melhor))
+                print(f"    [Embedded] {sku.get('sku')}: foto logo abaixo do código (gap={melhor_gap:.1f}pt)")
 
     for si, sku in enumerate(valid_skus):
         chosen = chosen_by_sku.get(si)

@@ -1348,10 +1348,11 @@ def _extract_vision_chunk(
     return [], False
 
 
-def _expected_card_count(page: fitz.Page) -> int:
-    """Conta os cards visuais grandes da página sem depender do texto (que não
-    existe nos catálogos que chegam na leitura por imagem)."""
-    count = 0
+def _card_rects(page: fitz.Page) -> List[fitz.Rect]:
+    """Cards visuais grandes da página (imagem quase quadrada abaixo do
+    cabeçalho), sem depender do texto — que não existe nos catálogos que
+    chegam na leitura por imagem."""
+    rects: List[fitz.Rect] = []
     for info in page.get_image_info(xrefs=True):
         bbox = info.get("bbox")
         if not bbox:
@@ -1363,9 +1364,100 @@ def _expected_card_count(page: fitz.Page) -> int:
             and rect.width >= page.rect.width * 0.18
             and rect.height >= page.rect.height * 0.10
             and 0.70 <= aspect <= 1.45
+            and not any(abs(rect.x0 - r.x0) < 1 and abs(rect.y0 - r.y0) < 1 for r in rects)
         ):
-            count += 1
-    return count
+            rects.append(rect)
+    return rects
+
+
+def _expected_card_count(page: fitz.Page) -> int:
+    return len(_card_rects(page))
+
+
+CARD_CODE_DPI = 300
+
+_CARD_CODE_PROMPT = """Você recebe {n} recortes de um catálogo. Cada recorte é UM card de produto.
+Para CADA recorte, na mesma ordem, leia:
+- "codigo": o código do produto EXATAMENTE como impresso no card. Confira dígito por dígito
+  (6 x 8, 5 x S, 0 x O, 1 x I). Nunca copie o código de outro card.
+- "nome": o nome do produto como impresso.
+Responda APENAS JSON: {{"cards": [{{"i": 1, "codigo": "...", "nome": "..."}}, ...]}}"""
+
+
+def _formato_codigo(codigo: str) -> str:
+    return re.sub(r"[A-Za-z]", "A", re.sub(r"\d", "9", str(codigo or "").strip().upper()))
+
+
+def _nome_chave(nome: Any) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(nome or "").upper())
+
+
+def _conferir_codigos_por_card(pdf_path: str, page_number: int, produtos: list,
+                               model_name: str) -> list:
+    """Relê SÓ o código de cada card da página, recortado em alta resolução,
+    e corrige o código da leitura da página inteira quando ela errou.
+
+    FOLIA pág. 11 (Josef 24/09/2026): o código fica em letra miúda no rodapé
+    do card; lendo a página inteira a IA trocou 6 por 8 (JRF-50.0365 →
+    0385) e copiou o número do card vizinho (JRF-50.0040 → 0847, ao lado do
+    0848). Troca só quando é seguro:
+    - o código da página não aparece em nenhum card relido;
+    - existe exatamente um card relido, ainda sem dono, com o MESMO nome;
+    - o código relido tem o mesmo formato (letras/dígitos) do original.
+    Qualquer falha devolve os produtos intactos.
+    """
+    if not produtos:
+        return produtos
+    try:
+        doc = fitz.open(pdf_path)
+        page = doc.load_page(page_number - 1)
+        rects = _card_rects(page)
+        if not rects:
+            doc.close()
+            return produtos
+        rects.sort(key=lambda r: (round(r.y0 / 20), r.x0))
+        partes: List[Any] = []
+        for rect in rects:
+            pix = page.get_pixmap(clip=rect, dpi=CARD_CODE_DPI)
+            partes.append({"mime_type": "image/jpeg", "data": pix.tobytes("jpeg")})
+        doc.close()
+        partes.append(_CARD_CODE_PROMPT.format(n=len(rects)))
+        modelo = genai.GenerativeModel(model_name)
+        resposta = modelo.generate_content(
+            partes,
+            generation_config=genai.GenerationConfig(
+                temperature=0.0, response_mime_type="application/json", max_output_tokens=4096,
+            ),
+            request_options={"timeout": 120},
+        )
+        raw = (resposta.text or "").strip().strip("`")
+        if raw.startswith("json"):
+            raw = raw[4:].strip()
+        relidos = [c for c in json.loads(raw).get("cards", []) if c.get("codigo")]
+    except Exception as e:
+        print(f"[ConfereCodigo] pág {page_number}: falha segura ({str(e)[:80]})")
+        return produtos
+
+    codigos_relidos = {str(c["codigo"]).strip().upper() for c in relidos}
+    codigos_pagina = {str(p.get("codigo") or "").strip().upper() for p in produtos}
+    livres = [c for c in relidos if str(c["codigo"]).strip().upper() not in codigos_pagina]
+    trocas = []
+    for p in produtos:
+        atual = str(p.get("codigo") or "").strip().upper()
+        if not atual or atual in codigos_relidos:
+            continue
+        mesmos = [c for c in livres if _nome_chave(c.get("nome")) == _nome_chave(p.get("nome"))]
+        if len(mesmos) != 1:
+            continue
+        novo = str(mesmos[0]["codigo"]).strip().upper()
+        if _formato_codigo(novo) != _formato_codigo(atual):
+            continue
+        livres.remove(mesmos[0])
+        trocas.append((atual, novo))
+        p["codigo"] = novo
+    if trocas:
+        print(f"[ConfereCodigo] pág {page_number}: {len(trocas)} código(s) corrigido(s) pelo recorte do card: {trocas}")
+    return produtos
 
 
 def _merge_vision_products(primary: list, retry: list, limit: int) -> list:
@@ -1419,6 +1511,7 @@ def extract_with_vision_chunked(pdf_path: str, supplier: str = "", client_rules:
           f"(paralelo={VISION_CHUNK_WORKERS}, {VISION_DPI}dpi)")
 
     todos: List[Dict[str, Any]] = []
+    conferir: List[Tuple[int, list]] = []
     lotes_ok = 0
     lotes_parciais = 0
     with ThreadPoolExecutor(max_workers=VISION_CHUNK_WORKERS) as pool:
@@ -1460,12 +1553,23 @@ def extract_with_vision_chunked(pdf_path: str, supplier: str = "", client_rules:
                         f"{unique_count}/{expected} únicos → "
                         f"{len(produtos)} após releitura"
                     )
+                if expected and produtos:
+                    conferir.append((page_number, produtos))
             if produtos:
                 todos.extend(produtos)
             if ok:
                 lotes_ok += 1
             else:
                 lotes_parciais += 1
+
+    # Conferência do código card a card (ver `_conferir_codigos_por_card`).
+    # Corrige os dicts no lugar — são os mesmos objetos que estão em `todos`.
+    if conferir:
+        with ThreadPoolExecutor(max_workers=VISION_CHUNK_WORKERS) as pool:
+            list(pool.map(
+                lambda item: _conferir_codigos_por_card(pdf_path, item[0], item[1], MODEL_FLASH),
+                conferir,
+            ))
 
     vistos, deduped = set(), []
     for p in todos:
@@ -2074,6 +2178,51 @@ def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str
     return produtos
 
 
+_NOME_COM_PRECO_RE = re.compile(r"R\$|\d+,\d{2}\b")
+
+
+def _template_desalinhado(page_texts: List[str], tpl: Dict[str, str],
+                          produtos: List[Dict[str, Any]]) -> Optional[str]:
+    """O modelo de bloco do template fatia o texto A PARTIR do código e lê o
+    preço DEPOIS dele. Em catálogo onde nome e preço vêm ANTES do código, o
+    preço lido é o do produto seguinte e o "nome" vira a linha de preço de
+    display (Neo Festas 24/09/2026: 479 nomes "R$ 37,68 Disp. c/24 un." e
+    preço do vizinho). Dois sinais, medidos no próprio catálogo:
+
+    1. lado do preço: numa página, o 1º código tem preço ANTES dele e o
+       último não tem nenhum DEPOIS → preço vem antes do código. Medido:
+       Neo 54/54 páginas "antes"; BM36 122/122 "depois".
+    2. nome que é preço: >5% dos nomes com "R$" ou valor "12,34".
+
+    Devolve o motivo (texto) ou None.
+    """
+    try:
+        code_re = re.compile(tpl["CODE"], re.M)
+        preco_re = re.compile(tpl["PRECO"], re.M | re.S) if tpl.get("PRECO") not in (None, "", "NONE") else None
+    except re.error:
+        return None
+    if preco_re is not None:
+        antes = depois = 0
+        for txt in page_texts:
+            ms = list(code_re.finditer(txt))
+            if len(ms) < 2:
+                continue
+            preco_antes = bool(preco_re.search(txt[:ms[0].start()]))
+            preco_depois = bool(preco_re.search(txt[ms[-1].end():]))
+            if preco_antes and not preco_depois:
+                antes += 1
+            elif preco_depois and not preco_antes:
+                depois += 1
+        if antes >= 3 and antes >= 0.6 * (antes + depois):
+            return f"preço vem ANTES do código em {antes}/{antes + depois} páginas (template lê depois)"
+    com_nome = [p for p in produtos if p.get("nome")]
+    if com_nome:
+        nomes_preco = sum(1 for p in com_nome if _NOME_COM_PRECO_RE.search(str(p["nome"])))
+        if nomes_preco > 0.05 * len(com_nome):
+            return f"{nomes_preco}/{len(com_nome)} nomes são texto de preço"
+    return None
+
+
 def extract_via_template(pdf_path: str, supplier: str = "", client_rules: str = "") -> Optional[Dict[str, Any]]:
     """
     Caminho RÁPIDO: IA infere template de amostra, código aplica em todas as
@@ -2146,6 +2295,10 @@ def extract_via_template(pdf_path: str, supplier: str = "", client_rules: str = 
     cov_code = sum(1 for p in deduped if _code_looks_valid(p.get("codigo", ""))) / len(deduped)
     if cov_code < TEMPLATE_MIN_COVERAGE:
         print(f"[Template] código válido {cov_code:.0%} < {TEMPLATE_MIN_COVERAGE:.0%} → fallback AI-first (CODE regex inferido errado)")
+        return None
+    motivo = _template_desalinhado(page_texts, tpl, deduped)
+    if motivo:
+        print(f"[Template] {motivo} → fallback AI-first")
         return None
 
     # ─── GATE PREÇO-VINDO-DO-CÓDIGO (23/06/2026) ───────────────────────────
@@ -2654,6 +2807,7 @@ def _verify_prices_by_geometry(pdf_path: str, produtos: list) -> Tuple[list, lis
               f"({consistencia:.0%} de {len(offsets)} casos) — conferindo")
 
         # 2) confere cada produto contra a janela esperada
+        selos_trocados = 0
         for pg, (tokens, located) in page_data.items():
             janela: Dict[int, Optional[int]] = {}  # id(produto) → índice do token único, ou None
             regiao: Dict[int, set] = {}  # id(produto) → todos os preços da região do card
@@ -2730,6 +2884,27 @@ def _verify_prices_by_geometry(pdf_path: str, produtos: list) -> Tuple[list, lis
                         if p.get("precoPromocional") is not None or p.get("promocional"):
                             p["precoPromocional"] = None
                             p["promocional"] = False
+            # Selo EM BREVE trocado entre linhas (Petrin pág. 3, Josef 24/09/2026:
+            # RD1546/RD1547 com preço no card saíram EM BREVE; RD1033/RD1382, sem
+            # preço nenhum no card, saíram sem o selo). Destroca só quando a conta
+            # fecha na página: N marcados COM preço impresso no próprio card e N
+            # não marcados SEM nenhum preço no card. EM BREVE com preço de verdade
+            # (DAGIA DV003) não tem par sem preço na página e fica como está.
+            com_preco_marcados = [
+                p for p, _r in located
+                if p.get("emBreve") and isinstance(p.get("preco"), (int, float))
+                and any(abs(tokens[t]["val"] - p["preco"]) < 0.005 for t in regiao[id(p)])
+            ]
+            sem_preco_livres = [
+                p for p, _r in located
+                if not p.get("emBreve") and p.get("preco") is None and not regiao[id(p)]
+            ]
+            if com_preco_marcados and len(com_preco_marcados) == len(sem_preco_livres):
+                for p in com_preco_marcados:
+                    p["emBreve"] = False
+                for p in sem_preco_livres:
+                    p["emBreve"] = True
+                selos_trocados += len(com_preco_marcados)
     except Exception as e:
         print(f"[PrecoGeometria] falha segura, mantendo preços da IA: {e}")
         return produtos, []
@@ -2737,6 +2912,8 @@ def _verify_prices_by_geometry(pdf_path: str, produtos: list) -> Tuple[list, lis
         doc.close()
 
     print(f"[PrecoGeometria] {len(avisos)} preço(s) corrigido(s) pela posição na página")
+    if selos_trocados:
+        print(f"[PrecoGeometria] selo EM BREVE destrocado em {selos_trocados} produto(s)")
     return produtos, avisos
 
 
@@ -2770,6 +2947,104 @@ def _marcar_nomes_duplicados(produtos: list) -> list:
     return avisos
 
 
+_CORES_REFERENCIA = [
+    ("BRANCO", (1.0, 1.0, 1.0)), ("PRETO", (0.0, 0.0, 0.0)), ("PRATA", (0.66, 0.66, 0.66)),
+    ("DOURADO", (0.76, 0.63, 0.13)), ("AMARELO", (0.96, 0.85, 0.05)), ("LARANJA", (0.95, 0.50, 0.10)),
+    ("VERMELHO", (0.85, 0.10, 0.12)), ("ROSA", (0.97, 0.55, 0.65)), ("PINK", (0.90, 0.10, 0.55)),
+    ("ROXO", (0.50, 0.27, 0.60)), ("LILÁS", (0.75, 0.60, 0.88)), ("AZUL", (0.15, 0.40, 0.85)),
+    ("AZUL CLARO", (0.46, 0.72, 0.90)), ("AZUL MARINHO", (0.10, 0.15, 0.40)),
+    ("VERDE", (0.20, 0.65, 0.30)), ("VERDE CLARO", (0.60, 0.85, 0.45)), ("TIFFANY", (0.30, 0.75, 0.75)),
+    ("MARROM", (0.50, 0.30, 0.15)), ("BEGE", (0.88, 0.79, 0.58)), ("ROSE GOLD", (0.80, 0.58, 0.50)),
+    ("SALMÃO", (0.92, 0.68, 0.66)), ("ROSA ESCURO", (0.72, 0.40, 0.52)), ("CHAMPANHE", (0.90, 0.84, 0.80)),
+]
+
+
+def _nome_da_cor(rgb: Tuple[float, float, float]) -> str:
+    return min(_CORES_REFERENCIA, key=lambda c: sum((a - b) ** 2 for a, b in zip(rgb, c[1])))[0]
+
+
+def _bolinha_acima(desenhos: list, rect: fitz.Rect) -> Optional[str]:
+    """Cor da bolinha (círculo vetorial pequeno) logo acima do código, ou None.
+    Círculo só com contorno = BRANCO (é assim que o catálogo desenha o branco)."""
+    cx = (rect.x0 + rect.x1) / 2
+    melhor = None
+    for d in desenhos:
+        r = d["rect"]
+        if not (8 <= r.width <= 25 and abs(r.width - r.height) <= 2):
+            continue
+        if abs((r.x0 + r.x1) / 2 - cx) > 10 or not (-3 <= rect.y0 - r.y1 <= 25):
+            continue
+        fill = d.get("fill")
+        cor = _nome_da_cor(tuple(fill)) if fill else ("BRANCO" if d.get("color") is not None else None)
+        # bolinha listrada (vários preenchimentos pequenos dentro) = multicolor
+        dentro = {
+            tuple(round(v, 1) for v in o["fill"]) for o in desenhos
+            if o is not d and o.get("fill") and r.contains(o["rect"]) and o["rect"].width < r.width * 0.6
+        }
+        if len(dentro) >= 2:
+            cor = "COLORIDO"
+        dist = rect.y0 - r.y1
+        if cor and (melhor is None or dist < melhor[0]):
+            melhor = (dist, cor)
+    return melhor[1] if melhor else None
+
+
+def _nomear_cores_por_bolinha(pdf_path: str, produtos: list) -> list:
+    """Variação de cor indicada por BOLINHA colorida acima de cada código
+    (Neo Festas pág. 87, Josef 24/09/2026: TOPO BOLO ARCO POMPOM com 4
+    códigos e 4 bolinhas; o nome saía igual pros 4). A cor é lida do próprio
+    desenho vetorial do PDF — a IA lê só o texto e não vê a bolinha.
+
+    Só mexe em grupos de 2+ códigos com o MESMO nome na mesma página, em que
+    TODOS têm bolinha e as cores são diferentes entre si — assim a cor vira o
+    que distingue um código do outro. Nome que já termina com a cor fica igual.
+    """
+    if not produtos:
+        return produtos
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception:
+        return produtos
+    alterados = 0
+    try:
+        grupos: Dict[Tuple[int, str], list] = {}
+        for p in produtos:
+            try:
+                pg = int(p.get("paginaOrigem") or 0)
+            except (TypeError, ValueError):
+                continue
+            if p.get("codigo") and p.get("nome") and 1 <= pg <= len(doc):
+                grupos.setdefault((pg, _nome_chave(p["nome"])), []).append(p)
+        desenhos_cache: Dict[int, list] = {}
+        for (pg, _chave), grupo in grupos.items():
+            if len(grupo) < 2:
+                continue
+            page = doc.load_page(pg - 1)
+            if pg not in desenhos_cache:
+                desenhos_cache[pg] = page.get_drawings()
+            cores = []
+            for p in grupo:
+                rects = page.search_for(str(p["codigo"]).strip("*").strip())
+                cores.append(_bolinha_acima(desenhos_cache[pg], rects[0]) if len(rects) == 1 else None)
+            if None in cores or len(set(cores)) != len(cores):
+                continue
+            for p, cor in zip(grupo, cores):
+                nome = str(p["nome"]).strip()
+                if nome.upper().endswith(cor):
+                    continue
+                # "... CORES" no fim do nome = "várias cores" → vira a cor deste código
+                base = re.sub(r"\s+CORES(\s+SORTIDAS)?$", "", nome, flags=re.I)
+                p["nome"] = f"{base} {cor}"
+                alterados += 1
+    except Exception as e:
+        print(f"[CorBolinha] falha segura: {e}")
+    finally:
+        doc.close()
+    if alterados:
+        print(f"[CorBolinha] cor da bolinha adicionada ao nome de {alterados} produto(s)")
+    return produtos
+
+
 def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str = "") -> Dict[str, Any]:
     """Wrapper único: chama a extração real e aplica correções pós-processamento
     (ex: prefixo de código) independente de qual caminho interno foi usado
@@ -2784,6 +3059,7 @@ def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str =
         result["produtos"], result["avisosPrecoCorrigido"] = _verify_prices_by_geometry(
             pdf_path, result["produtos"],
         )
+        result["produtos"] = _nomear_cores_por_bolinha(pdf_path, result["produtos"])
         result["avisosNomeDuplicado"] = _marcar_nomes_duplicados(result["produtos"])
     return result
 

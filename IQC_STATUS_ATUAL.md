@@ -5,6 +5,17 @@
 
 ---
 
+## ✅ ENTREGUE em 24/09 — retestagem do Josef: DUTE, FOLIA, PETRIN, Neo Festas (PR #172)
+
+- **DUTE:** DT10421, WD0115 e DT10231 sem pedaço do vizinho; a barra do rodapé
+  saiu da foto de ~10 produtos.
+- **FOLIA:** fotos trocadas das págs. 15 e 21 (e mais 12 que ninguém tinha
+  visto) corrigidas; códigos JRF-50.0040 e 0365 lidos certo.
+- **PETRIN:** os 25 ativos sem ***EM BREVE***; 7 dos 8 sem foto voltam (RD1333 fica).
+- **Neo Festas:** nome e preço certos (catálogo inteiro lido pela IA), nenhum
+  código faltando/duplicado, cor da bolinha no nome de 240 variações.
+- Detalhe: `guide.md #14.35`.
+
 ## ✅ ENTREGUE em 24/09 — retestagem do Josef (PR #171) — BM36 fechado
 
 - **FOLIA:** JRF-50.0111, 0020 e 0113 (pág. 12) voltam com foto — 3 cards

@@ -1693,6 +1693,45 @@ novas, nenhuma outra muda. PETRIN: 25 preços zerados — os 2 do Josef + 23
 que ninguém tinha reportado; os 25 conferidos na imagem da página, todos com
 selo EM BREVE. BM36, DAGIA, DUTE, FOLIA ×2, FORTAL, GIRA, VAESO: 0 mudanças.
 
+### 14.35 Retestagem 24/09: DUTE, FOLIA, PETRIN e Neo Festas (cadastro novo) (24/09/2026)
+
+**Neo Festas (fornecedor novo).** Layout "NOME / R$ X Un. / R$ Y Disp. / CÓDIGO":
+nome e preço vêm ANTES do código. O template-synth fatia a partir do código e
+lê o preço DEPOIS dele → preço do vizinho e o "nome" virava a linha de preço de
+display. `_template_desalinhado` mede, por página, se o 1º código tem preço antes
+dele e o último não tem nenhum depois (Neo 54/54 "antes"; BM36 122/122 "depois")
+e se >5% dos nomes são texto de preço; qualquer um → IA lê o catálogo inteiro
+(text-chunked). Resultado real: faltando 10→0, duplicados 11→0, nome=preço 489→0.
+Variação de cor por **bolinha**: a cor é um círculo vetorial acima de cada código
+(`page.get_drawings()`); `_nomear_cores_por_bolinha` nomeia pela cor mais próxima
+de uma paleta (círculo só com contorno = BRANCO, listrado = COLORIDO) e troca o
+"CORES" do fim do nome pela cor, só em grupos do mesmo nome com cores distintas.
+
+**FOLIA.** (a) A posição da visão vem com a escala da página errada (linhas em
+y=173/304/434 com cards em 246/442/639) → casar por distância embaralhava a
+página. `_folia_cards_por_ordem`: quando há 1 card por SKU, casa por ordem de
+leitura (linhas dos cards medidas no PDF). (b) Código miúdo lido errado na
+página inteira (0365→0385, 0040→0847): `_conferir_codigos_por_card` relê só
+código+nome de cada card recortado a 300dpi (1 chamada/página, só no caminho
+de visão) e troca quando o código não existe na releitura e há exatamente um
+card livre com o mesmo nome e o mesmo formato de código.
+
+**PETRIN.** (a) Selo EM BREVE trocado entre linhas pela IA: na conferência por
+geometria, se na página há N marcados EM BREVE com preço impresso no próprio card
+e N não marcados sem nenhum preço no card, destroca (DAGIA DV003 — EM BREVE com
+preço de verdade — não tem par e fica). (b) Fotos: catálogo medido "foto abaixo
+do código" não usava essa orientação no casamento embedded — a linha de baixo
+roubava as fotos da de cima; e foto larga logo abaixo do código (guarda-chuva
+aberto) era rejeitada pelo teto de distância. Resta RD1333 (foto à direita do
+texto numa página de layout misto).
+
+**DUTE.** A foto composta agrupava imagens por uma faixa linha×coluna partida no
+ponto médio entre códigos → caixa do DT10052 na foto do DT10421, pedaços do
+DT10151/DTY1408 na do DT10231, WD0115 com a foto do DT10231, e ~10 produtos com a
+barra de navegação do rodapé. `_dute_dono_de_cada_imagem`: cada imagem é do código
+acima-à-esquerda com menor vão horizontal + 2× vão vertical; faixa da largura da
+página não é de ninguém. 189 das 650 fotos mudam — revisadas lado a lado.
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
