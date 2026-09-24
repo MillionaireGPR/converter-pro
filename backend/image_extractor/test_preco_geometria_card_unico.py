@@ -67,3 +67,29 @@ def test_card_com_dois_precos_continua_sem_mexer():
     fixed, avisos = ge._verify_prices_by_geometry(pdf, copy.deepcopy(produtos))
     assert {p["codigo"]: p for p in fixed}["FT100"]["preco"] == 2.28
     assert avisos == []
+
+
+def test_em_breve_perde_preco_do_vizinho_mesmo_com_valor_igual_ou_de_por():
+    """Josef 24/09/2026: RD1020 (EM BREVE) com o R$ 2,20 do RD1021, que tem o
+    mesmo valor; RD1098-1 (EM BREVE) com o "POR R$ 8,00" do card DE/POR do
+    RD1602. Sem preço na região do próprio card → fica sem preço."""
+    pdf = os.path.join(tempfile.mkdtemp(), "petrin_em_breve.pdf")
+    produtos = _catalogo(pdf, [
+        (40, 120, "RD1020"),
+        (320, 120, "RD1021"), (430, 110, _preco(2.2)),
+        (40, 420, "RD1098-1"),
+        (320, 420, "RD1602"), (430, 405, _preco(16.0)), (480, 405, _preco(8.0)),
+    ])
+    produtos += [
+        {"codigo": "RD1020", "preco": 2.2, "paginaOrigem": 21},
+        {"codigo": "RD1021", "preco": 2.2, "paginaOrigem": 21},
+        {"codigo": "RD1098-1", "preco": 16.0, "precoPromocional": 8.0, "promocional": True, "paginaOrigem": 21},
+        {"codigo": "RD1602", "preco": 16.0, "precoPromocional": 8.0, "promocional": True, "paginaOrigem": 21},
+    ]
+    fixed, _avisos = ge._verify_prices_by_geometry(pdf, copy.deepcopy(produtos))
+    by = {p["codigo"]: p for p in fixed}
+    assert by["RD1020"]["preco"] is None
+    assert by["RD1021"]["preco"] == 2.2
+    assert by["RD1098-1"]["preco"] is None
+    assert by["RD1098-1"]["precoPromocional"] is None and by["RD1098-1"]["promocional"] is False
+    assert by["RD1602"]["preco"] == 16.0 and by["RD1602"]["precoPromocional"] == 8.0

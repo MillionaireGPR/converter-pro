@@ -1,9 +1,17 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 23/09/2026
+**Atualizado em:** 24/09/2026
 
 ---
+
+## ✅ ENTREGUE em 24/09 — retestagem do Josef (PR #171) — BM36 fechado
+
+- **FOLIA:** JRF-50.0111, 0020 e 0113 (pág. 12) voltam com foto — 3 cards
+  encostados eram juntados numa foto só.
+- **PETRIN:** produto EM BREVE não herda mais preço/PROMOÇÃO do vizinho
+  (RD1020, RD1098-1 e mais 23 casos iguais que ainda não tinham sido vistos).
+- Detalhe: `guide.md #14.34`.
 
 ## ✅ ENTREGUE em 23/09 — retestagem do Josef após o recadastro (PR #170)
 

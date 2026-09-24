@@ -1669,6 +1669,30 @@ nos 9 catálogos só marca as 2 FOLIA. BM36 com o template real do job: +GH-1,
 Testes: `test_grade_de_cards_texto.py`, `test_template_codigo_e_nome.py`,
 `test_preco_geometria_card_unico.py`.
 
+### 14.34 Retestagem 24/09: FOLIA pág. 12 e PETRIN EM BREVE (24/09/2026)
+
+BM36 fechado pelo Josef. Restaram dois problemas:
+
+1. **FOLIA JRF-50.0111, 0020 e 0113 sem foto (pág. 12).** Os 3 cards da
+   linha do meio têm 190, 190 e 192pt e se encostam (vão ~2pt). A trava
+   "cards do mesmo tamanho não se costuram" (±2pt) não pegou, e
+   `_costurar_tiles` juntou os 3 numa foto só → 6 cards para 9 códigos.
+   **Correção:** quando o catálogo é grade de cards (#14.33), não costura —
+   cada imagem já é o card de um produto.
+2. **PETRIN EM BREVE com preço do vizinho.** RD1020 ficou com o R$ 2,20 do
+   RD1021; RD1098-1 com o "POR R$ 8,00" + PROMOÇÃO do RD1602. A conferência
+   por geometria só zerava o preço "roubado" se o dono NÃO tivesse o mesmo
+   valor e se o card do dono tivesse UM preço — o RD1021 tinha 2,20 também
+   (tratado como coincidência) e o RD1602 tem DE/POR (2 preços).
+   **Correção:** código sem NENHUM preço impresso na região do próprio card
+   perde o preço (e o promocional) da IA quando esse valor está impresso na
+   região do card de outro código.
+
+**Prova:** FOLIA com as posições reais de produção: 300/300 fotos, só as 3
+novas, nenhuma outra muda. PETRIN: 25 preços zerados — os 2 do Josef + 23
+que ninguém tinha reportado; os 25 conferidos na imagem da página, todos com
+selo EM BREVE. BM36, DAGIA, DUTE, FOLIA ×2, FORTAL, GIRA, VAESO: 0 mudanças.
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por

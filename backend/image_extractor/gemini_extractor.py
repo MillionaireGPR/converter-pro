@@ -2656,6 +2656,7 @@ def _verify_prices_by_geometry(pdf_path: str, produtos: list) -> Tuple[list, lis
         # 2) confere cada produto contra a janela esperada
         for pg, (tokens, located) in page_data.items():
             janela: Dict[int, Optional[int]] = {}  # id(produto) → índice do token único, ou None
+            regiao: Dict[int, set] = {}  # id(produto) → todos os preços da região do card
             for p, rect in located:
                 # Conta TODOS os preços da região do card (janela expandida). Um card
                 # com 2+ preços (ex.: "UND R$ 2,28" + total da caixa "R$ 13,68" na
@@ -2668,6 +2669,7 @@ def _verify_prices_by_geometry(pdf_path: str, produtos: list) -> Tuple[list, lis
                     dx, dy = t["x"] - rect.x0, t["y"] - rect.y0
                     if abs(dx - med_dx) <= 1.5 * DX_TOL and abs(dy - med_dy) <= 3 * DY_TOL:
                         cand.append((ti, abs(dx - med_dx) <= DX_TOL and abs(dy - med_dy) <= DY_TOL))
+                regiao[id(p)] = {ti for ti, _estrito in cand}
                 if not cand:
                     janela[id(p)] = None
                 elif len(cand) == 1 and cand[0][1]:
@@ -2682,7 +2684,6 @@ def _verify_prices_by_geometry(pdf_path: str, produtos: list) -> Tuple[list, lis
                 else:
                     janela[id(p)] = -1
             donos: Dict[int, List[Dict[str, Any]]] = {}
-            original = {id(p): p.get("preco") for p, _r in located}
             for p, _rect in located:
                 ti = janela[id(p)]
                 if ti is not None and ti >= 0:
@@ -2711,21 +2712,24 @@ def _verify_prices_by_geometry(pdf_path: str, produtos: list) -> Tuple[list, lis
                         avisos.append({"codigo": p.get("codigo"), "pagina": pg, "de": atual, "para": novo})
                         p["preco"] = novo
                 else:
-                    # sem preço na própria janela: só zera se o preço da IA é o preço
-                    # da janela de OUTRO código E esse outro código não o recebeu
-                    # (foi "roubado"). Se o dono já tem o mesmo valor, é só coincidência
-                    # de preço igual entre produtos — não mexe.
-                    if isinstance(atual, (int, float)) and any(
-                        abs(tokens[t2]["val"] - atual) < 0.005
-                        and all(
-                            not isinstance(original[id(o)], (int, float))
-                            or abs(original[id(o)] - atual) >= 0.005
-                            for o in donos[t2]
-                        )
-                        for t2 in donos
+                    # Nenhum preço impresso em toda a região do card (ex.: selo
+                    # EM BREVE da Petrin). Se o preço da IA — normal ou promocional —
+                    # está impresso na região do card de OUTRO código, ele veio do
+                    # vizinho: fica sem preço. Vale mesmo quando o vizinho tem o
+                    # mesmo valor ou um card DE/POR (Josef 24/09/2026: RD1020 com o
+                    # R$ 2,20 do RD1021; RD1098-1 com o "POR R$ 8,00" do RD1602).
+                    valores_ia = [v for v in (atual, p.get("precoPromocional")) if isinstance(v, (int, float))]
+                    alheios = {
+                        t2 for o, _r in located if o is not p for t2 in regiao[id(o)]
+                    }
+                    if valores_ia and any(
+                        abs(tokens[t2]["val"] - v) < 0.005 for t2 in alheios for v in valores_ia
                     ):
                         avisos.append({"codigo": p.get("codigo"), "pagina": pg, "de": atual, "para": None})
                         p["preco"] = None
+                        if p.get("precoPromocional") is not None or p.get("promocional"):
+                            p["precoPromocional"] = None
+                            p["promocional"] = False
     except Exception as e:
         print(f"[PrecoGeometria] falha segura, mantendo preços da IA: {e}")
         return produtos, []

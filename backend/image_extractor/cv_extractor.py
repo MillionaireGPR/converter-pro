@@ -137,7 +137,11 @@ def extract_cells_via_cv(
         n_interior_v = len(v_coords) - 2
 
         page_imgs = _get_page_embedded_images(page, logo_xrefs, logo_digests)
-        page_imgs = _costurar_tiles(page_imgs)
+        # Na grade de cards cada imagem já é o card de UM produto — costurar
+        # juntava 3 cards encostados de 190/190/192pt (FOLIA pág. 12, Josef
+        # 24/09/2026: JRF-50.0111, 0020 e 0113 sem foto).
+        if not grade_de_cards:
+            page_imgs = _costurar_tiles(page_imgs)
 
         pct = int((page_idx + 1) / total_pages * 100)
         print(f"[CV] [{page_idx+1}/{total_pages} {pct}%] Pág {page_num}: {n_interior_v} V-int | {len(page_imgs)} imgs", end="")
