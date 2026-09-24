@@ -1,9 +1,19 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 18/09/2026
+**Atualizado em:** 23/09/2026
 
 ---
+
+## ✅ ENTREGUE em 23/09 — retestagem do Josef após o recadastro (PR #170)
+
+- **FOLIA:** voltou a exportar só a foto (sem preço). O detector de "grade de
+  cards" olhava a posição do produto em vez do texto do PDF; corrigido.
+- **BM36:** BM361548 com o nome certo; ímãs GH-1 e GH-2BI (e o 439890, que
+  também sumia) de volta na exportação.
+- **PETRIN:** RD1820 com R$ 12,80 (antes pegava R$ 19,00 do RD1819).
+- Provado nos 9 catálogos reais sem gastar API; só os casos acima mudam.
+  Detalhe: `guide.md #14.33`.
 
 ## ✅ ENTREGUE em 18/09 — BM36: os 137 produtos que não saíam eram nome vazio
 
