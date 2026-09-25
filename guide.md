@@ -1732,6 +1732,62 @@ barra de navegação do rodapé. `_dute_dono_de_cada_imagem`: cada imagem é do 
 acima-à-esquerda com menor vão horizontal + 2× vão vertical; faixa da largura da
 página não é de ninguém. 189 das 650 fotos mudam — revisadas lado a lado.
 
+### 14.36 Retestagem 25/09: DUTE, PETRIN, Neo Festas e FOLIA (25/09/2026)
+
+**Recorte "só imagens" (DUTE, 9 códigos).** A foto composta e o recorte de
+fallback eram um pedaço da PÁGINA renderizada: dentro do retângulo de um PNG
+transparente aparecia o que a página desenha em volta (linha tracejada entre
+quadrantes, texto da ficha, barra de ícones do rodapé, fundo decorado de página
+inteira). `_render_so_imagens` reabre a página numa cópia descartável
+(`_copia_so_com_imagens`: redaction tira texto e vetor, `delete_image` tira as
+outras imagens com xref; imagem embutida sem xref que fica quase toda FORA da
+foto é apagada depois do render) e só então recorta. Foto fatiada
+(`_costurar_tiles`) mantém todas as fatias. Usado na composição
+(`_crop_composition_masked(page=...)`) e no fallback de `_extract_perfect_image`.
+**Ícones de característica** (som/luz/pilha): a MESMA imagem pequena (<80pt)
+desenhada 3+ vezes no catálogo (`_icones_de_caracteristica`, contagem no PDF
+inteiro uma vez por documento, ~14s na DUTE) sai da composição — o filtro de
+logo amostra só 15 páginas e não pegava.
+
+**Foto recortada pelo PDF (PETRIN RD1333/RD1113).** A foto do RD1113 é um JPEG
+de 4 coletes com clip mostrando só 1; `get_image_info` devolve o retângulo da
+foto INTEIRA, que cobria a foto do RD1333 → descartada como "selo sobre foto
+maior". `_retangulo_visivel`: só para imagem que cobre outra, renderiza ela
+sozinha com fundo transparente e mede onde há pixel; se a parte visível é <60%
+do declarado, passa a valer (`recortada=True`, extração vai direto pro recorte).
+
+**Bloco do código (PETRIN RD1715).** Em "foto abaixo do código" o bloco ia até
+o próximo código da MESMA coluna; coluna sem código abaixo ia até o fim da
+página e a maior foto (estante do RD2131) ganhava. Agora tenta primeiro o bloco
+até o próximo código de QUALQUER coluna. Medido no catálogo inteiro: também
+acerta RD1006/1012 (bolas), RD1589, RD2050, RD2159, RD1857 (porta-retrato que
+pegava a moldura do RD1856).
+
+**Casamento por coluna (Neo Festas págs. 6, 9, 11, 13).** (a) Foto à ESQUERDA
+do texto: na busca nas colunas vizinhas só contava a altura, e a foto do card
+do outro lado (mesma altura) ganhava por 1pt → soma a distância horizontal.
+(b) Vários códigos no mesmo card (bolinhas de cor): o 2º código pegava a foto
+do card de baixo (cascata) ou do vizinho. Código a ≤40pt (vertical) e ≤150pt
+(horizontal) de um já casado divide a foto dele quando a candidata é de outra
+coluna que não a da foto do irmão, começa abaixo dele, ou não existe. Não vale
+para catálogo "foto abaixo do código". Neo págs. 6, 9, 13 e 67 conferidas
+código a código: todas certas.
+
+**Texto (Neo Festas).** `_limpar_marcador_do_codigo`: "104736*" → "104736" (a
+legenda do catálogo: * = poucas unidades); com o * o produto sumia da
+exportação e não casava com a foto. `_conferir_codigos_pelo_texto`: código da
+IA que NÃO existe no texto da página × código do texto que não é de produto
+nenhum; troca (na ordem) só se a quantidade bate e o nome aparece até 300
+caracteres antes (pág. 67: 132331/170331 → 128465/128473); produto sem página
+ganha a página se o código aparece em uma só. Cor da bolinha: "X" e "X CORES"
+agora são o mesmo grupo.
+
+**Nome pela releitura do card (FOLIA JRF-50.0189).** `_conferir_codigos_por_card`
+já relia código+nome a 300dpi; agora corrige o nome só em erro de UMA letra
+numa ÚNICA palavra de 4+ letras, sem número, sem plural, sem só-acento — a
+palavra pode casar com duas relidas juntas ("ABRI DOR"). Rodado nas 41 páginas:
+só "KIT ABRIOR + ROLHA" → "KIT ABRIDOR + ROLHA" mudou.
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
