@@ -112,7 +112,10 @@ def _rules_path(supplier: str) -> str:
 
 def rules_hash(raw_text: str) -> str:
     import hashlib
-    return hashlib.sha256((raw_text or "").strip().encode("utf-8")).hexdigest()[:16]
+    # "v2": prompt de compilação passou a preservar marcações literais
+    # (***CORES***) — força recompilar regras já em cache (25/09/2026)
+    return hashlib.sha256(("v2
+" + (raw_text or "").strip()).encode("utf-8")).hexdigest()[:16]
 
 
 def get_cached_client_rules(supplier: str, raw_text: str) -> Optional[str]:

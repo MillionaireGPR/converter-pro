@@ -1822,6 +1822,14 @@ mesma "linha" se o y difere ≤15pt E o x difere >10pt (pág. 88: ROSA MAGENTA
 em y=811 ao lado de CORAÇÕES em y=801; lista vertical a cada 12pt continua uma
 linha por código).
 
+**Marcação ***CORES*** do cliente (decisão Gabriel 25/09).** A regra do cadastro
+da Neo pede "***CORES***"; a compilação da regra (`_COMPILE_RULES_PROMPT`)
+perdia os asteriscos e a etapa da bolinha trocava o "CORES" pela cor. Agora o
+prompt preserva marcação literal e a põe no FIM DO NOME (nunca no código);
+`_nomear_cores_por_bolinha` não mexe em grupo com marcação ***X*** do cliente
+(a cor da bolinha só entra em fornecedor sem essa regra). `rules_hash` ganhou
+prefixo "v2" para recompilar as regras já em cache.
+
 **Não resolvível:** Neo pág. 32 (PISCA PISCA 149055/149039/149080) tem UMA foto
 para as 3 cores — não existe foto verde no catálogo.
 

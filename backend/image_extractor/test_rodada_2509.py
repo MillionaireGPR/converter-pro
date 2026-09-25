@@ -322,3 +322,22 @@ def test_lista_vertical_de_codigos_com_pouco_espaco_mantem_a_ordem():
     skus = [dict(_sku(f"C{k}", 452, 511 + 12 * k), name="SAIA TULE") for k in range(6)]
     grade = cv._variantes_em_grade(skus, imgs)
     assert [grade[f"C{k}"] for k in range(6)] == imgs
+
+
+def test_marcacao_cores_do_cliente_nao_vira_nome_de_cor(tmp_path):
+    # Gabriel 25/09: manter o padrão ***CORES*** (regra do cadastro da Neo)
+    pdf = str(tmp_path / "bolinhas.pdf")
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    for x, cor, cod in ((130, (0.75, 0.75, 0.75), "128430"), (170, (0.92, 0.71, 0.0), "128422")):
+        shape = page.new_shape()
+        shape.draw_circle((x + 14, 88), 7.5)
+        shape.finish(fill=cor, color=None)
+        shape.commit()
+        page.insert_text((x, 105), cod, fontsize=9)
+    doc.save(pdf)
+    doc.close()
+    produtos = [{"codigo": "128430", "nome": "BALÕES PARTY 62x28cm ***CORES***", "paginaOrigem": 1},
+                {"codigo": "128422", "nome": "BALÕES PARTY 62x28cm ***CORES***", "paginaOrigem": 1}]
+    ge._nomear_cores_por_bolinha(pdf, produtos)
+    assert [p["nome"] for p in produtos] == ["BALÕES PARTY 62x28cm ***CORES***"] * 2

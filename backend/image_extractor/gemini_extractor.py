@@ -405,6 +405,7 @@ Converta em regras imperativas, curtas e VERIFICÁVEIS, referindo-se aos campos:
 REGRAS DA CONVERSÃO:
 - Uma instrução por linha, começando com "- ".
 - Só inclua o que estiver AFIRMADO no texto. NÃO invente, NÃO complete, NÃO generalize.
+- Texto que o usuário manda ACRESCENTAR (marcação, sufixo, etiqueta) vai EXATAMENTE como ele escreveu, com os mesmos símbolos (ex.: ***CORES*** continua ***CORES***, nunca só CORES), e vai no FIM DO NOME. O campo codigo é sempre só o código impresso, sem nada acrescentado — "ao lado do código" significa no nome daquele produto.
 - Descarte conversa, história e justificativa; mantenha só o que muda a extração.
 - Se o texto não disser nada aproveitável, responda exatamente: (sem regras)
 - Máximo 10 linhas. Sem preâmbulo, sem comentário final.
@@ -3026,6 +3027,7 @@ _CORES_REFERENCIA = [
 ]
 
 
+_MARCACAO_CLIENTE_RE = re.compile(r"\*{3}[^*]+\*{3}\s*$")
 _SUFIXO_CORES_RE = re.compile(r"\s+\**CORES\**(\s+SORTIDAS)?$", re.I)
 
 
@@ -3068,6 +3070,10 @@ def _nomear_cores_por_bolinha(pdf_path: str, produtos: list) -> list:
     Só mexe em grupos de 2+ códigos com o MESMO nome na mesma página, em que
     TODOS têm bolinha e as cores são diferentes entre si — assim a cor vira o
     que distingue um código do outro. Nome que já termina com a cor fica igual.
+
+    Marcação do cliente tem prioridade (Gabriel, 25/09/2026: "manter o padrão
+    ***CORES***"): nome que termina com ***ALGO*** fica como está — a regra
+    do cadastro pediu essa marcação pro comercial conferir a cor.
     """
     if not produtos:
         return produtos
@@ -3099,6 +3105,8 @@ def _nomear_cores_por_bolinha(pdf_path: str, produtos: list) -> list:
                 rects = page.search_for(str(p["codigo"]).strip("*").strip())
                 cores.append(_bolinha_acima(desenhos_cache[pg], rects[0]) if len(rects) == 1 else None)
             if None in cores or len(set(cores)) != len(cores):
+                continue
+            if any(_MARCACAO_CLIENTE_RE.search(str(p["nome"])) for p in grupo):
                 continue
             for p, cor in zip(grupo, cores):
                 nome = str(p["nome"]).strip()
