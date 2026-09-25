@@ -431,22 +431,40 @@ def _foto_principal_da_celula(sku, valid_skus, imgs, usadas, page_w, page_h, min
         if abs(oc["y"] - sy) < 30.0 and oc["x"] > sx + 20.0:
             x1 = min(x1, oc["x"] - (oc.get("width") or 40.0) / 2.0 - 5.0)
     y0, y1 = sy - 10.0, page_h
+    # Próximo código abaixo em QUALQUER coluna: a coluna da direita sem
+    # código abaixo ia até o fim da página e a maior foto de lá (a estante do
+    # RD2131) ganhava da foto do próprio RD1715 (PETRIN pág. 85, Josef
+    # 25/09/2026). Medido no catálogo inteiro: o bloco curto primeiro acerta
+    # também RD1006/1012 (bolas), RD1589, RD2050, RD1857 (porta-retrato que
+    # pegava a moldura do RD1856). Se nada cabe no bloco curto, vale o bloco
+    # só pela coluna.
+    y1_qualquer = page_h
     for o in valid_skus:
         if o is sku:
             continue
         oc = o["spatialContext"]
-        if oc["y"] > sy + 30.0 and x0 <= oc["x"] < x1:
-            y1 = min(y1, oc["y"] - 10.0)
-    melhor = None
-    for img in imgs:
-        if id(img) in usadas or img.get("rect") is None:
-            continue
-        if min_area > 0 and img.get("area", 0.0) < min_area:
-            continue
-        if x0 <= img["cx"] < x1 and y0 <= img["cy"] < y1:
-            if melhor is None or img.get("area", 0.0) > melhor.get("area", 0.0):
-                melhor = img
-    return melhor
+        if oc["y"] > sy + 30.0:
+            y1_qualquer = min(y1_qualquer, oc["y"] - 10.0)
+            if x0 <= oc["x"] < x1:
+                y1 = min(y1, oc["y"] - 10.0)
+
+    def _maior_no_bloco(y_fim):
+        melhor = None
+        for img in imgs:
+            if id(img) in usadas or img.get("rect") is None:
+                continue
+            if min_area > 0 and img.get("area", 0.0) < min_area:
+                continue
+            if x0 <= img["cx"] < x1 and y0 <= img["cy"] < y_fim:
+                if melhor is None or img.get("area", 0.0) > melhor.get("area", 0.0):
+                    melhor = img
+        return melhor
+
+    if y1_qualquer < y1:
+        melhor = _maior_no_bloco(y1_qualquer)
+        if melhor is not None:
+            return melhor
+    return _maior_no_bloco(y1)
 
 
 def _descartar_selos(page_imgs: List[Dict], tag: str) -> List[Dict]:
@@ -959,9 +977,14 @@ def _crop_composition_masked(
     width: int,
     height: int,
     scale: float,
+    page: Optional[fitz.Page] = None,
 ) -> Optional[np.ndarray]:
     """Recorta a uniao das imagens de uma composicao Dute apagando o que nao
     pertence a nenhuma delas.
+
+    Com `page`, o recorte vem de uma renderizacao so com as imagens do grupo
+    (ver `_render_so_imagens`): texto, linhas e imagens de fundo/rodape que
+    ficam POR CIMA ou POR BAIXO do retangulo da foto nao entram.
 
     Josef, 16/09/2026 (Dute, mesmo defeito que a Folia em 15/09): o preco e o
     titulo do produto ficam ENTRE as fotos (embalagem + brinquedo), nunca
@@ -988,7 +1011,12 @@ def _crop_composition_masked(
     if x1 <= x0 or y1 <= y0:
         return None
 
-    crop = raster[y0:y1, x0:x1].copy()
+    crop = None
+    if page is not None:
+        crop = _render_so_imagens(page, grouped, fitz.Rect(x0 / scale, y0 / scale, x1 / scale, y1 / scale),
+                                  (x1 - x0, y1 - y0), scale)
+    if crop is None:
+        crop = raster[y0:y1, x0:x1].copy()
     mask = np.zeros(crop.shape[:2], dtype=bool)
     # 1pt de folga pra nao deixar friso branco no contorno real da foto por
     # arredondamento de ponto-flutuante -> pixel.
@@ -1004,6 +1032,127 @@ def _crop_composition_masked(
 
     crop[~mask] = 255
     return crop if crop.size > 0 else None
+
+
+def _copia_so_com_imagens(page: fitz.Page, manter_xrefs: set, clip: fitz.Rect):
+    """Cópia descartável da página sem texto, sem desenho vetorial e sem as
+    imagens (com xref) que tocam `clip` e não estão em `manter_xrefs`.
+    Devolve (doc, página, imagens embutidas sem xref que tocam o clip) ou
+    None — quem chama fecha o doc."""
+    caminho = page.parent.name
+    if not caminho or not os.path.exists(caminho):
+        return None
+    try:
+        tmp = fitz.open(caminho)
+    except Exception:
+        return None
+    try:
+        tp = tmp.load_page(page.number)
+        tp.add_redact_annot(tp.rect, fill=False)
+        tp.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE,
+                            graphics=fitz.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED,
+                            text=fitz.PDF_REDACT_TEXT_REMOVE)
+        inline = []
+        for info in tp.get_image_info(xrefs=True):
+            r = fitz.Rect(info["bbox"])
+            if not r.intersects(clip):
+                continue
+            xref = info.get("xref") or 0
+            if xref and xref not in manter_xrefs:
+                tp.delete_image(xref)
+            elif not xref and r.get_area() > 0:
+                inline.append(r)
+        return tmp, tp, inline
+    except Exception as e:
+        print(f"[CV] cópia só-imagens falhou: {e}")
+        tmp.close()
+        return None
+
+
+def _render_so_imagens(
+    page: fitz.Page, manter: List[Dict], clip: fitz.Rect, tamanho: Tuple[int, int], scale: float,
+) -> Optional[np.ndarray]:
+    """Renderiza `clip` da página só com as imagens de `manter`.
+
+    Josef, 25/09/2026 (Dute, 9 códigos): o retângulo de uma foto recortada
+    (PNG transparente) cobre também o que a página desenha em volta — linha
+    tracejada entre quadrantes, texto da ficha ("BANCO", "Dimensões..."), a
+    barra de ícones do rodapé e o fundo decorado de página inteira. Recortar
+    a página renderizada trazia tudo isso junto. Aqui a página é reaberta
+    numa cópia descartável, sem texto, sem desenho vetorial e sem as outras
+    imagens, e só então renderizada. Qualquer falha devolve None (o chamador
+    usa o recorte antigo).
+    """
+    # foto fatiada (ver _costurar_tiles): todas as fatias ficam
+    manter_xrefs = {
+        x for img in manter
+        for x in [img.get("xref")] + [t.get("xref") for t in img.get("tiles") or []] if x
+    }
+    copia = _copia_so_com_imagens(page, manter_xrefs, clip)
+    if copia is None:
+        return None
+    tmp, tp, inline = copia
+    try:
+        rects_manter = [fitz.Rect(img["rect"]) for img in manter]
+        # imagem embutida no conteúdo (sem xref, ex. ícones do rodapé) não
+        # sai pelo xref. Se fica quase toda FORA da foto é da página → apaga
+        # depois de renderizar. Se fica dentro (selo "NOVO" em cima da foto)
+        # é da foto → fica.
+        apagar = [
+            r & clip for r in inline
+            if (max((r & m).get_area() for m in rects_manter) if rects_manter else 0.0) < 0.5 * r.get_area()
+        ]
+        pix = tp.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=clip, colorspace=fitz.csRGB, alpha=False)
+        arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3).copy()
+        for r in apagar:
+            ax0, ay0 = int((r.x0 - clip.x0) * scale), int((r.y0 - clip.y0) * scale)
+            ax1, ay1 = int(math.ceil((r.x1 - clip.x0) * scale)), int(math.ceil((r.y1 - clip.y0) * scale))
+            arr[max(0, ay0):max(0, ay1), max(0, ax0):max(0, ax1)] = 255
+        w, h = tamanho
+        if arr.shape[1] != w or arr.shape[0] != h:
+            arr = cv2.resize(arr, (w, h))
+        return arr
+    except Exception as e:
+        print(f"[CV] render só-imagens falhou (usa recorte da página): {e}")
+        return None
+    finally:
+        tmp.close()
+
+
+def _retangulo_visivel(page: fitz.Page, img: Dict) -> Optional[fitz.Rect]:
+    """Parte do retângulo da imagem que aparece de fato na página.
+
+    PETRIN pág. 140 (Josef 25/09/2026, RD1333 sem foto): a foto do RD1113 é
+    um JPEG com 4 coletes que o PDF recorta (clip) pra mostrar só o laranja.
+    O retângulo declarado é o da foto inteira e cobria a foto do RD1333, que
+    por isso era descartada como "selo em cima de foto maior". Renderiza só
+    esta imagem com fundo transparente e mede onde há pixel desenhado."""
+    rect = fitz.Rect(img["rect"]) & page.rect
+    if rect.is_empty:
+        return None
+    copia = _copia_so_com_imagens(page, {img["xref"]}, rect)
+    if copia is None:
+        return None
+    tmp, tp, inline = copia
+    try:
+        escala = min(1.0, 200.0 / max(rect.width, rect.height))
+        pix = tp.get_pixmap(matrix=fitz.Matrix(escala, escala), clip=rect, alpha=True)
+        alfa = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)[:, :, -1].copy()
+        sx, sy = rect.width / pix.width, rect.height / pix.height
+        # selo/etiqueta embutido sem xref (preço, logo) não é desta imagem
+        for r in inline:  # +2px: borda suavizada (antialias) do selo
+            alfa[max(0, int((r.y0 - rect.y0) / sy) - 2):max(0, int(math.ceil((r.y1 - rect.y0) / sy)) + 2),
+                 max(0, int((r.x0 - rect.x0) / sx) - 2):max(0, int(math.ceil((r.x1 - rect.x0) / sx)) + 2)] = 0
+        ys, xs = np.nonzero(alfa > 16)
+        if len(xs) == 0:
+            return None
+        return fitz.Rect(rect.x0 + xs.min() * sx, rect.y0 + ys.min() * sy,
+                         rect.x0 + (xs.max() + 1) * sx, rect.y0 + (ys.max() + 1) * sy)
+    except Exception as e:
+        print(f"[CV] retângulo visível falhou: {e}")
+        return None
+    finally:
+        tmp.close()
 
 
 def _filtrar_imagens_fora_da_pagina(
@@ -1097,6 +1246,46 @@ def _dute_dono_de_cada_imagem(valid_skus: list, page_imgs: List[Dict], page_widt
             return vao_h + 2 * vao_v
         donos[id(image)] = min(candidatos, key=distancia)[0]
     return donos
+
+
+_VEZES_POR_DOC: Dict[int, Dict[int, int]] = {}
+
+
+def _vezes_de_cada_imagem(doc: fitz.Document) -> Dict[int, int]:
+    """Quantas vezes cada xref é desenhado no catálogo inteiro (calculado uma
+    vez por documento; só o caminho de foto composta usa)."""
+    if doc is None:
+        return {}
+    chave = id(doc)
+    if chave not in _VEZES_POR_DOC:
+        _VEZES_POR_DOC.clear()
+        vezes: Dict[int, int] = {}
+        for page in doc:
+            for info in page.get_image_info(xrefs=True):
+                xref = info.get("xref") or 0
+                if xref:
+                    vezes[xref] = vezes.get(xref, 0) + 1
+        _VEZES_POR_DOC[chave] = vezes
+    return _VEZES_POR_DOC[chave]
+
+
+def _icones_de_caracteristica(doc: fitz.Document, page_imgs: List[Dict]) -> set:
+    """ids das imagens que são ícone de característica (som/luz/pilha): a
+    MESMA imagem pequena (<80pt) desenhada 3+ vezes no catálogo, mais o
+    desenho que vai por cima dela (nota musical, lâmpada — outra imagem,
+    dentro do retângulo do ícone). Foto de produto não se repete assim."""
+    vezes_no_catalogo = _vezes_de_cada_imagem(doc)
+    repetidas = {
+        image["xref"] for image in page_imgs
+        if not image.get("tiles") and vezes_no_catalogo.get(image["xref"], 0) >= 3
+        and max(image["rect"].width, image["rect"].height) < 80
+    }
+    fundos_de_icone = [image["rect"] for image in page_imgs if image["xref"] in repetidas]
+    return {
+        id(image) for image in page_imgs
+        if not image.get("tiles")
+        and (image["xref"] in repetidas or any(r.contains(image["rect"]) for r in fundos_de_icone))
+    }
 
 
 def _match_dute_compositions(
@@ -1225,6 +1414,7 @@ def _match_dute_compositions(
                 cells.append((sku, x_min, x_max, y_min, y_max, col_index, row_index))
 
     donos = _dute_dono_de_cada_imagem(valid_skus, page_imgs, page_width)
+    icones = _icones_de_caracteristica(doc, page_imgs)
 
     matches: List[Dict] = []
     unmatched: List[Dict] = []
@@ -1243,6 +1433,11 @@ def _match_dute_compositions(
         # pág. 105) ou vazava pedaço do vizinho (DT10421 pág. 17). A faixa
         # fica só no log (col/row).
         grouped = [image for image in page_imgs if donos.get(id(image)) is sku]
+        # Ícone de característica (ver `_icones_de_caracteristica`): o filtro
+        # de logo não pega (amostra só 15 páginas). Josef 25/09/2026.
+        sem_icones = [image for image in grouped if id(image) not in icones]
+        if sem_icones:
+            grouped = sem_icones
 
         if not grouped:
             unmatched.append({"sku": sku_code, "page": page_num, "reason": "no_img_in_dute_cell"})
@@ -1255,7 +1450,8 @@ def _match_dute_compositions(
             match_type = "dute_cell"
         else:
             img_arr = _crop_composition_masked(
-                grouped, raster, width, height, scale
+                grouped, raster, width, height, scale,
+                page=doc.load_page(page_num - 1) if doc is not None else None,
             )
             match_type = "dute_composition"
 
@@ -1671,6 +1867,9 @@ def _match_via_grid(
     # reservado pra legenda-abaixo-da-foto-grande).
     # Mapa: sku_code → imagem matched (para variantes pegarem a mesma)
     variant_cache: Dict[str, Dict] = {}
+    # (coluna, x, y, imagem) de cada código já casado nesta página
+    casados_pagina: List[Tuple[int, float, float, Dict]] = []
+    coluna_da_imagem = {id(img): c for c, imgs in col_imgs.items() for img in imgs}
 
     for col_idx in range(n_cols):
         skus_sorted = sorted(col_skus[col_idx],
@@ -1712,7 +1911,7 @@ def _match_via_grid(
             best_img = None
             best_dist = float("inf")
 
-            def _try_match(candidates, min_area: float = 0.0):
+            def _try_match(candidates, min_area: float = 0.0, peso_x: float = 0.0):
                 nonlocal best_img, best_dist
                 for img in candidates:
                     if id(img) in used_img_ids:
@@ -1742,6 +1941,11 @@ def _match_via_grid(
                         if rect_i is not None and rect_i.y0 > sku_y + 2.0:
                             dist += 10000.0
 
+                    if peso_x and img.get("rect") is not None:
+                        sku_x = sku["spatialContext"]["x"]
+                        r = img["rect"]
+                        dist += peso_x * max(0.0, r.x0 - sku_x, sku_x - r.x1)
+
                     if dist < best_dist:
                         best_dist = dist
                         best_img = img
@@ -1761,10 +1965,13 @@ def _match_via_grid(
 
                 # FALLBACK CROSS-COLUMN: se nenhuma imagem na coluna do SKU,
                 # busca em colunas adjacentes (±1) pela imagem mais próxima.
+                # A distância horizontal entra no desempate: foto à esquerda do
+                # texto (Neo Festas pág. 6, Josef 25/09/2026) tem a foto do card
+                # vizinho na MESMA altura, do outro lado, e ganhava por 1pt.
                 if not best_img:
                     for nearby_col in (col_idx - 1, col_idx + 1):
                         if 0 <= nearby_col < n_cols:
-                            _try_match(col_imgs[nearby_col], min_area)
+                            _try_match(col_imgs[nearby_col], min_area, peso_x=1.0)
                     if best_img:
                         print(f"    [ColMatch] {sku_code}: match cross-col (col_idx={col_idx})")
 
@@ -1782,12 +1989,41 @@ def _match_via_grid(
                 if best_img:
                     break
 
+            # Vários códigos no MESMO card (variações de cor com bolinha, Neo
+            # Festas págs. 9 e 13, Josef 25/09/2026): a foto do card já foi
+            # para o 1º código, e os outros pegavam a foto do card de BAIXO
+            # (cascata: o último card ficava sem foto) ou a do card VIZINHO
+            # na mesma altura (o código da ponta da fileira de bolinhas fica
+            # mais perto da foto do vizinho). Código a até 40pt (vertical) e
+            # 150pt (horizontal) de outro já casado divide a foto dele quando
+            # o que sobrou pra ele é foto de OUTRA coluna que não a da foto do
+            # irmão, foto que começa abaixo dele, ou nada.
+            sku_x = sku["spatialContext"]["x"]
+            irmao = None
+            if orientacao != "abaixo":
+                irmao = next(
+                    (img for _c, x, y, img in reversed(casados_pagina)
+                     if abs(y - sku_y) <= 40 and abs(x - sku_x) <= 150),
+                    None,
+                )
+            if irmao is not None and (
+                best_img is None or best_dist >= 10000.0
+                or coluna_da_imagem.get(id(best_img)) != coluna_da_imagem.get(id(irmao))
+            ):
+                img_arr_irmao = _extract_perfect_image(doc, irmao, raster, width, height, scale)
+                if img_arr_irmao is not None and img_arr_irmao.size > 0:
+                    fp = _save_image(img_arr_irmao, sku_code, output_folder)
+                    matches.append(_make_match(sku, page_num, fp, "variant_share"))
+                    casados_pagina.append((col_idx, sku_x, sku_y, irmao))
+                    continue
+
             if not best_img:
                 unmatched.append({"sku": sku_code, "page": page_num, "reason": "no_img_in_col"})
                 continue
 
             used_img_ids.add(id(best_img))
             variant_cache[base] = best_img
+            casados_pagina.append((col_idx, sku_x, sku_y, best_img))
 
             # Verificar variações (múltiplas imagens agrupadas no mesmo Y)
             grouped = [best_img]
@@ -1804,7 +2040,7 @@ def _match_via_grid(
                 # retângulo que as envolve, e é lá que preço/specs da página
                 # estão desenhados — recortar o raster cru trazia esse texto
                 # junto (mesmo defeito do Dute em 16/09, ver #14.13).
-                img_arr = _crop_composition_masked(grouped, raster, width, height, scale)
+                img_arr = _crop_composition_masked(grouped, raster, width, height, scale, page=page)
                 match_type = "col_composition"
             else:
                 img_arr = _extract_perfect_image(doc, best_img, raster, width, height, scale)
@@ -2142,6 +2378,13 @@ def _extract_perfect_image(
     if img_info.get("tiles"):
         return _crop_raster_at_pdf_rect(rect, raster, width, height, scale)
 
+    # Foto recortada pelo PDF: o arquivo tem mais do que aparece (4 coletes,
+    # aparece 1) — vai direto pro recorte da parte visível.
+    if img_info.get("recortada"):
+        doc_extract = False
+    else:
+        doc_extract = True
+
     xref = img_info["xref"]
     display_w = max(1.0, rect.width)
     display_h = max(1.0, rect.height)
@@ -2149,6 +2392,8 @@ def _extract_perfect_image(
 
     # Tentativa 1: doc.extract_image (qualidade perfeita)
     try:
+        if not doc_extract:
+            raise ValueError("recortada")
         img_data = doc.extract_image(xref)
         if img_data and img_data.get("image"):
             raw = img_data["image"]
@@ -2178,6 +2423,16 @@ def _extract_perfect_image(
     y1 = min(height, int((rect.y1 - inset) * scale))
     if x1 <= x0 or y1 <= y0:
         return None
+    # Só a imagem, sem o texto/linhas/fundo que a página desenha por cima ou
+    # por baixo do retângulo (Dute DT10176 pág. 185, Josef 25/09/2026: foto
+    # girada no arquivo cai aqui e trazia a linha tracejada e o rodapé).
+    if img_info.get("pagina") is not None:
+        limpo = _render_so_imagens(
+            doc.load_page(img_info["pagina"]), [img_info],
+            fitz.Rect(x0 / scale, y0 / scale, x1 / scale, y1 / scale), (x1 - x0, y1 - y0), scale,
+        )
+        if limpo is not None:
+            return limpo
     crop = raster[y0:y1, x0:x1]
     return crop if crop.size > 0 else None
 
@@ -2279,10 +2534,32 @@ def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set,
             pass
         result.append({
             "xref": xref,
+            "pagina": getattr(page, "number", None),
             "rect": rect,
             "cx": (rect.x0 + rect.x1) / 2,
             "cy": (rect.y0 + rect.y1) / 2,
             "area": iw * ih,
+        })
+
+    # Imagem que COBRE outra (≥80% da menor dentro dela) pode ser uma foto
+    # recortada pelo PDF (clip) — o retângulo declarado é maior que o que
+    # aparece. Mede a parte visível só nesses casos (render custa) e, se for
+    # bem menor, passa a usar ela. Ver _retangulo_visivel.
+    for img in result:
+        r = img["rect"]
+        cobre = any(
+            o is not img and o["area"] < img["area"]
+            and (o["rect"] & r).get_area() >= 0.8 * o["area"]
+            for o in result
+        )
+        if not cobre:
+            continue
+        vis = _retangulo_visivel(page, img) if isinstance(page, fitz.Page) else None
+        if vis is None or vis.get_area() >= 0.6 * r.get_area():
+            continue
+        img.update({
+            "rect": vis, "cx": (vis.x0 + vis.x1) / 2, "cy": (vis.y0 + vis.y1) / 2,
+            "area": vis.get_area(), "recortada": True,
         })
     return result
 

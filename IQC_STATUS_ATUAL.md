@@ -1,9 +1,23 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 24/09/2026
+**Atualizado em:** 25/09/2026
 
 ---
+
+## ✅ ENTREGUE em 25/09 — retestagem do Josef: DUTE, PETRIN, Neo Festas, FOLIA (PR #173)
+
+- **DUTE:** os 9 códigos saem sem linha tracejada, texto da ficha, barra do
+  rodapé e fundo decorado (a foto é montada só com as imagens do produto);
+  ícones de som/luz saíram das fotos montadas.
+- **PETRIN:** RD1333 (e RD1113, mesma causa) com foto; RD1715 com o cabide
+  (não a estante); de quebra ~15 fotos que eram do vizinho corrigidas.
+- **Neo Festas:** págs. 6, 11 e 13 com a foto certa em todos os códigos
+  (códigos de cor do mesmo card dividem a foto); os 9 códigos sumidos voltam
+  (asterisco "poucas unidades" saía grudado no código; 2 lidos errado pela
+  IA corrigidos pelo texto do PDF).
+- **FOLIA:** JRF-50.0189 "KIT ABRIDOR + ROLHA".
+- Detalhe: `guide.md #14.36`.
 
 ## ✅ ENTREGUE em 24/09 — retestagem do Josef: DUTE, FOLIA, PETRIN, Neo Festas (PR #172)
 

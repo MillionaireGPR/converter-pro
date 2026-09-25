@@ -1457,7 +1457,74 @@ def _conferir_codigos_por_card(pdf_path: str, page_number: int, produtos: list,
         p["codigo"] = novo
     if trocas:
         print(f"[ConfereCodigo] pág {page_number}: {len(trocas)} código(s) corrigido(s) pelo recorte do card: {trocas}")
+
+    # Nome: o recorte em alta resolução também lê o nome. Só corrige letra
+    # comida/trocada (FOLIA pág. 11, Josef 25/09/2026: "KIT ABRIOR + ROLHA"
+    # no lugar de "KIT ABRIDOR + ROLHA"; a releitura veio "ABRI DOR", com o
+    # espaço da fonte) — UMA palavra de 4+ letras, UMA letra de diferença.
+    # Qualquer outra diferença (2 palavras, número, palavra a mais, sufixo de
+    # regra do cliente, só acento) deixa o nome como está: na pág. 12 a
+    # releitura trazia "RALO DE DE PIA" pra "RALOS DE PIA".
+    por_codigo = {str(c["codigo"]).strip().upper(): c for c in relidos}
+    nomes = []
+    for p in produtos:
+        c = por_codigo.get(str(p.get("codigo") or "").strip().upper())
+        if not c or not c.get("nome") or not p.get("nome"):
+            continue
+        corrigido = _corrigir_letras_pelo_relido(str(p["nome"]), str(c["nome"]))
+        if corrigido and corrigido != p["nome"]:
+            nomes.append((p["nome"], corrigido))
+            p["nome"] = corrigido
+    if nomes:
+        print(f"[ConfereCodigo] pág {page_number}: {len(nomes)} nome(s) corrigido(s) pelo recorte do card: {nomes}")
     return produtos
+
+
+def _corrigir_letras_pelo_relido(nome: str, relido: str) -> Optional[str]:
+    """Troca no `nome` a (única) palavra que o `relido` mostra com 1 letra
+    diferente; ela pode casar com DUAS palavras relidas juntas ("ABRI DOR").
+    Devolve None se as leituras não se alinham assim."""
+    a, b = nome.split(), relido.split()
+    chave = lambda w: _sem_acento(w.upper())
+    saida, i, j, trocas = [], 0, 0, 0
+    while i < len(a) and j < len(b):
+        if chave(a[i]) == chave(b[j]):
+            saida.append(a[i]); i += 1; j += 1
+            continue
+        opcoes = [(b[j], 1)]
+        if j + 1 < len(b):
+            opcoes.append((b[j] + b[j + 1], 2))
+        dist, palavra, passo = min((_distancia_letras(chave(a[i]), chave(w)), w, n) for w, n in opcoes)
+        if dist == 0:
+            saida.append(a[i]); i += 1; j += passo
+            continue
+        # número (medida, quantidade) não se corrige por releitura
+        plural = chave(a[i]).rstrip("S") == chave(palavra).rstrip("S")
+        if dist > 1 or trocas >= 1 or len(a[i]) < 4 or plural or any(ch.isdigit() for ch in a[i] + palavra):
+            return None
+        saida.append(palavra.upper() if a[i].isupper() else palavra)
+        trocas += 1
+        i += 1
+        j += passo
+    if i != len(a) or j != len(b):
+        return None
+    return " ".join(saida)
+
+
+def _sem_acento(texto: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", texto) if not unicodedata.combining(c))
+
+
+def _distancia_letras(a: str, b: str) -> int:
+    """Distância de edição (inserção/remoção/troca de 1 letra = 1)."""
+    anterior = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        atual = [i]
+        for j, cb in enumerate(b, 1):
+            atual.append(min(anterior[j] + 1, atual[j - 1] + 1, anterior[j - 1] + (ca != cb)))
+        anterior = atual
+    return anterior[-1]
 
 
 def _merge_vision_products(primary: list, retry: list, limit: int) -> list:
@@ -2959,6 +3026,9 @@ _CORES_REFERENCIA = [
 ]
 
 
+_SUFIXO_CORES_RE = re.compile(r"\s+\**CORES\**(\s+SORTIDAS)?$", re.I)
+
+
 def _nome_da_cor(rgb: Tuple[float, float, float]) -> str:
     return min(_CORES_REFERENCIA, key=lambda c: sum((a - b) ** 2 for a, b in zip(rgb, c[1])))[0]
 
@@ -3014,7 +3084,9 @@ def _nomear_cores_por_bolinha(pdf_path: str, produtos: list) -> list:
             except (TypeError, ValueError):
                 continue
             if p.get("codigo") and p.get("nome") and 1 <= pg <= len(doc):
-                grupos.setdefault((pg, _nome_chave(p["nome"])), []).append(p)
+                # "X" e "X CORES" são o mesmo produto: a IA às vezes põe o
+                # CORES só em parte dos códigos do grupo (Neo pág. 67)
+                grupos.setdefault((pg, _nome_chave(_SUFIXO_CORES_RE.sub("", str(p["nome"]).strip()))), []).append(p)
         desenhos_cache: Dict[int, list] = {}
         for (pg, _chave), grupo in grupos.items():
             if len(grupo) < 2:
@@ -3033,7 +3105,7 @@ def _nomear_cores_por_bolinha(pdf_path: str, produtos: list) -> list:
                 if nome.upper().endswith(cor):
                     continue
                 # "... CORES" no fim do nome = "várias cores" → vira a cor deste código
-                base = re.sub(r"\s+CORES(\s+SORTIDAS)?$", "", nome, flags=re.I)
+                base = _SUFIXO_CORES_RE.sub("", nome)
                 p["nome"] = f"{base} {cor}"
                 alterados += 1
     except Exception as e:
@@ -3045,6 +3117,118 @@ def _nomear_cores_por_bolinha(pdf_path: str, produtos: list) -> list:
     return produtos
 
 
+def _limpar_marcador_do_codigo(produtos: list) -> list:
+    """Tira o asterisco grudado no código ("104736*"). Neo Festas, Josef
+    25/09/2026: a legenda do catálogo diz que o * marca produto com poucas
+    unidades — não é parte do código. Com ele o produto sumia da exportação
+    e não casava com a foto (9 códigos com preço válido)."""
+    limpos = 0
+    for p in produtos:
+        codigo = p.get("codigo")
+        if not isinstance(codigo, str):
+            continue
+        limpo = codigo.strip().strip("*").strip()
+        if limpo and limpo != codigo.strip():
+            p["codigo"] = limpo
+            limpos += 1
+    if limpos:
+        print(f"[Codigo] asterisco removido de {limpos} código(s)")
+    return produtos
+
+
+def _regex_do_formato(formato: str) -> re.Pattern:
+    partes = []
+    for ch in formato:
+        partes.append(r"\d" if ch == "9" else "[A-Z]" if ch == "A" else re.escape(ch))
+    return re.compile(r"(?<![A-Z0-9])" + "".join(partes) + r"(?![A-Z0-9])")
+
+
+def _conferir_codigos_pelo_texto(pdf_path: str, produtos: list) -> list:
+    """Confere cada código contra o TEXTO da própria página do PDF.
+
+    Neo Festas pág. 67 (Josef 25/09/2026): o código impresso é pequeno e a
+    IA leu "128465/128473" como "132331/170331" — códigos que não existem
+    no PDF; os verdadeiros sumiam da exportação. E 2 produtos vieram sem
+    página (sem foto). Aqui, só em PDF com texto:
+      - produto sem página cujo código aparece em UMA página só → ganha a página;
+      - na página, códigos da IA que não estão no texto × códigos do texto
+        que não estão em produto nenhum: se a quantidade bate e o nome do
+        produto aparece logo antes do código do texto, troca (na ordem).
+    O formato do código (dígitos/letras) é medido no próprio lote."""
+    if not produtos:
+        return produtos
+    formatos = Counter(_formato_codigo(p.get("codigo")) for p in produtos if p.get("codigo"))
+    if not formatos:
+        return produtos
+    formato, n = formatos.most_common(1)[0]
+    if n < 0.6 * sum(formatos.values()) or len(formato) < 4:
+        return produtos
+    rx = _regex_do_formato(formato)
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception:
+        return produtos
+    try:
+        textos = [doc.load_page(i).get_text().upper() for i in range(len(doc))]
+    except Exception:
+        return produtos
+    finally:
+        doc.close()
+    tokens = [{m.group(0): m.start() for m in reversed(list(rx.finditer(t)))} for t in textos]
+    todos_codigos = {str(p.get("codigo") or "").strip().upper() for p in produtos}
+
+    paginas_postas = 0
+    for p in produtos:
+        codigo = str(p.get("codigo") or "").strip().upper()
+        if p.get("paginaOrigem") or not codigo:
+            continue
+        onde = [i + 1 for i, tk in enumerate(tokens) if codigo in tk]
+        if len(onde) == 1:
+            p["paginaOrigem"] = onde[0]
+            paginas_postas += 1
+
+    trocados = 0
+    por_pagina: Dict[int, list] = {}
+    for p in produtos:
+        try:
+            pg = int(p.get("paginaOrigem") or 0)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= pg <= len(tokens):
+            por_pagina.setdefault(pg, []).append(p)
+    for pg, lista in por_pagina.items():
+        tk = tokens[pg - 1]
+        if not tk:
+            continue
+        fantasmas = [
+            p for p in lista
+            if _formato_codigo(p.get("codigo")) == formato
+            and str(p["codigo"]).strip().upper() not in tk
+        ]
+        if not fantasmas or len(fantasmas) > 5:
+            continue
+        orfaos = sorted((pos, c) for c, pos in tk.items() if c not in todos_codigos)
+        if len(orfaos) != len(fantasmas):
+            continue
+        texto = textos[pg - 1]
+        pares = []
+        for p, (pos, novo) in zip(fantasmas, orfaos):
+            palavras = [w for w in re.findall(r"[A-ZÀ-Ú]{4,}", str(p.get("nome") or "").upper())][:2]
+            janela = texto[max(0, pos - 300):pos]
+            if not palavras or not all(w in janela for w in palavras):
+                pares = []
+                break
+            pares.append((p, novo))
+        for p, novo in pares:
+            print(f"[CodigoTexto] pág {pg}: {p['codigo']} não existe no PDF → {novo}")
+            p["codigo"] = novo
+            trocados += 1
+    if trocados or paginas_postas:
+        print(f"[CodigoTexto] {trocados} código(s) corrigido(s) pelo texto do PDF; "
+              f"{paginas_postas} produto(s) ganharam a página")
+    return produtos
+
+
 def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str = "") -> Dict[str, Any]:
     """Wrapper único: chama a extração real e aplica correções pós-processamento
     (ex: prefixo de código) independente de qual caminho interno foi usado
@@ -3052,8 +3236,10 @@ def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str =
     nome do fornecedor: cada uma mede o sinal no próprio lote/PDF."""
     result = _extract_with_fallback_impl(pdf_path, supplier, client_rules)
     if result and result.get("produtos"):
+        result["produtos"] = _limpar_marcador_do_codigo(result["produtos"])
         result["produtos"] = _fix_missing_code_prefix(result["produtos"])
         result["produtos"] = _fix_ocr_digit_letter_confusion(result["produtos"])
+        result["produtos"] = _conferir_codigos_pelo_texto(pdf_path, result["produtos"])
         result["produtos"] = _fix_labeled_unit_prices(pdf_path, result["produtos"])
         result["produtos"] = _fix_labeled_promo_price(pdf_path, result["produtos"])
         result["produtos"], result["avisosPrecoCorrigido"] = _verify_prices_by_geometry(
