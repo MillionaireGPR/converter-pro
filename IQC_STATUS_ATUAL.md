@@ -5,6 +5,15 @@
 
 ---
 
+## ✅ ENTREGUE em 25/09 (tarde) — retestagem do Josef: Neo Festas e DUTE (PR #174)
+
+- **Neo Festas:** MINI FLOR ROSA EVA (12 cores), MINI FLOR ARTIFICIAL (6) e
+  GLITTER GEL (pérola/dourado/prata) com a foto da cor certa; VARETA com a
+  vareta da cor de cada código; 148296, 150614 e 161292 com a foto certa.
+- **DUTE:** DT10176 sem o triângulo do rodapé.
+- PISCA PISCA 149080: o catálogo só tem foto rosa/roxa para as 3 cores.
+- Detalhe: `guide.md #14.37`.
+
 ## ✅ ENTREGUE em 25/09 — retestagem do Josef: DUTE, PETRIN, Neo Festas, FOLIA (PR #173)
 
 - **DUTE:** os 9 códigos saem sem linha tracejada, texto da ficha, barra do

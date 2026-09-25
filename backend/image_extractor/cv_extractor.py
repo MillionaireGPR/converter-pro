@@ -1034,6 +1034,145 @@ def _crop_composition_masked(
     return crop if crop.size > 0 else None
 
 
+def _juntar_pecas_finas(finas: List[Dict]) -> List[Dict]:
+    """Neo Festas pág. 71 (Josef 25/09/2026): a foto das VARETAS é feita de
+    10 imagens finas (~15pt) lado a lado, a das bombas de 5, o suporte de 2
+    hastes de 2. Imagem com menos de 20pt é descartada (fio, borda), então
+    esses produtos ficavam sem foto e os códigos pegavam a do vizinho. Peças
+    finas com o mesmo topo e base (±4pt) e vão ≤10pt entre si viram UMA foto
+    (mesmo formato de `_costurar_tiles`); peça fina sozinha continua fora."""
+    grupos: List[List[Dict]] = []
+    for img in sorted(finas, key=lambda i: i["rect"].x0):
+        r = img["rect"]
+        for g in grupos:
+            u = g[-1]["rect"]
+            if (abs(r.y0 - u.y0) <= 4 and abs(r.y1 - u.y1) <= 4
+                    and -2 <= r.x0 - max(o["rect"].x1 for o in g) <= 10):
+                g.append(img)
+                break
+        else:
+            grupos.append([img])
+    saida = []
+    for g in grupos:
+        if len(g) < 2:
+            continue
+        uniao = fitz.Rect(g[0]["rect"])
+        for o in g[1:]:
+            uniao |= o["rect"]
+        if min(uniao.width, uniao.height) < 20:
+            continue
+        saida.append({
+            "xref": g[0]["xref"], "pagina": g[0]["pagina"], "rect": uniao, "tiles": g, "montar": True,
+            "cx": (uniao.x0 + uniao.x1) / 2, "cy": (uniao.y0 + uniao.y1) / 2,
+            "area": uniao.width * uniao.height,
+        })
+    return saida
+
+
+def _montar_pecas(doc: fitz.Document, img_info: Dict, scale: float) -> Optional[np.ndarray]:
+    uniao = img_info["rect"]
+    canvas = np.full((max(1, int(uniao.height * scale)), max(1, int(uniao.width * scale)), 3), 255, np.uint8)
+    for peca in img_info["tiles"]:
+        try:
+            ext = doc.extract_image(peca["xref"])
+            dec = cv2.imdecode(np.frombuffer(ext["image"], np.uint8), cv2.IMREAD_UNCHANGED)
+            rgb = _decode_with_white_bg(dec, doc, ext.get("smask", 0))
+        except Exception:
+            continue
+        r = peca["rect"]
+        x0, y0 = int((r.x0 - uniao.x0) * scale), int((r.y0 - uniao.y0) * scale)
+        w = min(canvas.shape[1] - x0, max(1, int(r.width * scale)))
+        h = min(canvas.shape[0] - y0, max(1, int(r.height * scale)))
+        if w <= 0 or h <= 0:
+            continue
+        canvas[y0:y0 + h, x0:x0 + w] = cv2.resize(rgb, (w, h))
+    return canvas
+
+
+def _ordem_de_leitura(itens: list, xy, tolerancia: float) -> list:
+    """Linhas = itens cujo y difere ≤ `tolerancia` do anterior E que ficam
+    em x diferente (>10pt) de todos os da linha — lista vertical de códigos
+    com 12pt de espaçamento continua sendo uma linha por código. Dentro da
+    linha, da esquerda pra direita."""
+    linhas: List[list] = []
+    for item in sorted(itens, key=lambda i: xy(i)[1]):
+        if (linhas and xy(item)[1] - xy(linhas[-1][-1])[1] <= tolerancia
+                and all(abs(xy(item)[0] - xy(o)[0]) > 10 for o in linhas[-1])):
+            linhas[-1].append(item)
+        else:
+            linhas.append([item])
+    return [item for linha in linhas for item in sorted(linha, key=lambda i: xy(i)[0])]
+
+
+def _variantes_em_grade(skus: list, imgs: List[Dict]) -> Dict[str, Dict]:
+    """Uma foto por cor, montadas em grade ao lado da lista de códigos, na
+    MESMA ordem (Neo Festas, Josef 25/09/2026: MINI FLOR ROSA EVA pág. 11 —
+    12 fotos 4×3 e 12 códigos; MINI FLOR ARTIFICIAL pág. 12 — 6 e 6; GLITTER
+    GEL pág. 48 — 3 tubos e 3 códigos). Por distância cada código pegava uma
+    foto qualquer do bloco, repetindo cor. Casa por ordem de leitura quando:
+    ≥2 imagens de tamanho parecido encostadas (vão ≤25pt), exatamente o
+    mesmo número de códigos logo À DIREITA do bloco (dentro da faixa
+    vertical dele, até 250pt), todos com o mesmo começo de nome."""
+    # foto costurada de fatias (Neo pág. 12: 3 fotos de cor de 32-34pt
+    # encostadas viraram uma) entra pelas fatias
+    soltas = [t for i in imgs if i.get("tiles") and not i.get("montar") for t in i["tiles"]]
+    cand = [i for i in [i for i in imgs if not (i.get("tiles") and not i.get("montar"))] + soltas
+            if i.get("rect") is not None and min(i["rect"].width, i["rect"].height) >= 15
+            and max(i["rect"].width, i["rect"].height) <= 200]
+    pai = list(range(len(cand)))
+
+    def raiz(k):
+        while pai[k] != k:
+            pai[k] = pai[pai[k]]
+            k = pai[k]
+        return k
+
+    for a in range(len(cand)):
+        ra = cand[a]["rect"]
+        for b in range(a + 1, len(cand)):
+            rb = cand[b]["rect"]
+            parecido = (abs(ra.width - rb.width) <= 0.3 * max(ra.width, rb.width)
+                        and abs(ra.height - rb.height) <= 0.3 * max(ra.height, rb.height))
+            vao = max(0.0, rb.x0 - ra.x1, ra.x0 - rb.x1) + max(0.0, rb.y0 - ra.y1, ra.y0 - rb.y1)
+            if parecido and vao <= 25:
+                pai[raiz(a)] = raiz(b)
+    blocos: Dict[int, List[Dict]] = {}
+    for k, img in enumerate(cand):
+        blocos.setdefault(raiz(k), []).append(img)
+
+    def base_nome(sku):
+        return " ".join(re.findall(r"[A-ZÀ-Ú0-9]+", str(sku.get("name") or "").upper())[:2])
+
+    # Peças finas juntadas (VARETA pág. 71: 10 varetas, 10 códigos, cada
+    # vareta de uma cor) contam como um bloco das próprias peças.
+    for img in imgs:
+        if img.get("montar"):
+            blocos[-1 - len(blocos)] = list(img["tiles"])
+
+    saida: Dict[str, Dict] = {}
+    for bloco in blocos.values():
+        if len(bloco) < 2:
+            continue
+        bb = fitz.Rect(bloco[0]["rect"])
+        for o in bloco[1:]:
+            bb |= o["rect"]
+        codigos = [s for s in skus
+                   if bb.y0 - 15 <= s["spatialContext"]["y"] <= bb.y1 + 15
+                   and 0 < s["spatialContext"]["x"] - bb.x1 <= 250]
+        if len(codigos) != len(bloco) or not base_nome(codigos[0]):
+            continue
+        if len({base_nome(s) for s in codigos}) != 1:
+            continue
+        alt = min(i["rect"].height for i in bloco) / 2
+        fotos = _ordem_de_leitura(bloco, lambda i: (i["cx"], i["cy"]), alt)
+        # tolerância 15pt: rótulo de 2 linhas desce o código ~10pt (Neo pág.
+        # 88: ROSA MAGENTA 149748 em y=811, CORAÇÕES 149683 em y=801)
+        codigos = _ordem_de_leitura(codigos, lambda s: (s["spatialContext"]["x"], s["spatialContext"]["y"]), 15.0)
+        for s, img in zip(codigos, fotos):
+            saida[s.get("sku")] = img
+    return saida
+
+
 def _copia_so_com_imagens(page: fitz.Page, manter_xrefs: set, clip: fitz.Rect):
     """Cópia descartável da página sem texto, sem desenho vetorial e sem as
     imagens (com xref) que tocam `clip` e não estão em `manter_xrefs`.
@@ -1098,10 +1237,13 @@ def _render_so_imagens(
         # sai pelo xref. Se fica quase toda FORA da foto é da página → apaga
         # depois de renderizar. Se fica dentro (selo "NOVO" em cima da foto)
         # é da foto → fica.
-        apagar = [
-            r & clip for r in inline
-            if (max((r & m).get_area() for m in rects_manter) if rects_manter else 0.0) < 0.5 * r.get_area()
-        ]
+        apagar = []
+        for r in inline:
+            dentro = max((r & m).get_area() for m in rects_manter) if rects_manter else 0.0
+            # dentro da foto mas sobre a parte TRANSPARENTE dela (triângulo da
+            # barra de navegação no DT10176, Josef 25/09) também é da página
+            if dentro < 0.5 * r.get_area() or _transparente_sob(tmp, tp, manter_xrefs, r):
+                apagar.append(r & clip)
         pix = tp.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=clip, colorspace=fitz.csRGB, alpha=False)
         arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3).copy()
         for r in apagar:
@@ -1117,6 +1259,34 @@ def _render_so_imagens(
         return None
     finally:
         tmp.close()
+
+
+def _transparente_sob(doc: fitz.Document, page: fitz.Page, xrefs: set, r: fitz.Rect) -> bool:
+    """True se as imagens mantidas não desenham nada (fora delas ou pixel
+    transparente) em ≥90% de 5×5 pontos de `r`. Usa a matriz real da imagem
+    (foto girada: o retângulo cobre, o paralelogramo não) e a SMask; imagem
+    sem máscara é opaca onde existe (selo em cima da foto fica)."""
+    try:
+        imagens = []
+        for info in page.get_image_info(xrefs=True):
+            xref = info.get("xref") or 0
+            if xref in xrefs and fitz.Rect(info["bbox"]).intersects(r):
+                smask = doc.extract_image(xref).get("smask") or 0
+                imagens.append((~fitz.Matrix(info["transform"]), fitz.Pixmap(doc, smask) if smask else None))
+        cobertos = 0
+        for i in range(5):
+            for j in range(5):
+                ponto = fitz.Point(r.x0 + (i + 0.5) * r.width / 5, r.y0 + (j + 0.5) * r.height / 5)
+                for inv, alfa in imagens:
+                    q = ponto * inv
+                    if not (0 <= q.x < 1 and 0 <= q.y < 1):
+                        continue
+                    if alfa is None or alfa.pixel(int(q.x * alfa.width), int(q.y * alfa.height))[0] > 32:
+                        cobertos += 1
+                        break
+        return cobertos <= 2
+    except Exception:
+        return False
 
 
 def _retangulo_visivel(page: fitz.Page, img: Dict) -> Optional[fitz.Rect]:
@@ -1806,6 +1976,22 @@ def _match_via_grid(
             used_img_ids.add(id(melhor))
             print(f"    [ColMatch] {sku_code}: foto grande logo acima da legenda (gap={melhor_gap:.1f}pt)")
 
+    # Grade de fotos de cor ao lado da lista de códigos (ver `_variantes_em_grade`)
+    if orientacao != "abaixo":
+        livres = [i for i in page_imgs if id(i) not in used_img_ids]
+        grade = _variantes_em_grade([s for s in valid_skus if s.get("sku") not in pre_matched], livres)
+        for sku_code, img in grade.items():
+            pre_matched[sku_code] = img
+            used_img_ids.add(id(img))
+        # peças finas repartidas entre os códigos: a foto "inteira" delas
+        # (a união) não é de mais ninguém
+        pecas_usadas = {id(i) for i in grade.values()}
+        for img in livres:
+            if img.get("tiles") and any(id(t) in pecas_usadas for t in img["tiles"]):
+                used_img_ids.add(id(img))
+        if grade:
+            print(f"    [ColMatch] {len(grade)} código(s) casados por ordem com a grade de fotos de cor")
+
     # ═══════════════════════════════════════════════════════
     # FASE 2: Descobrir colunas via clustering de X (SKUs + Imagens)
     # ═══════════════════════════════════════════════════════
@@ -2006,9 +2192,18 @@ def _match_via_grid(
                      if abs(y - sku_y) <= 40 and abs(x - sku_x) <= 150),
                     None,
                 )
+            def _vao(img):
+                r = img["rect"]
+                return (max(0.0, r.x0 - sku_x, sku_x - r.x1)
+                        + max(0.0, r.y0 - sku_y, sku_y - r.y1))
+
+            # ...ou foto mais longe do código que a do irmão (Neo pág. 69:
+            # BALÃO TAÇAS com 2 códigos — o 2º pegava o boneco de neve 150pt
+            # acima; pág. 78: CAIXA PAPEL QUADRADA com 3 tamanhos listados)
             if irmao is not None and (
                 best_img is None or best_dist >= 10000.0
                 or coluna_da_imagem.get(id(best_img)) != coluna_da_imagem.get(id(irmao))
+                or _vao(irmao) < _vao(best_img)
             ):
                 img_arr_irmao = _extract_perfect_image(doc, irmao, raster, width, height, scale)
                 if img_arr_irmao is not None and img_arr_irmao.size > 0:
@@ -2306,9 +2501,13 @@ def _decode_with_white_bg(decoded: np.ndarray, doc: fitz.Document, smask_xref: i
     - BGR (3 channels) com SMask externo → composita SMask como alpha sobre branco
     - BGRA (4 channels) → composita alpha sobre branco
     """
-    # Caso 1: grayscale puro
+    # Caso 1: grayscale — sem máscara vai direto; COM máscara (Neo pág. 71,
+    # hastes brancas em PNG cinza: o transparente vinha PRETO) segue pro
+    # caso da SMask como BGR
     if len(decoded.shape) == 2:
-        return cv2.cvtColor(decoded, cv2.COLOR_GRAY2RGB)
+        if not smask_xref:
+            return cv2.cvtColor(decoded, cv2.COLOR_GRAY2RGB)
+        decoded = cv2.cvtColor(decoded, cv2.COLOR_GRAY2BGR)
 
     if decoded.shape[2] == 4:
         # BGRA — composita alpha sobre branco
@@ -2375,6 +2574,12 @@ def _extract_perfect_image(
     # Foto fatiada pelo exportador do PDF (ver _costurar_tiles): nenhum xref
     # sozinho contem a foto inteira, entao recorta o raster na uniao das
     # fatias. Como as fatias sao contiguas, a uniao e exatamente a foto.
+    # Peças finas (ver _juntar_pecas_finas): cola os pixels de cada peça num
+    # fundo branco. Renderizar a página dava fundo PRETO nessa região da Neo
+    # pág. 71 (grupo com máscara suave), então não usa o raster.
+    if img_info.get("montar"):
+        return _montar_pecas(doc, img_info, max(scale, 2.0))
+
     if img_info.get("tiles"):
         return _crop_raster_at_pdf_rect(rect, raster, width, height, scale)
 
@@ -2498,6 +2703,7 @@ def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set,
     """
     page_w, page_h = page.rect.width, page.rect.height
     result = []
+    finas: List[Dict] = []
     for info in page.get_image_info(xrefs=True):
         xref = info.get("xref") or 0
         if not xref or xref in logo_xrefs:
@@ -2511,6 +2717,12 @@ def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set,
         rect = fitz.Rect(bbox)
         iw, ih = rect.width, rect.height
         if iw < 20 or ih < 20:
+            # peça fina e comprida (vareta, haste) — só vale junto com as
+            # vizinhas, ver `_juntar_pecas_finas` abaixo
+            if min(iw, ih) >= 4 and max(iw, ih) >= 60:
+                finas.append({"xref": xref, "pagina": getattr(page, "number", None), "rect": rect,
+                              "cx": (rect.x0 + rect.x1) / 2, "cy": (rect.y0 + rect.y1) / 2,
+                              "area": iw * ih})
             continue
         if not allow_fullpage and iw > page_w * 0.85 and ih > page_h * 0.85:
             continue
@@ -2540,6 +2752,8 @@ def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set,
             "cy": (rect.y0 + rect.y1) / 2,
             "area": iw * ih,
         })
+
+    result.extend(_juntar_pecas_finas(finas))
 
     # Imagem que COBRE outra (≥80% da menor dentro dela) pode ser uma foto
     # recortada pelo PDF (clip) — o retângulo declarado é maior que o que

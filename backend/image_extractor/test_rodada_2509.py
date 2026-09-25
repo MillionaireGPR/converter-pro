@@ -243,3 +243,82 @@ def test_icone_repetido_no_catalogo_sai_da_foto_composta(tmp_path):
     icones = cv._icones_de_caracteristica(doc, imgs)
     assert {i["xref"] for i in imgs if id(i) in icones} == {xref_icone, xref_nota}
     assert all(id(i) not in icones for i in imgs if i["rect"].width > 200)
+
+
+# ── Retestagem 2 (25/09 à tarde) ──────────────────────────────────────────
+
+def test_pecas_finas_encostadas_viram_uma_foto(tmp_path):
+    # Neo pág. 71: VARETA = 10 imagens de ~12pt lado a lado (descartadas por
+    # terem <20pt); SUPORTE = 2 hastes com 7pt de vão
+    pdf = str(tmp_path / "varetas.pdf")
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    for i in range(10):
+        page.insert_image(fitz.Rect(17 + 10.5 * i, 20, 29 + 10.5 * i, 115), stream=_png((25 * i, 90, 200), 12, 90), keep_proportion=False)
+    page.insert_image(fitz.Rect(51, 371, 65, 471), stream=_png((200, 200, 200), 14, 100))
+    page.insert_image(fitz.Rect(72, 371, 86, 471), stream=_png((200, 200, 200), 14, 100))
+    page.insert_image(fitz.Rect(300, 300, 312, 400), stream=_png((0, 0, 0), 12, 100))  # fio solto
+    doc.save(pdf)
+    doc.close()
+    imgs = cv._get_page_embedded_images(fitz.open(pdf)[0], set())
+    juntas = sorted((len(i["tiles"]), [round(v) for v in i["rect"]]) for i in imgs if i.get("montar"))
+    assert juntas == [(2, [51, 371, 86, 471]), (10, [17, 20, 124, 115])]
+    assert len(imgs) == 2
+
+
+def test_grade_de_fotos_de_cor_casa_por_ordem():
+    # Neo pág. 11 (coordenadas reais): 12 fotos 4×3 e 12 códigos em lista
+    xs, ys = (312, 347, 382), (507, 557, 608, 659)
+    imgs = [_img(x, y, x + 33, y + 29) for y in ys for x in xs]
+    codigos = ["153230", "153184", "153192", "153206", "153290", "153214",
+               "153249", "153222", "148563", "148555", "158151", "158143"]
+    skus = [dict(_sku(c, 452, 511 + 16 * k), name="MINI FLOR ROSA EVA") for k, c in enumerate(codigos)]
+    grade = cv._variantes_em_grade(skus, imgs)
+    assert [grade[c] for c in codigos] == imgs
+
+
+def test_grade_nao_casa_quando_a_conta_nao_bate_ou_nome_difere():
+    imgs = [_img(30, 20, 64, 68), _img(64, 20, 98, 68), _img(99, 20, 131, 68)]
+    skus = [dict(_sku("A1", 160, 40), name="MINI FLOR"), dict(_sku("A2", 200, 40), name="MINI FLOR")]
+    assert cv._variantes_em_grade(skus, imgs) == {}
+    skus.append(dict(_sku("B1", 240, 40), name="MOLDURA PLASTICA"))
+    assert cv._variantes_em_grade(skus, imgs) == {}
+
+
+def test_png_cinza_com_mascara_fica_com_fundo_branco():
+    import types
+    cinza = np.zeros((10, 10), np.uint8)
+    mascara = np.zeros((10, 10), np.uint8)
+    mascara[4:6, 4:6] = 255
+    doc = types.SimpleNamespace(extract_image=lambda x: {"image": __import__("cv2").imencode(".png", mascara)[1].tobytes()})
+    rgb = cv._decode_with_white_bg(cinza, doc, 7)
+    assert rgb[0, 0].tolist() == [255, 255, 255] and rgb[5, 5].tolist() == [0, 0, 0]
+
+
+def test_grade_com_codigo_desalinhado_por_rotulo_de_duas_linhas():
+    # Neo pág. 88 (coordenadas reais): ROSA MAGENTA (149748, y=811) e
+    # CORAÇÕES (149683, y=801) — foto de cima = rosas, de baixo = corações
+    rosas, coracoes = _img(341, 724, 407, 774), _img(341, 773, 407, 823)
+    skus = [dict(_sku("149748", 464, 811), name="JOGOS AMERICANOS DE PAPEL"),
+            dict(_sku("149683", 533, 801), name="JOGOS AMERICANOS DE PAPEL")]
+    grade = cv._variantes_em_grade(skus, [rosas, coracoes])
+    assert grade["149748"] is rosas and grade["149683"] is coracoes
+
+
+def test_segundo_codigo_do_card_divide_a_foto_mais_perta(monkeypatch, tmp_path):
+    # Neo pág. 69: BALÃO TAÇAS (1 foto, 2 códigos); o boneco de neve 150pt
+    # acima, na mesma coluna, não tem código na página
+    tacas, boneco = _img(30, 480, 130, 580), _img(30, 330, 130, 420)
+    skus = [_sku("126942", 150, 560), _sku("126934", 205, 560), _sku("145548", 450, 400)]
+    foto_145548 = _img(320, 340, 420, 440)
+    usados = _grade(monkeypatch, tmp_path, skus, [tacas, boneco, foto_145548], [0.0, 130.0, 300.0, 425.0, 595.0])
+    assert usados["126942"] == 0 and usados["126934"] == 0
+
+
+def test_lista_vertical_de_codigos_com_pouco_espaco_mantem_a_ordem():
+    # Neo pág. 11: 12 códigos um embaixo do outro a cada 16pt (e listas
+    # com 12pt) — cada um é uma linha
+    imgs = [_img(312 + 35 * (k % 3), 507 + 50 * (k // 3), 345 + 35 * (k % 3), 536 + 50 * (k // 3)) for k in range(6)]
+    skus = [dict(_sku(f"C{k}", 452, 511 + 12 * k), name="SAIA TULE") for k in range(6)]
+    grade = cv._variantes_em_grade(skus, imgs)
+    assert [grade[f"C{k}"] for k in range(6)] == imgs
