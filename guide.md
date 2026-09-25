@@ -1788,6 +1788,43 @@ numa ÚNICA palavra de 4+ letras, sem número, sem plural, sem só-acento — a
 palavra pode casar com duas relidas juntas ("ABRI DOR"). Rodado nas 41 páginas:
 só "KIT ABRIOR + ROLHA" → "KIT ABRIDOR + ROLHA" mudou.
 
+### 14.37 Retestagem 25/09 (tarde): cores por grade, peças finas, rodapé (25/09/2026)
+
+**Grade de fotos de cor (Neo págs. 11, 12, 48).** Cada cor é uma imagem
+separada, montada em grade ao lado da lista de códigos na MESMA ordem (MINI FLOR
+ROSA EVA: 12 fotos 4×3 × 12 códigos). `_variantes_em_grade`: bloco de ≥2
+imagens de tamanho parecido (±30%) com vão ≤25pt + exatamente o mesmo número de
+códigos logo à DIREITA (faixa vertical do bloco, até 250pt), todos com o mesmo
+começo de nome → casa por ordem de leitura antes da FASE 4 (`pre_matched`).
+Não roda em catálogo "foto abaixo do código". Conferido cor a cor contra a
+bolinha do catálogo. Foto que `_costurar_tiles` juntou (pág. 12: fotos de cor de
+32 e 34pt encostadas) entra na grade pelas fatias — afrouxar a tolerância da
+costura foi testado e piorava 4 fotos da PETRIN (fatias legítimas).
+
+**Peças finas (Neo pág. 71).** A foto das VARETAS são 10 imagens de ~12pt, a
+das bombas 5, o suporte 2 hastes — tudo <20pt, descartado; os códigos pegavam
+a foto do vizinho. `_juntar_pecas_finas`: peças finas (≥60pt de comprimento)
+com mesmo topo/base e vão ≤10pt viram uma foto (`montar=True`), montada colando
+os pixels de cada peça em fundo branco (`_montar_pecas`) — o render da página
+dava fundo PRETO ali. Na grade de cores, as peças contam como bloco: cada
+vareta vai pro código da sua cor.
+
+**PNG cinza com máscara.** `_decode_with_white_bg` ignorava a SMask de imagem
+em tons de cinza → transparente virava preto. Agora compõe sobre branco.
+
+**Rodapé sobre parte transparente (DUTE DT10176).** Imagem embutida sem xref
+que fica DENTRO do retângulo da foto só ficava (selo "NOVO"). Agora sai também
+quando a foto não desenha nada ali (`_transparente_sob`: 5×5 pontos pela matriz
+real da imagem — foto girada — e pela SMask).
+
+**Ordem de leitura com rótulo de 2 linhas.** `_ordem_de_leitura`: códigos na
+mesma "linha" se o y difere ≤15pt E o x difere >10pt (pág. 88: ROSA MAGENTA
+em y=811 ao lado de CORAÇÕES em y=801; lista vertical a cada 12pt continua uma
+linha por código).
+
+**Não resolvível:** Neo pág. 32 (PISCA PISCA 149055/149039/149080) tem UMA foto
+para as 3 cores — não existe foto verde no catálogo.
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
