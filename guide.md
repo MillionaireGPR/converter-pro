@@ -1865,6 +1865,20 @@ no card.
 
 **Rótulo de preço unitário (FORTAL).** Além de "UND:", "PÇ:", "PC:", "PEÇA:",
 "UN:", "UNID:" (jogo de 6 peças: "PÇ: R$ 3,60" + total "R$ 21,60").
+### 14.39 Preço promocional da IA ignorado por adapter sem alias (28/09/2026)
+
+- **Sintoma (reunião 28/09):** GIRA TP1951 riscado 14,95 → 11,96 saía no
+  Excel com 14,95 e ***PROMOCAO*** no nome. O backend (#176) já lia os dois
+  preços certo; o frontend descartava o novo.
+- **Causa:** `extractor.ts` só lia `precoPromocional` pelos `fieldAliases`
+  do adapter. GIRA, FORTAL, BM36, CLINK, FLASH, FREECOM, GOAL KIDS, LILA HOME
+  e MOMENT não têm esse alias.
+- **Fix genérico:** produto vindo da IA (`__postProcessed`) usa a chave
+  canônica `precopromocional` que `mapAiProductsToBrutos` sempre grava, quando
+  o alias do adapter não acha nada. A guarda `promo < preço` continua (preço
+  de kit/caixa maior não substitui o unitário).
+- **Teste:** `promo-ai.test.ts` (GIRA e FORTAL).
+
 
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
