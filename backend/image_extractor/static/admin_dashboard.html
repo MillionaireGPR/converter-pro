@@ -122,6 +122,10 @@
     margin-top: 12px; padding: 10px 20px; border-radius: 6px; border: none;
     background: var(--blue); color: #fff; font-weight: 600; cursor: pointer; font-size: 14px;
   }
+  .billing-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 12px 0; }
+  .billing-form label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+  .billing-form input { padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  .billing-estado { font-size: 18px; font-weight: 700; }
   .refresh-note { color: var(--muted); font-size: 11px; }
   button.action {
     padding: 9px 14px; border-radius: 6px; border: 1px solid var(--border);
@@ -222,6 +226,28 @@
       <div id="logs"><div class="empty">Carregando...</div></div>
     </div>
   </section>
+
+  <section>
+    <h2>Assinatura do cliente <span class="refresh-note">vale para os três servidores (Supabase)</span></h2>
+    <div class="panel" style="padding:14px 16px">
+      <div id="billingResumo" class="meta">Carregando...</div>
+      <div class="billing-form">
+        <label>Cobrança<select id="bAtiva" class="action"><option value="false">Desligada (tudo liberado)</option><option value="true">Ligada</option></select></label>
+        <label>Valor (R$)<input id="bValor" type="number" step="0.01" min="1"></label>
+        <label>Período (dias)<input id="bPeriodo" type="number" min="1" max="366"></label>
+        <label>Carência após vencer (dias)<input id="bCarencia" type="number" min="0" max="60"></label>
+        <label>Aviso antes de vencer (dias)<input id="bAviso" type="number" min="0" max="60"></label>
+        <label>InfiniteTag (sem $)<input id="bHandle" type="text" placeholder="ex.: nunesrep"></label>
+      </div>
+      <button class="action primary" onclick="saveBilling()">Salvar configuração</button>
+      <span style="margin-left:16px"></span>
+      <input id="bDias" type="number" min="1" max="366" value="30" style="width:80px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+      <input id="bObs" type="text" placeholder="motivo (ex.: PIX recebido por fora)" style="width:260px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+      <button class="action" onclick="liberarBilling()">Liberar dias manualmente</button>
+      <div id="billingMsg" class="message"></div>
+      <div id="billingPagamentos" style="margin-top:12px"></div>
+    </div>
+  </section>
 </div>
 
 <script>
@@ -239,6 +265,7 @@ function saveToken() {
   document.getElementById('app').style.display = 'block';
   refreshAll();
   startLoop();
+  loadBilling();
 }
 
 function showGate(msg) {
@@ -507,6 +534,65 @@ function startLoop() {
   loopHandle = setInterval(refreshAll, 5000);
 }
 
+// ── Assinatura (28/09/2026) ─────────────────────────────────
+const ESTADOS = {
+  desligada: ['Cobrança desligada — tudo liberado', 'var(--muted)'],
+  ativa: ['Em dia', 'var(--green)'],
+  vencendo: ['Vence em breve (cliente vê aviso)', 'var(--yellow)'],
+  carencia: ['Vencida — em carência (ainda converte)', 'var(--yellow)'],
+  bloqueada: ['BLOQUEADA — conversões pausadas', 'var(--red)'],
+};
+function fmtData(d) { return d ? new Date(d).toLocaleString('pt-BR') : '-'; }
+function fmtReais(c) { return (Number(c || 0) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
+async function loadBilling() {
+  try {
+    const d = await apiGet('/admin/billing');
+    const st = d.status || {}, cfg = d.config || {};
+    const [txt, cor] = ESTADOS[st.estado] || [st.estado, 'var(--muted)'];
+    document.getElementById('billingResumo').innerHTML =
+      `<span class="billing-estado" style="color:${cor}">${escapeHtml(txt)}</span>` +
+      `<div class="meta">Pago até: ${fmtData(st.pago_ate)} · bloqueia em: ${fmtData(st.bloqueia_em)} · dias restantes: ${st.dias_restantes ?? '-'}</div>`;
+    document.getElementById('bAtiva').value = String(!!cfg.ativa);
+    document.getElementById('bValor').value = (Number(cfg.valor_centavos || 0) / 100).toFixed(2);
+    document.getElementById('bPeriodo').value = cfg.periodo_dias ?? 30;
+    document.getElementById('bCarencia').value = cfg.carencia_dias ?? 5;
+    document.getElementById('bAviso').value = cfg.aviso_dias ?? 5;
+    document.getElementById('bHandle').value = cfg.infinitepay_handle || '';
+    const pags = d.pagamentos || [];
+    document.getElementById('billingPagamentos').innerHTML = pags.length ? `<table><thead><tr><th>Criado</th><th>Status</th><th>Valor</th><th>Pago em</th><th>Método</th><th>Libera até</th><th>Obs./recibo</th></tr></thead><tbody>` +
+      pags.map(p => `<tr><td>${fmtData(p.criado_em)}</td><td>${escapeHtml(p.status)}</td><td>${fmtReais(p.valor_pago_centavos ?? p.valor_centavos)}</td><td>${fmtData(p.pago_em)}</td><td>${escapeHtml(p.metodo || '-')}</td><td>${fmtData(p.periodo_ate)}</td><td>${p.recibo_url ? `<a href="${escapeHtml(p.recibo_url)}" target="_blank" rel="noopener">recibo</a>` : escapeHtml(p.observacao || '')}</td></tr>`).join('') +
+      `</tbody></table>` : '<div class="empty">Nenhum pagamento ainda.</div>';
+  } catch (e) {
+    document.getElementById('billingResumo').textContent = 'Erro ao carregar assinatura: ' + e.message;
+  }
+}
+function billingMsg(t, ok) { const el = document.getElementById('billingMsg'); el.textContent = t; el.style.color = ok ? 'var(--green)' : 'var(--red)'; }
+async function saveBilling() {
+  const ativa = document.getElementById('bAtiva').value === 'true';
+  if (ativa && !confirm('Ligar a cobrança? Se não houver pagamento em dia, as conversões do cliente param após a carência.')) return;
+  try {
+    await apiPost('/admin/billing/config', {
+      ativa,
+      valor_centavos: Math.round(parseFloat(document.getElementById('bValor').value) * 100),
+      periodo_dias: parseInt(document.getElementById('bPeriodo').value, 10),
+      carencia_dias: parseInt(document.getElementById('bCarencia').value, 10),
+      aviso_dias: parseInt(document.getElementById('bAviso').value, 10),
+      infinitepay_handle: document.getElementById('bHandle').value,
+    });
+    billingMsg('Configuração salva.', true);
+  } catch (e) { billingMsg(e.message, false); }
+  loadBilling();
+}
+async function liberarBilling() {
+  const dias = parseInt(document.getElementById('bDias').value, 10);
+  if (!confirm(`Liberar ${dias} dia(s) de acesso sem cobrança?`)) return;
+  try {
+    await apiPost('/admin/billing/liberar', { dias, observacao: document.getElementById('bObs').value });
+    billingMsg(`Liberados ${dias} dia(s).`, true);
+  } catch (e) { billingMsg(e.message, false); }
+  loadBilling();
+}
+
 // boot
 if (!TOKEN) {
   showGate();
@@ -514,6 +600,7 @@ if (!TOKEN) {
   document.getElementById('app').style.display = 'block';
   refreshAll();
   startLoop();
+  loadBilling();
 }
 </script>
 </body>

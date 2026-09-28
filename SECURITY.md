@@ -261,3 +261,18 @@ class SecurityUtils {
 > 
 > Nunca sacrificar segurança por prazo de entrega. 
 > Uma vulnerabilidade em produção custa 100x mais para corrigir do que em desenvolvimento.
+
+## 6. Assinatura / pagamentos (28/09/2026)
+
+- Webhook de pagamento **nunca é confiado sozinho**: a InfinitePay não assina o
+  webhook, então todo aviso (webhook ou retorno do navegador) é reconferido em
+  `/payment_check` antes de liberar acesso. Pedido que não começa com `conv-`
+  (não é nosso) é ignorado sem consultar nada.
+- Tabelas de assinatura: RLS sem policies e sem grant para o cliente; funções de
+  escrita só `service_role`. O cliente lê apenas o estado e o histórico
+  resumido via RPCs de leitura.
+- Controle da cobrança (ligar, preço, liberação manual) fica atrás do token de
+  admin do servidor, não do admin do cliente.
+- Nenhum dado de cartão passa pelo sistema: o pagamento acontece na página da
+  InfinitePay.
+
