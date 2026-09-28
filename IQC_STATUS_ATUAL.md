@@ -1,9 +1,17 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 25/09/2026
+**Atualizado em:** 28/09/2026
 
 ---
+
+## ✅ ENTREGUE em 28/09 — retestagem do Josef: GIRA, FOLIA Brinquedos, FORTAL (PR #176)
+
+- **GIRA:** 18 produtos com preço promocional (riscado) saem com o preço novo;
+  T2061 volta; TP2135 e GU0144 saem com as 2 linhas; linha "CX500" some.
+- **FOLIA Brinquedos:** 6 caixas, 2 preços trocados e o código 1167 corrigidos.
+- **FORTAL:** 262-011S/K/NK com o preço por peça.
+- DUTE e Neo fechados.
 
 ## ✅ ENTREGUE em 25/09 (tarde) — retestagem do Josef: Neo Festas e DUTE (PR #174)
 

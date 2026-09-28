@@ -1382,7 +1382,9 @@ Para CADA recorte, na mesma ordem, leia:
 - "codigo": o código do produto EXATAMENTE como impresso no card. Confira dígito por dígito
   (6 x 8, 5 x S, 0 x O, 1 x I). Nunca copie o código de outro card.
 - "nome": o nome do produto como impresso.
-Responda APENAS JSON: {{"cards": [{{"i": 1, "codigo": "...", "nome": "..."}}, ...]}}"""
+- "preco": o preço do card como número (ex.: "R$ 3,90" → 3.90), ou null se não houver.
+- "quantidadeCaixa": o número da caixa/embalagem ("CX: 12", "CX.12" → 12), ou null se não houver.
+Responda APENAS JSON: {{"cards": [{{"i": 1, "codigo": "...", "nome": "...", "preco": 0.0, "quantidadeCaixa": 0}}, ...]}}"""
 
 
 def _formato_codigo(codigo: str) -> str:
@@ -1394,7 +1396,7 @@ def _nome_chave(nome: Any) -> str:
 
 
 def _conferir_codigos_por_card(pdf_path: str, page_number: int, produtos: list,
-                               model_name: str) -> list:
+                               model_name: str, vocabulario: Optional[Counter] = None) -> list:
     """Relê SÓ o código de cada card da página, recortado em alta resolução,
     e corrige o código da leitura da página inteira quando ela errou.
 
@@ -1447,7 +1449,11 @@ def _conferir_codigos_por_card(pdf_path: str, page_number: int, produtos: list,
         atual = str(p.get("codigo") or "").strip().upper()
         if not atual or atual in codigos_relidos:
             continue
-        mesmos = [c for c in livres if _nome_chave(c.get("nome")) == _nome_chave(p.get("nome"))]
+        # nome igual a menos de 1-2 letras (FOLIA Brinquedos pág. 26: página
+        # leu "BLOCOS DE MONTAR - SAPATOS", o card diz "BLOCO ..." — JRF-10.1161
+        # lido no lugar de 1167 não era corrigido)
+        mesmos = [c for c in livres
+                  if _distancia_letras(_nome_chave(c.get("nome")), _nome_chave(p.get("nome"))) <= 2]
         if len(mesmos) != 1:
             continue
         novo = str(mesmos[0]["codigo"]).strip().upper()
@@ -1473,11 +1479,46 @@ def _conferir_codigos_por_card(pdf_path: str, page_number: int, produtos: list,
         if not c or not c.get("nome") or not p.get("nome"):
             continue
         corrigido = _corrigir_letras_pelo_relido(str(p["nome"]), str(c["nome"]))
+        # a releitura também erra ("ABRIDOR" → "ABRIODOR", FOLIA Utilidades
+        # 28/09/2026): só troca se a palavra nova é a que o RESTO do catálogo
+        # usa (aparece em mais nomes que a antiga)
+        if corrigido and corrigido != p["nome"] and vocabulario is not None:
+            antigas = set(str(p["nome"]).upper().split()) - set(corrigido.upper().split())
+            novas = set(corrigido.upper().split()) - set(str(p["nome"]).upper().split())
+            if sum(vocabulario[w] for w in novas) <= sum(vocabulario[w] for w in antigas):
+                corrigido = None
         if corrigido and corrigido != p["nome"]:
             nomes.append((p["nome"], corrigido))
             p["nome"] = corrigido
     if nomes:
         print(f"[ConfereCodigo] pág {page_number}: {len(nomes)} nome(s) corrigido(s) pelo recorte do card: {nomes}")
+
+    # Preço e caixa: no recorte a 300dpi o número miúdo é lido de novo
+    # (FOLIA Brinquedos 28/09/2026: CX lida 24 em vez de 12, 12 em vez de
+    # 72; preços de dois cards vizinhos trocados 3,50 ↔ 3,90). A leitura do
+    # card vale sobre a da página inteira quando traz um número válido.
+    numeros = []
+    for p in produtos:
+        c = por_codigo.get(str(p.get("codigo") or "").strip().upper())
+        if not c:
+            continue
+        for campo in ("preco", "quantidadeCaixa"):
+            try:
+                novo = float(c.get(campo)) if c.get(campo) not in (None, "") else None
+            except (TypeError, ValueError):
+                novo = None
+            if not novo or novo <= 0:
+                continue
+            if campo == "quantidadeCaixa":
+                if novo != int(novo):
+                    continue
+                novo = int(novo)
+            atual = p.get(campo)
+            if atual is None or abs(float(atual) - novo) > 0.005:
+                numeros.append((p.get("codigo"), campo, atual, novo))
+                p[campo] = novo
+    if numeros:
+        print(f"[ConfereCodigo] pág {page_number}: {len(numeros)} preço/caixa corrigido(s) pelo recorte do card: {numeros}")
     return produtos
 
 
@@ -1633,9 +1674,11 @@ def extract_with_vision_chunked(pdf_path: str, supplier: str = "", client_rules:
     # Conferência do código card a card (ver `_conferir_codigos_por_card`).
     # Corrige os dicts no lugar — são os mesmos objetos que estão em `todos`.
     if conferir:
+        # palavras dos nomes do catálogo inteiro (cada nome conta 1x por palavra)
+        vocabulario = Counter(w for p in todos for w in set(str(p.get("nome") or "").upper().split()))
         with ThreadPoolExecutor(max_workers=VISION_CHUNK_WORKERS) as pool:
             list(pool.map(
-                lambda item: _conferir_codigos_por_card(pdf_path, item[0], item[1], MODEL_FLASH),
+                lambda item: _conferir_codigos_por_card(pdf_path, item[0], item[1], MODEL_FLASH, vocabulario),
                 conferir,
             ))
 
@@ -2085,11 +2128,26 @@ def _codigos_fora_do_padrao(txt: str, code_pattern: str, fixos: List[Tuple[int, 
     if rx_preco is None:
         return []
     prefixo = _prefixo_do_codigo(code_pattern)
-    if not prefixo or len(re.findall(r"(?<!\\)[A-Za-z]", prefixo)) < 2:
-        return []
-    try:
-        rx = re.compile(prefixo + r"([A-Za-z0-9][A-Za-z0-9\-./]{0,23})(?![A-Za-z0-9\-./])", re.M)
-    except re.error:
+    rx = None
+    if prefixo and len(re.findall(r"(?<!\\)[A-Za-z]", prefixo)) >= 2:
+        try:
+            rx = re.compile(prefixo + r"([A-Za-z0-9][A-Za-z0-9\-./]{0,23})(?![A-Za-z0-9\-./])", re.M)
+        except re.error:
+            return []
+    elif prefixo == "^" and fixos:
+        # Código no início da linha, sem rótulo (GIRA 28/09/2026: "T2061- PORTA
+        # SABONETE" com 1 letra; o template aprendeu 2). O rótulo vira o
+        # SEPARADOR que vem depois do código em ≥80% dos códigos do padrão
+        # ("-", "–"): linha que começa com letras+dígitos e esse separador.
+        seps = Counter()
+        for _ini, fim, _c in fixos:
+            m = re.match(r"\s*([-–—:])", txt[fim:fim + 4])
+            seps[m.group(1) if m else ""] += 1
+        sep, n = seps.most_common(1)[0]
+        if not sep or n < 0.8 * len(fixos):
+            return []
+        rx = re.compile(r"^([A-Za-z]{1,4}\d{2,7})(?=\s*" + re.escape(sep) + ")", re.M)
+    if rx is None:
         return []
     candidatos = []
     for m in rx.finditer(txt):
@@ -2142,17 +2200,25 @@ def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str
     #    confiar — descarta todos (falha segura = comportamento anterior).
     por_pagina: List[List[Tuple[int, int, str]]] = []
     fixos_por_pagina: List[List[Tuple[int, int, str]]] = []
+    extras_por_pagina: List[set] = []
     total_fixos, total_extras = 0, 0
     for txt in page_texts:
         fixos = []
         for mm in code_re.finditer(txt):
             codigo = (mm.group(1) if mm.groups() else mm.group(0)) or ""
+            # token que o QTD do próprio template lê como quantidade ("CX500"
+            # no início da linha, GIRA pág. 13) não é código
+            # (só rótulo com letra — QTD solto tipo "(\d+)" casaria qualquer código numérico)
+            qm = rx_qtd.match(txt, mm.start(1) if mm.groups() else mm.start()) if rx_qtd is not None else None
+            if qm and re.match(r"[A-Za-z]", qm.group(0)):
+                continue
             fixos.append((mm.start(), mm.end(), codigo.strip()))
         extras = _codigos_fora_do_padrao(txt, tpl["CODE"], fixos, rx_preco)
         total_fixos += len(fixos)
         total_extras += len(extras)
         fixos_por_pagina.append(fixos)
         por_pagina.append(sorted(fixos + extras))
+        extras_por_pagina.append({ini for ini, _f, _c in extras})
     if total_extras:
         if total_extras > 0.10 * max(total_fixos, 1):
             print(f"[Template] {total_extras} códigos fora do padrão (> 10% de {total_fixos}) — rótulo genérico demais, ignorados")
@@ -2196,7 +2262,14 @@ def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str
             if not codigo:
                 continue
             prod: Dict[str, Any] = {"codigo": codigo, "paginaOrigem": pi + 1}
-            if rx_nome:
+            # código fora do padrão: o NOME do template (que ancora no padrão
+            # do código) não casa na linha dele e pegava o nome do produto
+            # anterior (GIRA T2061) — usa o resto da própria linha
+            if m_ini in extras_por_pagina[pi] and "(?P<nome>" not in tpl.get("NOME", ""):
+                resto = txt[m_fim:].split("\n", 1)[0].strip()
+                if len(re.findall(r"[A-Za-zÀ-ú]", resto)) >= 3:
+                    prod["nome"] = resto
+            if rx_nome and not prod.get("nome"):
                 # Janela BIDIRECIONAL: do fim do código ANTERIOR até o início
                 # do PRÓXIMO — cobre tanto "nome depois do código" (padrão)
                 # quanto "nome antes do código" (BM36). Entre os matches de
@@ -2329,11 +2402,24 @@ def extract_via_template(pdf_path: str, supplier: str = "", client_rules: str = 
 
     # Template confiável na amostra → aplica em TODAS as páginas (instantâneo)
     produtos = _apply_template(page_texts, tpl)
-    seen, deduped = set(), []
+    # Mesmo código impresso 2x NA MESMA PÁGINA com nomes diferentes é produto
+    # diferente (GIRA 28/09/2026: TP2135 "FRESTAS" R$0,90 e TP2135 "COM PÁ"
+    # R$0,60; GU0144 RETANG. e OVAL) — a exportação já separa por
+    # código+nome. Repetição em outra página (índice, reimpressão) segue fora.
+    seen, deduped = {}, []
     for p in produtos:
         c = str(p.get("codigo", "")).strip().upper()
-        if c and c not in seen:
-            seen.add(c)
+        if not c:
+            continue
+        chave_nome = _nome_chave(p.get("nome"))
+        anterior = seen.get(c)
+        if anterior is None:
+            seen[c] = {(p.get("paginaOrigem"), chave_nome)}
+            deduped.append(p)
+        elif (p.get("paginaOrigem"), chave_nome) not in anterior and chave_nome and p.get("preco") and any(
+            pg == p.get("paginaOrigem") for pg, _n in anterior
+        ):
+            anterior.add((p.get("paginaOrigem"), chave_nome))
             deduped.append(p)
 
     if not deduped:
@@ -2544,7 +2630,10 @@ def _fix_ocr_digit_letter_confusion(produtos: list) -> list:
 
 
 UNIT_PRICE_LABEL_LINE = re.compile(
-    r"^\[(?P<x>\d+),(?P<y>\d+)\]\s+UND\s*:\s*R\$\s*(?P<price>[\d.,]+)",
+    # UND / UN / UNID / PÇ / PC / PEÇA: o rótulo de "preço por unidade".
+    # FORTAL 28/09/2026: jogos de 6 peças usam "PÇ: R$ 3,60" ao lado do
+    # total "R$ 21,60" — só "UND:" era reconhecido.
+    r"^\[(?P<x>\d+),(?P<y>\d+)\]\s+(?:UND|UNID|UN|P[ÇC]|PE[ÇC]A)\.?\s*:\s*R\$\s*(?P<price>[\d.,]+)",
     re.IGNORECASE,
 )
 
@@ -2736,6 +2825,119 @@ def _fix_labeled_promo_price(pdf_path: str, produtos: list) -> list:
 
     if fixed:
         print(f"[PromoDePor] {fixed} produto(s) com rótulo DE/POR corrigido(s) pela posição na página")
+    return produtos
+
+
+_VALOR_RE = re.compile(r"^(?:R\$)?(\d{1,3}(?:\.\d{3})*|\d+),(\d{2})$")
+
+
+def _fix_struck_prices(pdf_path: str, produtos: list) -> list:
+    """Preço RISCADO + preço novo logo abaixo, sem rótulo "DE/POR" (GIRA
+    28/09/2026: "7,45" com um traço vetorial por cima e "5,96" em vermelho
+    embaixo — 21 produtos saíam com o preço antigo). O risco é medido no
+    próprio PDF: traço (path só com contorno, fino) que cruza ≥60% da largura
+    do valor na altura dele. O preço novo é o valor NÃO riscado mais perto,
+    logo abaixo (até 25pt) e alinhado (centro a ≤30pt), e menor que o riscado.
+    Vai pro produto da página cujo preço é o riscado e cujo código está mais
+    perto (≤150pt). preco = riscado, precoPromocional = novo (o importador
+    usa o menor como preço final e marca promoção)."""
+    if not produtos:
+        return produtos
+    por_pagina: Dict[int, list] = {}
+    for p in produtos:
+        try:
+            pg = int(p.get("paginaOrigem") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pg > 0 and p.get("preco"):
+            por_pagina.setdefault(pg, []).append(p)
+    corrigidos = 0
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception:
+        return produtos
+    try:
+        for pg, lista in por_pagina.items():
+            if not 1 <= pg <= len(doc):
+                continue
+            page = doc.load_page(pg - 1)
+            valores = []
+            for w in page.get_text("words"):
+                m = _VALOR_RE.match(w[4].strip())
+                if m:
+                    inteiro = m.group(1).replace(".", "")
+                    valores.append({"v": float(f"{inteiro}.{m.group(2)}"), "r": fitz.Rect(w[:4])})
+            if len(valores) < 2:
+                continue
+            tracos = [
+                d["rect"] for d in page.get_drawings()
+                if d.get("fill") is None and d.get("color") is not None
+                and d["rect"].width >= 8 and d["rect"].height <= 12 and d["rect"].width <= 200
+            ]
+            if not tracos:
+                continue
+            riscados = []
+            for val in valores:
+                r = val["r"]
+                meio = (r.y0 + r.y1) / 2
+                for t in tracos:
+                    sobre = max(0.0, min(r.x1, t.x1) - max(r.x0, t.x0))
+                    if sobre >= 0.6 * r.width and t.y0 - 2 <= meio <= t.y1 + 2:
+                        riscados.append(val)
+                        break
+            ids_riscados = {id(v) for v in riscados}
+            for velho in riscados:
+                r = velho["r"]
+                cx = (r.x0 + r.x1) / 2
+                novos = [
+                    v for v in valores
+                    if id(v) not in ids_riscados and v["v"] < velho["v"]
+                    and r.y1 - 4 <= v["r"].y0 <= r.y1 + 25
+                    and abs((v["r"].x0 + v["r"].x1) / 2 - cx) <= 30
+                ]
+                if not novos:
+                    continue
+                novo = min(novos, key=lambda v: v["r"].y0 - r.y1)
+                candidatos = []
+                for p in lista:
+                    if abs(float(p.get("preco") or 0) - velho["v"]) > 0.005 and \
+                            abs(float(p.get("preco") or 0) - novo["v"]) > 0.005:
+                        continue
+                    rects = page.search_for(str(p.get("codigo") or "").strip())
+                    if not rects:
+                        continue
+                    # Código na MESMA linha e à ESQUERDA do preço ganha, pelo
+                    # vão horizontal (GIRA: "TP1636 - NOME / 14*9cm CX30 7,45"
+                    # — em linha reta o código do card vizinho, à direita,
+                    # ficava mais perto). Senão, distância em linha reta.
+                    meio = (r.y0 + r.y1) / 2
+                    na_linha = [q for q in rects if q.x0 <= r.x0 and abs((q.y0 + q.y1) / 2 - meio) <= 25]
+                    if na_linha:
+                        dist = min(r.x0 - q.x1 for q in na_linha)
+                    else:
+                        dist = 1000 + min(fitz.Point((q.x0 + q.x1) / 2, (q.y0 + q.y1) / 2).distance_to(
+                            fitz.Point(cx, meio)) for q in rects)
+                    candidatos.append((dist, p))
+                if not candidatos:
+                    continue
+                candidatos.sort(key=lambda t: t[0])
+                dist, alvo = candidatos[0]
+                # mesma linha: até 250pt de vão; linha reta (1000+): até 150pt
+                if (dist < 1000 and dist > 250) or dist > 1150 or \
+                        (len(candidatos) > 1 and candidatos[1][0] - dist < 15):
+                    continue
+                if alvo.get("precoPromocional") == novo["v"] and alvo.get("preco") == velho["v"]:
+                    continue
+                alvo["preco"] = velho["v"]
+                alvo["precoPromocional"] = novo["v"]
+                alvo["promocional"] = True
+                corrigidos += 1
+    except Exception as e:
+        print(f"[PrecoRiscado] falha segura: {e}")
+    finally:
+        doc.close()
+    if corrigidos:
+        print(f"[PrecoRiscado] {corrigidos} produto(s) com preço riscado → preço novo como promocional")
     return produtos
 
 
@@ -3253,6 +3455,7 @@ def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str =
         result["produtos"], result["avisosPrecoCorrigido"] = _verify_prices_by_geometry(
             pdf_path, result["produtos"],
         )
+        result["produtos"] = _fix_struck_prices(pdf_path, result["produtos"])
         result["produtos"] = _nomear_cores_por_bolinha(pdf_path, result["produtos"])
         result["avisosNomeDuplicado"] = _marcar_nomes_duplicados(result["produtos"])
     return result
