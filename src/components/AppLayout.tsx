@@ -2,9 +2,16 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { Outlet, useLocation } from "react-router-dom";
 import { ConversoesEmAndamento } from "@/components/ConversoesEmAndamento";
+import { AssinaturaBloqueio, AssinaturaFaixa } from "@/components/AssinaturaAviso";
+import { useAssinatura } from "@/hooks/useAssinatura";
+import { precisaBloquear } from "@/core/billing/assinatura";
 
 export function AppLayout() {
   const location = useLocation();
+  // Assinatura (28/09/2026): desligada/em dia = nada muda. Bloqueada = só a
+  // tela de renovar (dados continuam salvos); o backend também recusa (402).
+  const { status: assinatura } = useAssinatura();
+  const bloqueado = precisaBloquear(assinatura, location.pathname);
 
   return (
     <SidebarProvider>
@@ -21,9 +28,10 @@ export function AppLayout() {
               </div>
             </div>
           </header>
+          <AssinaturaFaixa status={assinatura} />
           <main className="flex-1 overflow-auto p-4 sm:p-6 lg:p-8" key={location.pathname}>
             <div className="page-enter max-w-[1400px] mx-auto">
-              <Outlet />
+              {bloqueado ? <AssinaturaBloqueio status={assinatura} /> : <Outlet />}
             </div>
           </main>
         </div>

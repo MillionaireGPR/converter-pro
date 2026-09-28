@@ -1,8 +1,9 @@
 import {
   LayoutDashboard, FileUp, Database, Tag, Download, ArrowRightLeft,
   Building2, History, LogOut, Scissors, Users,
-  Columns3,
+  Columns3, CreditCard,
 } from "lucide-react";
+import { useAssinatura } from "@/hooks/useAssinatura";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
@@ -28,6 +29,8 @@ const menuItems = [
   { title: "Regras de Colunas", url: "/regras", icon: Columns3 },
   { title: "Histórico", url: "/historico", icon: History },
   { title: "Usuários", url: "/usuarios", icon: Users, adminOnly: true },
+  // Só aparece com a cobrança LIGADA (painel do servidor → Assinatura).
+  { title: "Assinatura", url: "/assinatura", icon: CreditCard, soComCobranca: true },
 ];
 
 export function AppSidebar() {
@@ -42,7 +45,9 @@ export function AppSidebar() {
     navigate("/login", { replace: true });
   };
 
-  const itensVisiveis = menuItems.filter(item => !item.adminOnly || isAdmin);
+  const { status: assinatura } = useAssinatura();
+  const itensVisiveis = menuItems.filter(item =>
+    (!item.adminOnly || isAdmin) && (!item.soComCobranca || assinatura.estado !== "desligada"));
 
   return (
     <Sidebar collapsible="icon" className="gradient-sidebar border-r-0">

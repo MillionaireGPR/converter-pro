@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from cv_extractor import extract_cells_via_cv
 from storage import upload_file_to_supabase, cleanup_old_storage_files
+from billing import billing, BillingError
 
 # ─────────────────────────────────────────────────────────────
 # PAINEL DE MONITORAMENTO (25/07/2026): captura os últimos N prints
@@ -480,6 +481,123 @@ async def admin_dashboard():
 
 
 # ─────────────────────────────────────────────────────────────
+# ASSINATURA (28/09/2026) — ver billing.py e guide.md #16.
+# Cliente: /billing/status, /billing/checkout, /billing/confirmar.
+# InfinitePay: /billing/webhook (sempre reconferido no /payment_check).
+# Fornecedor (token de admin): /admin/billing*.
+# ─────────────────────────────────────────────────────────────
+
+def _billing_http(e: BillingError):
+    raise HTTPException(status_code=e.status, detail=e.mensagem)
+
+
+def _exigir_assinatura():
+    """Portão das conversões: 402 só quando a cobrança está ligada E vencida
+    além da carência. Falha no Supabase libera (fail-open)."""
+    ok, st = billing.conversao_liberada()
+    if not ok:
+        raise HTTPException(status_code=402, detail={
+            "erro": "ASSINATURA_BLOQUEADA",
+            "mensagem": "Assinatura vencida. Regularize em Assinatura para voltar a converter.",
+            "pago_ate": (st or {}).get("pago_ate"),
+        })
+
+
+class _CheckoutIn(BaseModel):
+    usuario: str = ""
+
+
+class _ConfirmarIn(BaseModel):
+    order_nsu: str = ""
+    transaction_nsu: str = ""
+    slug: str = ""
+    receipt_url: str = ""
+
+
+@app.get("/billing/status")
+async def billing_status():
+    try:
+        return await asyncio.to_thread(billing.status)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Status indisponível: {e}")
+
+
+@app.post("/billing/checkout")
+async def billing_checkout(body: _CheckoutIn):
+    try:
+        return await asyncio.to_thread(billing.criar_checkout, body.usuario)
+    except BillingError as e:
+        _billing_http(e)
+
+
+@app.post("/billing/confirmar")
+async def billing_confirmar(body: _ConfirmarIn):
+    """Retorno do navegador após pagar (cobre webhook perdido)."""
+    try:
+        res = await asyncio.to_thread(billing.confirmar, body.order_nsu, body.transaction_nsu, body.slug, body.receipt_url)
+    except BillingError as e:
+        _billing_http(e)
+    return {"resultado": res, "status": await asyncio.to_thread(billing.status)}
+
+
+@app.post("/billing/webhook")
+async def billing_webhook(payload: dict):
+    """Chamado pela InfinitePay. 200 = recebido; 400 = InfinitePay tenta de novo."""
+    try:
+        res = await asyncio.to_thread(
+            billing.confirmar,
+            str(payload.get("order_nsu") or ""), str(payload.get("transaction_nsu") or ""),
+            str(payload.get("invoice_slug") or payload.get("slug") or ""), str(payload.get("receipt_url") or ""),
+        )
+    except BillingError as e:
+        print(f"[billing] webhook falhou (InfinitePay vai repetir): {e.mensagem}")
+        raise HTTPException(status_code=400, detail="tente novamente")
+    print(f"[billing] webhook order={payload.get('order_nsu')} -> {res}")
+    if res == "NAO_PAGO":
+        raise HTTPException(status_code=400, detail="pagamento ainda não confirmado")
+    return {"ok": True, "resultado": res}
+
+
+class _BillingConfigIn(BaseModel):
+    ativa: bool | None = None
+    valor_centavos: int | None = None
+    periodo_dias: int | None = None
+    carencia_dias: int | None = None
+    aviso_dias: int | None = None
+    infinitepay_handle: str | None = None
+
+
+class _LiberarIn(BaseModel):
+    dias: int
+    observacao: str = ""
+
+
+@app.get("/admin/billing")
+async def admin_billing(_token: str = Depends(_require_admin)):
+    st, cfg, pags = await asyncio.gather(
+        asyncio.to_thread(billing.status), asyncio.to_thread(billing.config), asyncio.to_thread(billing.pagamentos))
+    return {"status": st, "config": cfg, "pagamentos": pags}
+
+
+@app.post("/admin/billing/config")
+async def admin_billing_config(body: _BillingConfigIn, _token: str = Depends(_require_admin)):
+    try:
+        cfg = await asyncio.to_thread(billing.atualizar_config, body.model_dump())
+    except BillingError as e:
+        _billing_http(e)
+    return {"config": cfg, "status": await asyncio.to_thread(billing.status)}
+
+
+@app.post("/admin/billing/liberar")
+async def admin_billing_liberar(body: _LiberarIn, _token: str = Depends(_require_admin)):
+    try:
+        ate = await asyncio.to_thread(billing.liberar_manual, body.dias, body.observacao)
+    except BillingError as e:
+        _billing_http(e)
+    return {"pago_ate": ate, "status": await asyncio.to_thread(billing.status)}
+
+
+# ─────────────────────────────────────────────────────────────
 # Endpoints de gerenciamento de perfis Phase 0
 # ─────────────────────────────────────────────────────────────
 
@@ -929,6 +1047,7 @@ async def process_pdf(
     useAiPicker: str = Form("false"),  # opção do fornecedor: IA escolhe a foto (1 chamada/pág)
     fotoComposta: str = Form("false"),  # opção do fornecedor: foto montada por várias imagens
 ):
+    _exigir_assinatura()
     print(f"\n--- Iniciando Job: {jobId} ---")
     print(f"Arquivo: {file.filename}, Fornecedor: {supplier}")
 
@@ -1105,6 +1224,7 @@ async def extract_products_ai(
 
     Resolve OOM e 502 com PDFs grandes (NIX 12MB / 106 páginas).
     """
+    _exigir_assinatura()
     import tempfile
     import uuid
 
@@ -1240,6 +1360,7 @@ async def repair_prices_ai(
     Por que assíncrono: 91 SKUs em 51 páginas × ~3s/page = ~150s,
     mas Render gateway mata HTTP request em ~100-300s. Síncrono = 502.
     """
+    _exigir_assinatura()
     import tempfile
     import uuid
 

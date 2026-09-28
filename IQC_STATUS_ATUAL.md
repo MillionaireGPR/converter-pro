@@ -5,6 +5,14 @@
 
 ---
 
+## ✅ PRONTA (desligada) em 28/09 — Assinatura do conversor (PR #178)
+
+- R$249/mês por link InfinitePay (PIX/cartão); pagamento reconferido na
+  InfinitePay antes de liberar; aviso antes de vencer, carência e bloqueio
+  das conversões depois. Controle pelo painel do servidor (Gabriel).
+- **Falta (Gabriel):** ativar "Checkout externo" na InfinitePay, preencher a
+  InfiniteTag no painel e ligar. Checklist em `guide.md #17`.
+
 ## ✅ ENTREGUE em 28/09 (noite) — GIRA promocional com preço cheio (PR #177)
 
 - Reunião com o Josef: itens promocionais da GIRA (riscado → novo) saíam no

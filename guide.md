@@ -2004,3 +2004,67 @@ mais relevante agora que está aplicada e verificada.)
 ---
 
 **Mantenha este guia atualizado após cada mudança significativa.**
+
+
+## 17. Assinatura do conversor — InfinitePay (28/09/2026)
+
+**Status:** pronta e testada, **DESLIGADA** em produção (nada muda para o
+cliente). O menu "Assinatura" só aparece quando a cobrança é ligada.
+
+### Como funciona
+- **Plano:** R$249 / 30 dias (editável). A InfinitePay não tem cobrança
+  recorrente, então é **link de pagamento por período** (PIX ou cartão).
+- **Pagar:** página `/assinatura` → `POST /billing/checkout` → o backend grava
+  um pagamento `pendente` (order_nsu `conv-...`) e pede o link a
+  `api.checkout.infinitepay.io/links` com `webhook_url` fixo
+  (`conversor-vps.metodoiqc.com.br/billing/webhook`) e volta para `/assinatura`.
+  Clicar de novo em 24h reaproveita o mesmo link.
+- **Confirmar:** o webhook da InfinitePay **não é assinado**, então webhook e
+  retorno do navegador (`/billing/confirmar`) **reconferem** em
+  `/payment_check` antes de liberar. A RPC `app_assinatura_confirmar` é
+  idempotente (webhook + retorno contam uma vez) e recusa valor menor que o
+  cobrado. O período soma a partir do vencimento atual (pagar antes não perde dias).
+- **Estados** (RPC `app_assinatura_status`, fonte única para front e back):
+  `desligada` → tudo liberado · `ativa` · `vencendo` (faixa amarela, `aviso_dias`)
+  · `carencia` (venceu, faixa vermelha, ainda converte por `carencia_dias`) ·
+  `bloqueada` (tela de renovar no lugar do conteúdo; backend responde **402** em
+  `/process`, `/extract_products_ai`, `/repair_prices_ai`). Dados do cliente
+  continuam salvos.
+- **Fail-open:** se o Supabase falhar, front e back tratam como liberado —
+  cliente pagante não para por instabilidade nossa.
+
+### Quem controla
+- **Fornecedor (Gabriel):** painel do servidor
+  (`conversor-vps.metodoiqc.com.br/admin/dashboard`, token de admin) → seção
+  "Assinatura": ligar/desligar, valor, período, carência, aviso, InfiniteTag,
+  **liberação manual de N dias** (PIX por fora, cortesia) e histórico completo.
+- **Cliente:** só vê situação, paga e vê o histórico (sem NSU/slug).
+- Admin do cliente (`/usuarios`) **não** mexe na assinatura.
+
+### Segurança
+- Tabelas `app_assinatura` / `app_assinatura_pagamentos` com RLS sem policies e
+  sem grant para anon/authenticated. Escrita só pelo backend (service role).
+- `app_assinatura_confirmar` / `app_assinatura_liberar_manual`: execute só
+  `service_role` (anon recebe *permission denied* — testado no banco real).
+- Recibo só é guardado se for `https://`.
+
+### Para ligar (checklist do Gabriel)
+1. InfinitePay: **ativar "Checkout externo"** (app.infinitepay.io →
+   Configurações). Sem isso a API responde `external_checkout_not_enabled` e o
+   painel mostra essa mensagem.
+2. Painel do servidor → Assinatura: preencher a InfiniteTag.
+3. Se a Michelle já pagou por fora: "Liberar dias manualmente" (ex.: 30).
+4. Ligar a cobrança. Sem pagamento/liberação, o estado vira `bloqueada` na hora.
+5. Teste real: gerar o link na página, pagar R$1 (baixar o valor
+   temporariamente) e ver o período somar — depois voltar o valor.
+
+### Arquivos
+`supabase/migrations/20260928_assinatura.sql` (aplicada) ·
+`backend/image_extractor/billing.py` + rotas em `main.py` + seção no
+`static/admin_dashboard.html` · `src/core/billing/assinatura.ts`,
+`src/hooks/useAssinatura.ts`, `src/components/AssinaturaAviso.tsx`,
+`src/pages/Assinatura.tsx`. Testes: `test_billing.py` (16),
+`assinatura.test.ts` (5), `AssinaturaAviso.test.tsx` (6) + SQL testado em
+transação revertida no banco real (5 estados, valor menor, idempotência,
+permissões).
+
