@@ -5,6 +5,12 @@
 
 ---
 
+## ✅ ENTREGUE em 28/09 (noite) — GIRA promocional com preço cheio (PR #177)
+
+- Reunião com o Josef: itens promocionais da GIRA (riscado → novo) saíam no
+  Excel com o preço antigo. Fix genérico no frontend: preço promocional lido
+  pela IA vale para qualquer fornecedor, mesmo sem alias de promo no adapter.
+
 ## ✅ ENTREGUE em 28/09 — retestagem do Josef: GIRA, FOLIA Brinquedos, FORTAL (PR #176)
 
 - **GIRA:** 18 produtos com preço promocional (riscado) saem com o preço novo;

@@ -198,7 +198,12 @@ export const extractProducts = (
 
     // Preço: tenta campo principal, depois verifica prioridade
     let preco = toNum(findValue(campos, fa.preco));
-    const precoPromocional = fa.precoPromocional ? toNum(findValue(campos, fa.precoPromocional)) : undefined;
+    // Produto vindo da IA (mapAiProductsToBrutos) sempre usa a chave canônica
+    // 'precopromocional'. Adapter sem alias de promo (GIRA, FORTAL, BM36...)
+    // descartava o preço riscado→novo: exportava o cheio com ***PROMOCAO***
+    // (reunião 28/09, GIRA TP1951 14,95 em vez de 11,96).
+    const promoCanonico = campos['__postProcessed'] ? toNum(campos['precopromocional']) : 0;
+    const precoPromocional = (fa.precoPromocional ? toNum(findValue(campos, fa.precoPromocional)) : 0) || promoCanonico || undefined;
 
     // Se o smart PDF interpreter já calculou o preço (postProcess), usar diretamente
     if (preco === 0 && campos['preco'] !== undefined && campos['preco'] !== null) {
