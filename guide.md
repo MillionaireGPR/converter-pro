@@ -1833,6 +1833,39 @@ prefixo "v2" para recompilar as regras já em cache.
 **Não resolvível:** Neo pág. 32 (PISCA PISCA 149055/149039/149080) tem UMA foto
 para as 3 cores — não existe foto verde no catálogo.
 
+### 14.38 Retestagem 28/09: GIRA, FOLIA Brinquedos, FORTAL (28/09/2026)
+
+**Preço riscado (GIRA, 18 produtos).** "7,45" com um traço vetorial por cima e
+"5,96" em vermelho logo abaixo, sem rótulo DE/POR. `_fix_struck_prices`: traço
+(path só contorno, ≤12pt de altura) que cruza ≥60% da largura do valor na altura
+dele = riscado; o preço novo é o valor não riscado logo abaixo (≤25pt, centro a
+≤30pt) e menor. Vai pro produto de mesmo preço cujo código está na MESMA LINHA
+e à esquerda do valor (senão, o mais perto em linha reta ≤150pt); ambíguo
+(<15pt de diferença) não mexe. preco = riscado, precoPromocional = novo (o
+importador usa o menor e marca promoção). Nos outros 8 catálogos: 0 mudanças.
+
+**Leitura rápida (template) — GIRA.** (a) "CX500 0,90" no início da linha virava
+código: token que o QTD do próprio template lê como quantidade (com letra no
+rótulo) não é código. (b) "T2061-" (1 letra) fora do padrão aprendido (2 letras):
+com CODE ancorado em "^", `_codigos_fora_do_padrao` usa o SEPARADOR que segue
+≥80% dos códigos ("-", "–") como rótulo; nome vem da própria linha. (c) Mesmo
+código 2x na MESMA página com nomes diferentes e preço (TP2135 FRESTAS/COM PÁ,
+GU0144 RETANG./OVAL) = duas linhas — a exportação já separa por código+nome.
+A/B do template: BM36 idêntico.
+
+**Releitura do card (FOLIA Brinquedos, visão).** `_conferir_codigos_por_card`
+agora lê também preço e caixa no recorte a 300dpi e eles valem sobre a leitura
+da página (CX 24→12, 12→72, 48→60, 72→60, 6→8, 48→18; 3,50↔3,90 trocados).
+Nome relido com até 2 letras de diferença conta como "mesmo nome" pra corrigir
+código (1161→1167: página leu BLOCOS, card diz BLOCO). Correção de nome só
+vale se a palavra nova já é usada no catálogo mais que a antiga (a releitura
+trocou ABRIDOR por "ABRIODOR" na FOLIA Utilidades). Catálogo inteiro: FOLIA
+Brinquedos muda só os 9 do Josef; FOLIA Utilidades 11 caixas, todas conferidas
+no card.
+
+**Rótulo de preço unitário (FORTAL).** Além de "UND:", "PÇ:", "PC:", "PEÇA:",
+"UN:", "UNID:" (jogo de 6 peças: "PÇ: R$ 3,60" + total "R$ 21,60").
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por

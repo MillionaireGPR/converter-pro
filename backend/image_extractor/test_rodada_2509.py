@@ -341,3 +341,111 @@ def test_marcacao_cores_do_cliente_nao_vira_nome_de_cor(tmp_path):
                 {"codigo": "128422", "nome": "BALÕES PARTY 62x28cm ***CORES***", "paginaOrigem": 1}]
     ge._nomear_cores_por_bolinha(pdf, produtos)
     assert [p["nome"] for p in produtos] == ["BALÕES PARTY 62x28cm ***CORES***"] * 2
+
+
+# ── Retestagem 28/09: GIRA, FORTAL ────────────────────────────────────────
+
+def _pdf_linhas(tmp_path, paginas, nome="t.pdf"):
+    pdf = str(tmp_path / nome)
+    doc = fitz.open()
+    for linhas in paginas:
+        page = doc.new_page(width=540, height=720)
+        for i, linha in enumerate(linhas):
+            page.insert_text((40, 60 + 14 * i), linha, fontsize=9)
+    doc.save(pdf)
+    doc.close()
+    return pdf
+
+
+GIRA_TPL = {"CODE": r"^([A-Z]{2}\d{3,4})", "NOME": r"(?s)^[A-Z]{2}\d{3,4}[- ]+([^\n]+?)\n",
+            "PRECO": r"CX\d+(?:JG|KIT)?\s+([\d,.]+)", "QTD": r"CX(\d+)(?:JG|KIT)?", "PRECO_FMT": "BR"}
+
+
+def test_template_quantidade_no_inicio_da_linha_nao_vira_codigo():
+    # GIRA pág. 13: "TP2083 – MATA MOSQUITO" sem medida → linha "CX500 0,90"
+    txt = ("TP2066 - KIT 12 PRENDEDORES\n6cm 4 CORES CX100 2,45\n"
+           "TP2083 - MATA MOSQUITO PLASTICO\nCX500 0,90\n")
+    ps = ge._apply_template([txt], GIRA_TPL)
+    assert [(p["codigo"], p.get("preco"), p.get("quantidadeCaixa")) for p in ps] == [
+        ("TP2066", 2.45, 100), ("TP2083", 0.9, 500)]
+
+
+def test_template_codigo_com_uma_letra_e_o_mesmo_separador(capsys):
+    # GIRA pág. 34: "T2061- PORTA SABONETE VIDRO" (template aprendeu 2 letras)
+    linhas = "".join(f"TP20{i:02d} - PRODUTO {i}\n380ml CX48 4,{i:02d}\n" for i in range(12))
+    txt = linhas + "T2061- PORTA SABONETE VIDRO\n400ml CX48 4,95\n"
+    ps = ge._apply_template([txt], GIRA_TPL)
+    t = [p for p in ps if p["codigo"] == "T2061"]
+    assert t and t[0]["nome"] == "- PORTA SABONETE VIDRO" and t[0]["preco"] == 4.95
+
+
+def test_preco_riscado_vira_promocional(tmp_path):
+    # GIRA pág. 2: "CX30 7,45" com traço por cima e "5,96" vermelho embaixo;
+    # dois cards lado a lado com o mesmo preço
+    pdf = str(tmp_path / "riscado.pdf")
+    doc = fitz.open()
+    page = doc.new_page(width=540, height=720)
+    for x0, cod in ((15, "TP1636"), (187, "TP1637")):
+        page.insert_text((x0, 322), f"{cod} - POTE VIDRO", fontsize=9)
+        page.insert_text((x0 + 60, 336), "CX30", fontsize=9)
+        page.insert_text((x0 + 108, 336), "7,45", fontsize=11)
+        page.draw_line((x0 + 105, 335), (x0 + 138, 327), color=(0.1, 0.4, 0.1), width=1)
+        page.insert_text((x0 + 106, 351), "5,96", fontsize=11, color=(0.75, 0, 0))
+    page.insert_text((400, 322), "TP1823 - BOWLS", fontsize=9)
+    page.insert_text((470, 336), "9,95", fontsize=11)
+    doc.save(pdf)
+    doc.close()
+    produtos = [{"codigo": "TP1636", "preco": 7.45, "paginaOrigem": 1},
+                {"codigo": "TP1637", "preco": 7.45, "paginaOrigem": 1},
+                {"codigo": "TP1823", "preco": 9.95, "paginaOrigem": 1}]
+    ge._fix_struck_prices(pdf, produtos)
+    assert [(p["preco"], p.get("precoPromocional")) for p in produtos] == [(7.45, 5.96), (7.45, 5.96), (9.95, None)]
+
+
+def test_preco_por_peca_rotulado_pc(tmp_path):
+    # FORTAL pág. 29: "PÇ: R$ 3,60" + total "R$ 21,60"
+    pdf = _pdf_linhas(tmp_path, [["JG FACAS 6PCS", "262-011K", "6 PCS", "Qtd. p/ Caixa: 100 UND",
+                                  "PÇ: R$ 3,60", "R$ 21,60"]])
+    produtos = [{"codigo": "262-011K", "preco": 21.6, "paginaOrigem": 1}]
+    ge._fix_labeled_unit_prices(pdf, produtos)
+    assert produtos[0]["preco"] == 3.6
+
+
+def test_releitura_do_card_corrige_preco_caixa_e_respeita_vocabulario(monkeypatch, tmp_path):
+    # FOLIA Brinquedos pág. 5/3 e FOLIA Utilidades pág. 8 (28/09/2026)
+    import json as _json, types
+    from collections import Counter
+    pdf = str(tmp_path / "cards.pdf")
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 50, 50), False)
+    pix.set_rect(pix.irect, (200, 120, 60))
+    for i in range(3):
+        page.insert_image(fitz.Rect(10 + i * 195, 200, 190 + i * 195, 390), pixmap=pix)
+    doc.save(pdf)
+    doc.close()
+    resposta = _json.dumps({"cards": [
+        {"i": 1, "codigo": "JRF-10.1020", "nome": "PIÃO COM LANÇADOR", "preco": 3.9, "quantidadeCaixa": 96},
+        {"i": 2, "codigo": "JRF-10.0888", "nome": "PISTOLA DE DARDOS", "preco": 34.9, "quantidadeCaixa": 12},
+        {"i": 3, "codigo": "JRF-50.0827", "nome": "ABRIODOR DE GARRAFA", "preco": None, "quantidadeCaixa": None},
+    ]})
+
+    class Modelo:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def generate_content(self, *_a, **_k):
+            return types.SimpleNamespace(text=resposta)
+
+    monkeypatch.setattr(ge, "genai", types.SimpleNamespace(GenerativeModel=Modelo, GenerationConfig=lambda **k: None))
+    produtos = [
+        {"codigo": "JRF-10.1020", "nome": "PIÃO COM LANÇADOR", "preco": 3.5, "quantidadeCaixa": 96},
+        {"codigo": "JRF-10.0888", "nome": "PISTOLA DE DARDOS", "preco": 34.9, "quantidadeCaixa": 24},
+        {"codigo": "JRF-50.0827", "nome": "ABRIDOR DE GARRAFA", "preco": 5.0, "quantidadeCaixa": 48},
+    ]
+    voc = Counter({"ABRIDOR": 6, "DE": 40, "GARRAFA": 3})
+    ge._conferir_codigos_por_card(pdf, 1, produtos, "modelo", voc)
+    assert produtos[0]["preco"] == 3.9
+    assert produtos[1]["quantidadeCaixa"] == 12
+    assert produtos[2]["nome"] == "ABRIDOR DE GARRAFA"
+    assert produtos[2]["preco"] == 5.0 and produtos[2]["quantidadeCaixa"] == 48
