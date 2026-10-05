@@ -1,9 +1,19 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 28/09/2026
+**Atualizado em:** 04/10/2026
 
 ---
+
+## ✅ ENTREGUE em 04/10 — Teste 9 do Josef, parte DADOS (PR #179)
+
+- Nomes: GIRA Utilidades/Decoração (títulos de seção, nome do vizinho, "- "),
+  Goal (nome de 2 linhas, "• Embalagem"), Tuka (tamanho e MÍN. N PÇS), FOLIA
+  Brinquedos (12 de 13). Códigos: GK0173-0, WC409301BM, BM363056-c/refil,
+  JRF-50.0851/0852. Produtos que sumiam: GIRA 13, FOLIA Utilidades pág. 25,
+  FORTAL JDG-60*90 e 2º 5085, Goal GK3604. ***PROMOCAO***: FORTAL 36, Lila 2,
+  GIRA Decoração pág. 15. Preços: Neo 13 de 14.
+- Fotos (Neo, DUTE, PETRIN, Tuka, DAGIA, GIRA, FOLIA) seguem na próxima parte.
 
 ## ✅ PRONTA (desligada) em 28/09 — Assinatura do conversor (PR #178)
 

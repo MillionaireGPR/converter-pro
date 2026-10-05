@@ -1880,6 +1880,47 @@ no card.
 - **Teste:** `promo-ai.test.ts` (GIRA e FORTAL).
 
 
+### 14.40 Teste 9 do Josef — dados (04/10/2026)
+
+Conferência de 29/09 (15 representadas, catálogos novos). Medido sem API
+sobre os PDFs e resultados exatos dos jobs guardados na VPS (antes × depois).
+
+- **Template — nome** (GIRA Utilidades 168 nomes, GIRA Decoração 50, Goal 71):
+  o NOME sintetizado não casava (preço na mesma linha da caixa; nome em 2
+  linhas que o alargamento de caracteres de 17/09 prendia numa linha só) e o
+  plano B pegava a LINHA DE CIMA — título de seção ou nome do vizinho. Agora:
+  2ª tentativa multilinha; plano B = resto da própria linha do código antes
+  da linha de cima; separador inicial ("- ", "–") removido; hífen de quebra
+  de linha decidido pelo vocabulário do catálogo ("HELI-COPTERO" junta,
+  "BRASIL - TAM 5." separa); variante na linha do código ("GK2924 - PRETO")
+  vira "nome + variante". GIRA: 11 produtos que sumiam (sem nome) voltam.
+- **Template — código** com sufixo colado ("GK0173-0", "WC409301BM",
+  "BM363056-c/refil") e **asterisco** de medida mantido ("4*4cm",
+  "49*15*1.2"; só some o asterisco que não está entre dígitos).
+  "R$ 16,50" com espaço passa no PRECO (Goal GK3604). Espaço no fim da linha
+  não derruba mais o PRECO "...$" (GIRA Decoração: 10 → 0 páginas relidas por IA).
+- **Releitura por página do template** numerava páginas não seguidas como
+  seguidas (15, 35, 36 → 15, 16, 17): produto na página errada, preço
+  riscado e foto não achados. Agora passa os números reais. Nome lido na
+  própria linha pelo template vale sobre o da IA (GC0253 sumia sem nome).
+- **Dedup** do servidor por código+nome (FORTAL 5085 cabideiro) e mesmo
+  código+nome em outra página com outro preço (Tuka VTK-66-4231-80U).
+- **Página só imagem** no meio de catálogo de texto vai pra visão (FORTAL pág. 4,
+  JDG-60*90). Lote de visão que falhou 2x ganha 2ª rodada (FOLIA Utilidades pág. 25).
+- **Selo de promoção pela posição** (`_conferir_selos_off`): "OFF n%" vai pro
+  1º código abaixo na mesma coluna; "JÁ COM DESCONTO" pros preços empilhados
+  logo acima. FORTAL 36/36, Lila 2/2, 0 mudanças nos outros 13 catálogos.
+- **Preço no próprio código** (`_preco_un_abaixo_do_codigo`): "R$2,99Un."
+  colado abaixo do código; preço do jogo/conjunto quando preço × peças fecha.
+  Neo 13/14, 0 mudanças fora da lista.
+- **Atributos do bloco** (`_completar_atributos_do_bloco`): medida e "MÍN. N
+  PÇS" sozinhos na linha entram no nome/observações — só quando é a estrutura
+  do catálogo (≥40% dos produtos). Tuka 309 nomes / 293 obs; nenhum outro.
+- **Releitura do card** (FOLIA): cards de mesmo nome desempatam pela posição
+  (0851/0852 lidos 0051/0052); aceita palavra a mais/a menos no fim e
+  plural↔singular (12 de 13 nomes da FOLIA Brinquedos).
+- Testes: `test_rodada_2909.py`.
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por

@@ -376,7 +376,7 @@ def test_template_codigo_com_uma_letra_e_o_mesmo_separador(capsys):
     txt = linhas + "T2061- PORTA SABONETE VIDRO\n400ml CX48 4,95\n"
     ps = ge._apply_template([txt], GIRA_TPL)
     t = [p for p in ps if p["codigo"] == "T2061"]
-    assert t and t[0]["nome"] == "- PORTA SABONETE VIDRO" and t[0]["preco"] == 4.95
+    assert t and t[0]["nome"] == "PORTA SABONETE VIDRO" and t[0]["preco"] == 4.95
 
 
 def test_preco_riscado_vira_promocional(tmp_path):
