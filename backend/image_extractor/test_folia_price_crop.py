@@ -87,7 +87,9 @@ def test_texto_largo_dentro_da_faixa_nao_corta_cedo_demais():
     for y in range(topo + 4, topo + 30):
         img[y, 0:int(w * 0.50)] = BRANCO
     out = _crop_folia_price_band(img)
-    assert abs(out.shape[0] - topo) <= 3, (
+    # desde 05/10/2026 a moldura navy de cima também sai (até ~10px) — ver
+    # _aparar_moldura_e_etiqueta; o corte da faixa continua no topo dela
+    assert topo - 12 <= out.shape[0] <= topo + 3, (
         f"cortou em {out.shape[0]}, esperado perto de {topo} — "
         "sobrou texto da faixa na foto"
     )
