@@ -1,9 +1,18 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 04/10/2026
+**Atualizado em:** 05/10/2026
 
 ---
+
+## ✅ ENTREGUE em 05/10 — Teste 9 do Josef, parte FOTOS (PR #180)
+
+- FOLIA: fotos sem moldura azul e sem pedaço da etiqueta (todas); 1020/1021.
+- DUTE: 36 de 39 sem o produto EM BREVE vizinho.
+- Neo: 224 fotos de balões, números, marabu, velas e outros corrigidas.
+- Tuka: 11 de 18 (pares trocados e sem foto). DAGIA: 9 de 11.
+- Ficam para a próxima: PETRIN (15), GIRA Malas/Papelaria (foto de grupo),
+  DUTE pedaços do layout (selo PROMO, triângulo, ícone de pilha), 3 DUTE.
 
 ## ✅ ENTREGUE em 04/10 — Teste 9 do Josef, parte DADOS (PR #179)
 

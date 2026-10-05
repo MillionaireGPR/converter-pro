@@ -1511,6 +1511,25 @@ def _conferir_codigos_por_card(pdf_path: str, page_number: int, produtos: list,
     if trocas:
         print(f"[ConfereCodigo] pág {page_number}: {len(trocas)} código(s) corrigido(s) pelo recorte do card: {trocas}")
 
+    # Posição: a releitura sabe em QUAL card está cada código; a leitura da
+    # página inteira estima a posição e às vezes inverte vizinhos — a foto
+    # ia pro card do lado (FOLIA Brinquedos 29/09/2026: JRF-10.1020 e 1021
+    # com as fotos trocadas). Grava o centro do card (Y de baixo pra cima).
+    contagem = Counter(str(c["codigo"]).strip().upper() for c in relidos)
+    for c in relidos:
+        cod = str(c["codigo"]).strip().upper()
+        try:
+            r = rects[int(c.get("i")) - 1]
+        except (TypeError, ValueError, IndexError):
+            continue
+        donos = [p for p in produtos if str(p.get("codigo") or "").strip().upper() == cod]
+        if contagem[cod] != 1 or len(donos) != 1:
+            continue
+        donos[0]["spatialContext"] = {
+            "x": (r.x0 + r.x1) / 2, "y": altura_pagina - (r.y0 + r.y1) / 2,
+            "width": 0, "height": 0, "page": page_number,
+        }
+
     # Nome: o recorte em alta resolução também lê o nome. Só corrige letra
     # comida/trocada (FOLIA pág. 11, Josef 25/09/2026: "KIT ABRIOR + ROLHA"
     # no lugar de "KIT ABRIDOR + ROLHA"; a releitura veio "ABRI DOR", com o

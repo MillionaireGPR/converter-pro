@@ -138,6 +138,13 @@ def extract_cells_via_cv(
         n_interior_v = len(v_coords) - 2
 
         page_imgs = _get_page_embedded_images(page, logo_xrefs, logo_digests)
+        # Ícone de característica (caixa "CX C/6", presente, pilha — a mesma
+        # imagem pequena repetida no catálogo) nunca é foto de produto (DAGIA
+        # 29/09/2026). Antes só saía na foto composta do DUTE.
+        if not grade_de_cards:
+            _icones = _icones_pela_amostra(doc, page_imgs)
+            if _icones:
+                page_imgs = [i for i in page_imgs if id(i) not in _icones]
         # Na grade de cards cada imagem já é o card de UM produto — costurar
         # juntava 3 cards encostados de 190/190/192pt (FOLIA pág. 12, Josef
         # 24/09/2026: JRF-50.0111, 0020 e 0113 sem foto).
@@ -181,6 +188,8 @@ def extract_cells_via_cv(
                 # — inclui a foto principal quando ela cobre quase a página
                 # inteira (caso DAGIA pg 14, copos). Logos seguem filtrados.
                 ai_page_imgs = _get_page_embedded_images(page, logo_xrefs, logo_digests, allow_fullpage=True)
+                _icones_ai = _icones_pela_amostra(doc, ai_page_imgs)
+                ai_page_imgs = [i for i in ai_page_imgs if id(i) not in _icones_ai]
 
                 # Candidatas = rects (NÃO arrays). Filtra fragmentos minúsculos
                 # por área do rect (sem extrair pixels ainda).
@@ -768,7 +777,59 @@ def _crop_folia_price_band(img_rgb: np.ndarray) -> np.ndarray:
 
     if topo_faixa is None or not (0.55 * h <= topo_faixa <= 0.97 * h):
         return img_rgb
-    return img_rgb[:topo_faixa, :, :]
+    return _aparar_moldura_e_etiqueta(img_rgb[:topo_faixa, :, :], navy)
+
+
+def _aparar_moldura_e_etiqueta(img_rgb: np.ndarray, navy: np.ndarray) -> np.ndarray:
+    """Depois de tirar a faixa de preço, sobravam a MOLDURA navy do card
+    (alto, esquerda, direita) e a ponta de cima da etiqueta de preço, que
+    sobe acima da faixa no canto direito (Josef 29/09/2026: as 289 fotos da
+    FOLIA Brinquedos com a moldura azul e um pedaço preto da etiqueta).
+
+    - moldura: linhas/colunas da borda com >50% da cor navy medida no card;
+    - etiqueta: subindo do pé da foto, no terço direito, linhas com >25% de
+      pixel escuro (contorno da etiqueta) — corta acima da última delas.
+    Limites de segurança: no máximo 8% de cada lado e 12% do pé; fora disso
+    devolve como estava."""
+    h, w = img_rgb.shape[:2]
+    if h < 40 or w < 40:
+        return img_rgb
+    arr = img_rgb.astype(int)
+
+    def e_navy(fatia: np.ndarray) -> float:
+        return float((np.abs(fatia - navy).sum(axis=-1) < 60).mean())
+
+    lim_x, lim_y = int(w * 0.08), int(h * 0.08)
+    esq = 0
+    while esq < lim_x and e_navy(arr[:, esq]) > 0.5:
+        esq += 1
+    dir_ = w
+    while w - dir_ < lim_x and e_navy(arr[:, dir_ - 1]) > 0.5:
+        dir_ -= 1
+    topo = 0
+    while topo < lim_y and e_navy(arr[topo, esq:dir_]) > 0.5:
+        topo += 1
+    # 3px a mais onde havia moldura: a aresta antisserrilhada não é navy puro
+    esq = esq + 3 if esq else 0
+    dir_ = dir_ - 3 if dir_ < w else w
+    topo = topo + 3 if topo else 0
+
+    pe = h
+    x_et = esq + int((dir_ - esq) * 0.66)
+    escuro = arr[:, x_et:dir_].sum(axis=-1) < 450
+    y = h - 1
+    ultima = None
+    while y > h - int(h * 0.12):
+        if escuro[y].mean() > 0.25:
+            ultima = y
+        elif ultima is not None and escuro[y].mean() < 0.02:
+            break
+        y -= 1
+    if ultima is not None:
+        pe = max(topo + 1, ultima - 2)
+    if dir_ - esq < w * 0.8 or pe - topo < h * 0.8:
+        return img_rgb
+    return img_rgb[topo:pe, esq:dir_, :]
 
 
 def _folia_cards_por_ordem(skus: list, cards: List[Dict]) -> Optional[List[Tuple[dict, Dict]]]:
@@ -1458,6 +1519,34 @@ def _icones_de_caracteristica(doc: fitz.Document, page_imgs: List[Dict]) -> set:
     }
 
 
+def _forma_do_codigo(codigo: str) -> str:
+    return re.sub(r"[A-Za-z]", "A", re.sub(r"\d", "9", str(codigo or "").strip().upper()))
+
+
+def _codigos_fantasmas(page: fitz.Page, skus: list) -> list:
+    """Códigos impressos na página com o MESMO formato dos SKUs (ex.: DT10115
+    entre DT10116/DT10117) mas que não estão na exportação — produto EM
+    BREVE, sem preço. Servem só de âncora de bloco (`_fantasma`), nunca
+    ganham foto."""
+    formas = {_forma_do_codigo(s.get("sku")) for s in skus if s.get("sku")}
+    conhecidos = {str(s.get("sku") or "").strip().upper() for s in skus}
+    if not formas or not hasattr(page, "get_text"):
+        return []
+    fantasmas, vistos = [], set()
+    for w in page.get_text("words"):
+        token = w[4].strip().strip(".,;:()").upper()
+        if len(token) < 4 or token in conhecidos or token in vistos:
+            continue
+        if _forma_do_codigo(token) in formas and re.search(r"\d{3}", token):
+            vistos.add(token)
+            fantasmas.append({
+                "sku": token, "_fantasma": True,
+                "spatialContext": {"x": (w[0] + w[2]) / 2, "y": (w[1] + w[3]) / 2,
+                                   "page": page.number + 1},
+            })
+    return fantasmas
+
+
 def _match_dute_compositions(
     doc: fitz.Document,
     raster: np.ndarray,
@@ -1590,6 +1679,8 @@ def _match_dute_compositions(
     unmatched: List[Dict] = []
     for sku, x_min, x_max, y_min, y_max, col_index, row_index in cells:
         sku_code = sku.get("sku", "UNKNOWN")
+        if sku.get("_fantasma"):
+            continue
         if target_sku_codes is not None and sku_code not in target_sku_codes:
             continue
         grouped = [
@@ -1894,6 +1985,11 @@ def _match_via_grid(
     # sem risco (28% x 19% de imagens sobrepostas). Ver guide.md.
     if foto_composta:
         coordinate_unmatched = list(unmatched)
+        # Código impresso que não vai pra exportação (EM BREVE) também é
+        # limite de bloco: sem ele o bloco do vizinho descia até o próximo
+        # código EXPORTADO e engolia a foto do EM BREVE (DUTE 29/09/2026: 39
+        # fotos, ex. DT10116 com o DT10115).
+        valid_skus = valid_skus + _codigos_fantasmas(page, valid_skus)
         matches, cell_unmatched = _match_dute_compositions(
             doc, raster, h_coords, v_coords, valid_skus, page_imgs,
             scale, output_folder, page_num,
@@ -1991,6 +2087,87 @@ def _match_via_grid(
                 used_img_ids.add(id(img))
         if grade:
             print(f"    [ColMatch] {len(grade)} código(s) casados por ordem com a grade de fotos de cor")
+
+    # FOTO À ESQUERDA na mesma faixa (Neo Festas 29/09/2026, balões págs.
+    # 57-64): card = foto à esquerda + título e vários códigos à direita.
+    # A coluna de códigos do card da esquerda fica MAIS PERTO da foto do card
+    # da direita que da própria → os dois cards da linha trocavam de foto.
+    # Só vale se for o desenho da PÁGINA (>=60% dos códigos com uma foto à
+    # esquerda cobrindo a altura do código).
+    a_esquerda: Dict[str, Dict] = {}
+    # catálogo medido como "foto ABAIXO do código" (PETRIN: código no alto do
+    # card e várias fotos de variação embaixo/à direita) — fica de fora
+    for sku in (valid_skus if orientacao != "abaixo" else []):
+        if sku.get("sku") in pre_matched:
+            continue
+        sx, sy = sku["spatialContext"]["x"], sku["spatialContext"]["y"]
+        # foto COLADA acima ou abaixo do código (Lila, PETRIN): o desenho é o
+        # clássico e a regra "ao lado" trocava fotos certas — não se aplica
+        if any(
+            img.get("rect") is not None and img["rect"].x0 - 20 <= sx <= img["rect"].x1 + 20
+            and (0 <= sy - img["rect"].y1 <= 60 or 0 <= img["rect"].y0 - sy <= 60)
+            for img in page_imgs
+        ):
+            continue
+        # ao lado: à esquerda (Neo balões) ou à direita (Tuka 29/09/2026,
+        # cards alternados — texto à esquerda e foto à direita)
+        cands = [
+            img for img in page_imgs
+            if img.get("rect") is not None and id(img) not in used_img_ids
+            # o código fica DENTRO da faixa da foto, não na borda de cima
+            # (PETRIN: código no alto do card, na altura do topo da foto do
+            # vizinho — 0%; balões 55-80%, Tuka 16-42%)
+            and img["rect"].y0 + 0.10 * img["rect"].height <= sy <= img["rect"].y1 + 6
+            and ((img["rect"].x1 <= sx and sx - img["rect"].x1 <= 250)
+                 or (img["rect"].x0 >= sx and img["rect"].x0 - sx <= 250))
+        ]
+        # Foto que tem OUTRO código colado embaixo (dentro da largura dela) é
+        # a foto desse código no desenho clássico (Lila 29/09/2026: a foto do
+        # LH605 desce até a linha do LH383, ao lado — trocava as duas)
+        cands = [
+            img for img in cands
+            if not any(
+                o is not sku and o.get("sku") != sku.get("sku")
+                and img["rect"].x0 - 5 <= o["spatialContext"]["x"] <= img["rect"].x1 + 5
+                and abs(o["spatialContext"]["y"] - img["rect"].y1) <= 90
+                for o in valid_skus
+            )
+        ]
+        # foto dos DOIS lados (códigos do card da esquerda, entre a própria
+        # foto e a do card vizinho): vale a da esquerda — a foto vem antes
+        # do texto na leitura
+        if len(cands) > 1:
+            esquerdas = [img for img in cands if img["rect"].x1 <= sx]
+            direitas = [img for img in cands if img["rect"].x0 >= sx]
+            if len(esquerdas) == 1 and len(direitas) == len(cands) - 1:
+                cands = esquerdas
+        # UMA foto só na faixa: card com várias fotos lado a lado (as cores
+        # de uma sacola, Neo pág. 79) tem uma foto por código — não se aplica
+        if len(cands) == 1:
+            a_esquerda[sku.get("sku")] = cands[0]
+    # Os códigos do card ficam LADO A LADO na mesma linha (os tamanhos do
+    # balão: 5" 12cm | 10" 25cm | 18" 45cm). Lista empilhada de códigos
+    # (cores do festão, pág. 23) tem foto por código — não se aplica.
+    pos = {s.get("sku"): (s["spatialContext"]["x"], s["spatialContext"]["y"]) for s in valid_skus}
+    grupos: Dict[int, list] = {}
+    for sku_code, img in a_esquerda.items():
+        grupos.setdefault(id(img), []).append(sku_code)
+    lado_a_lado = set()
+    for gid, cods in grupos.items():
+        pts = [pos[c] for c in cods if c in pos]
+        # 1 código por foto (Tuka) ou códigos lado a lado (tamanhos do balão)
+        foto = a_esquerda[cods[0]]["rect"]
+        # 1 código só: só com foto GRANDE (Tuka, ~300pt); item pequeno com
+        # 1 código ao lado (Neo págs. 37-76) já casava certo pelo desenho normal
+        if (len(pts) == 1 and foto.height >= 150) or any(abs(a[1] - b[1]) < 8 and abs(a[0] - b[0]) > 30
+                                for i, a in enumerate(pts) for b in pts[i + 1:]):
+            lado_a_lado.add(gid)
+    a_esquerda = {k: v for k, v in a_esquerda.items() if id(v) in lado_a_lado}
+    if valid_skus and len(a_esquerda) >= 0.6 * len(valid_skus) and len(a_esquerda) >= 2:
+        for sku_code, img in a_esquerda.items():
+            pre_matched[sku_code] = img
+            used_img_ids.add(id(img))
+        print(f"    [ColMatch] {len(a_esquerda)} código(s) com a foto à esquerda na mesma faixa")
 
     # ═══════════════════════════════════════════════════════
     # FASE 2: Descobrir colunas via clustering de X (SKUs + Imagens)
@@ -2668,6 +2845,52 @@ def _is_barcode_like(img_bgr: np.ndarray) -> bool:
         return False
 
 
+_PRECO_PALAVRA_RE = re.compile(r"^R\$\s?\d|^\d{1,4},\d{2}$")
+
+
+def _e_decoracao(page: fitz.Page, rect: fitz.Rect, xref: int) -> bool:
+    """Imagem que é ENFEITE do layout, nunca foto de produto (DAGIA
+    29/09/2026: 11 fotos saíram só com o fundo azul da página, o triângulo
+    do canto ou a etiqueta de preço vazia):
+    - FUNDO: cobre >=70% da página e é quase uma cor só (a foto real que
+      cobre a página, DAGIA pág. 14, tem conteúdo e passa);
+    - ETIQUETA: imagem pequena com o PREÇO escrito por cima (texto de preço
+      cobrindo >=15% dela);
+    - CANTO: imagem pequena encostada em dois lados da página (triângulo).
+    """
+    if not hasattr(page, "get_text") or not hasattr(page, "parent"):
+        return False
+    pw, ph = page.rect.width, page.rect.height
+    area_pg = max(pw * ph, 1.0)
+    area = rect.width * rect.height
+    if area >= 0.70 * area_pg:
+        try:
+            pix = fitz.Pixmap(page.parent, xref)
+            if pix.width * pix.height > 250_000:
+                pix = fitz.Pixmap(pix, max(1, pix.width // 8), max(1, pix.height // 8), None)
+            arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)[:, :, :3]
+            uniforme = float(arr.reshape(-1, 3).std(axis=0).mean()) < 18.0  # por canal
+            del pix, arr
+            if uniforme:
+                return True
+        except Exception:
+            pass
+        return False
+    if area < 0.15 * area_pg:
+        texto = 0.0
+        for w in page.get_text("words", clip=rect):
+            if _PRECO_PALAVRA_RE.match(w[4]):
+                texto += (fitz.Rect(w[:4]) & rect).get_area()
+        if texto >= 0.15 * area:
+            return True
+    if area < 0.08 * area_pg:
+        borda = 3.0
+        enc = [rect.x0 <= borda, rect.y0 <= borda, rect.x1 >= pw - borda, rect.y1 >= ph - borda]
+        if (enc[0] or enc[2]) and (enc[1] or enc[3]):
+            return True
+    return False
+
+
 def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set,
                               logo_digests: set = frozenset(),
                               allow_fullpage: bool = False) -> List[Dict]:
@@ -2726,6 +2949,8 @@ def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set,
             continue
         if not allow_fullpage and iw > page_w * 0.85 and ih > page_h * 0.85:
             continue
+        if _e_decoracao(page, rect, xref):
+            continue
         # CÓDIGO DE BARRAS: gate pelo aspect dos PIXELS (não do rect, que pode
         # estar escalado). extract_image traz width/height sem decodificar; só
         # imdecode as LARGAS (barras são largas/baixas; fotos são quadradas/
@@ -2746,6 +2971,7 @@ def _get_page_embedded_images(page: fitz.Page, logo_xrefs: set,
             pass
         result.append({
             "xref": xref,
+            "digest": digest,
             "pagina": getattr(page, "number", None),
             "rect": rect,
             "cx": (rect.x0 + rect.x1) / 2,
@@ -2850,7 +3076,31 @@ def _detect_logo_xrefs(doc: fitz.Document) -> tuple:
                 digest_pages.setdefault(digest, set()).add(i)
     logo_xrefs = {x for x, pgs in xref_pages.items() if len(pgs) >= 3}
     logo_digests = {d for d, pgs in digest_pages.items() if len(pgs) >= 3}
+    # guarda a amostra: o filtro de ícone reaproveita (get_image_info custa
+    # 9s/página na FORTAL — varrer o catálogo todo de novo custaria 16 min)
+    _AMOSTRA_POR_DOC.clear()
+    _AMOSTRA_POR_DOC[id(doc)] = (xref_pages, digest_pages)
     return logo_xrefs, logo_digests
+
+
+_AMOSTRA_POR_DOC: Dict[int, tuple] = {}
+
+
+def _icones_pela_amostra(doc: fitz.Document, page_imgs: List[Dict]) -> set:
+    """Ícone de característica pela amostra da detecção de logo: imagem
+    PEQUENA (<80pt) cujo xref ou conteúdo aparece em 2+ páginas amostradas
+    (caixa "CX C/6", presente — DAGIA 29/09/2026). Barato: sem varrer o
+    catálogo de novo."""
+    amostra = _AMOSTRA_POR_DOC.get(id(doc))
+    if not amostra:
+        return set()
+    xref_pages, digest_pages = amostra
+    return {
+        id(img) for img in page_imgs
+        if not img.get("tiles") and max(img["rect"].width, img["rect"].height) < 80
+        and (len(xref_pages.get(img["xref"], ())) >= 2
+             or (img.get("digest") and len(digest_pages.get(img["digest"], ())) >= 2))
+    }
 
 
 def _create_kit_collage(images_rgb: List[np.ndarray], max_dim: int = 800) -> Optional[np.ndarray]:

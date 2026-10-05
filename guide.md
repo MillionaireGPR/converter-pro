@@ -1921,6 +1921,36 @@ sobre os PDFs e resultados exatos dos jobs guardados na VPS (antes × depois).
   plural↔singular (12 de 13 nomes da FOLIA Brinquedos).
 - Testes: `test_rodada_2909.py`.
 
+### 14.41 Teste 9 do Josef — fotos (05/10/2026)
+
+Medido sem API rodando a extração de fotos antiga × nova sobre os PDFs reais
+dos jobs de 29/09 (hash de cada foto), catálogo por catálogo.
+
+- **FOLIA (grade de cards)**: além da faixa de preço, sai a MOLDURA navy do
+  card e a ponta da etiqueta que sobe acima da faixa (`_aparar_moldura_e_etiqueta`,
+  máx. 8% por lado / 12% no pé). Brinquedos 289/289, Utilidades 295/295.
+  A releitura do card grava a POSIÇÃO do card em cada código — a foto vai pro
+  card certo mesmo quando a leitura da página inverte vizinhos (1020/1021).
+- **DUTE (foto composta)**: código impresso que não vai pra exportação (EM
+  BREVE) vira âncora de bloco (`_codigos_fantasmas`) — o bloco do vizinho não
+  engole mais a foto dele. 36 dos 39 da lista, 0 mudanças fora dela.
+- **Foto ao lado na mesma faixa** (`_match_via_grid`): card com foto de um
+  lado e texto/códigos do outro. Neo balões/números (foto à esquerda, vários
+  códigos-tamanho lado a lado) e Tuka (cards alternados, 1 código e foto
+  grande ≥150pt). Proteções medidas: não vale se houver foto colada
+  acima/abaixo do código, se a foto tiver outro código colado embaixo (Lila),
+  em catálogo medido "foto abaixo do código" (PETRIN), com várias fotos na
+  faixa (cores, Neo pág. 79) nem com lista empilhada de códigos (Neo pág. 23);
+  foto dos dois lados → a da esquerda. Neo 224 fotos, todas nas páginas da
+  lista; Tuka 11/18; Lila/PETRIN/BM36/GIRA 0 mudanças fora da lista.
+- **Decoração nunca é candidata** (`_e_decoracao`): fundo que cobre ≥70% da
+  página e é quase uma cor só (a foto real que cobre a página passa), imagem
+  pequena com o PREÇO escrito por cima (etiqueta), imagem pequena num canto
+  da página. Ícone de característica repetido no catálogo ("CX C/6",
+  presente) sai em todo catálogo (antes só no DUTE), inclusive das
+  candidatas da "IA escolhe a foto". DAGIA com a IA: 9 dos 11.
+- Testes: `test_rodada_2909_fotos.py`.
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
