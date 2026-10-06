@@ -1,8 +1,11 @@
 # Instruções para Claude (e qualquer agente assistente)
 
+> **Continuidade entre contas:** leia também `CONTINUIDADE.md` e atualize-o ao fim de cada bloco de trabalho relevante, commitando junto.
+> **Pasta oficial:** `C:\Users\Gabriel Pantoni\Desktop\Projetos LOVABLE e GITHUB\Converter-Pro-Merged`. A cópia em `OneDrive\Desktop\...` não tem git (OneDrive corrompe o `.git`): nunca use. Confira com `git log --oneline -1`.
+
 ---
 
-## 📍 ONDE PARAMOS — 18/09/2026 (leia primeiro se está retomando)
+## 📍 HISTÓRICO DE CORREÇÕES (#130 a #180) — o "onde paramos" atual está em `CONTINUIDADE.md`
 
 > Para um agente NOVO assumir sem reler o histórico. Detalhe técnico em
 > `guide.md #14.5` a `#14.12`; estado operacional completo em
@@ -175,6 +178,9 @@ sem ruído) não é. Hoje: **1 página por chamada de visão, 160 DPI**.
 
 - **O primário é o Integrator** (`conversor-vps.metodoiqc.com.br`), não o
   Render. Failover: 1º Integrator → 2º Render → 3º Wesley (porta fechada).
+  **Em 06/10/2026 o Render responde "Service Suspended"** — a reserva não funciona até ser reativada.
+- **`/health` mostra `2026.08.25-v52-...` desde agosto:** `SERVICE_VERSION` não é incrementado a cada
+  deploy. Para saber se o servidor está com a `main`, compare o md5 dos `.py` (sem CRLF) com o de `/app` no container.
 - **SSH:** `ssh -i ~/.ssh/converter_pro_integrator_ed25519 root@23.80.89.90`
 - **Deploy do backend é por `scp`**, não `git pull` — `/opt/converter-pro/repo`
   NÃO é checkout Git. Passo a passo em `infra/integrator/README.md`. Sempre
@@ -317,8 +323,8 @@ Comandos rápidos:
 # Health do backend PRIMÁRIO (Integrator). O Render virou 2ª instância em 09/2026.
 curl https://conversor-vps.metodoiqc.com.br/health
 
-# Smoke test completo (7 checks) — ajuste a versão esperada à atual em /health
-bash scripts/smoke-test.sh --expect-version v26-center-badge
+# Smoke test completo (7 checks) — ajuste a versão esperada à atual em /health (hoje v52)
+bash scripts/smoke-test.sh --expect-version v52-supplier-rules-column-mapping
 ```
 
 ## 📞 Padrão de commits
