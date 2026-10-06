@@ -33,7 +33,14 @@ dist-ssr
 
 # Tokens de automação de infra (Vercel/Cloudflare) — nunca versionar
 scripts/server-ops/*.env
-scripts/server-ops/dns_atual_registrobr.txt
+scripts/server-ops/dns_atual_registrobr.txt*
+
+# Credenciais e chaves (nunca versionar)
+*.pem
+*.key
+*.p12
+*credentials*.json
+*service-account*.json
 
 # Python (backend/image_extractor)
 __pycache__/
