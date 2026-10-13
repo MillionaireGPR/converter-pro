@@ -4600,6 +4600,63 @@ def _promocao_sem_selo(pdf_path: str, produtos: list) -> list:
     return produtos
 
 
+def _reler_paginas_com_codigo_orfao(pdf_path: str, produtos: list, supplier: str = "",
+                                    client_rules: str = "") -> list:
+    """Código impresso no texto da página, no formato do lote, com PREÇO no
+    bloco dele, que a IA não devolveu (DUTE pág. 82, Teste 10: DT10133 e
+    DT10174 "DISPONÍVEL" com R$ 25,00 e R$ 45,00 sumiam — sem linha e sem
+    foto). Relê só essas páginas, 1 por chamada, e acrescenta só os códigos
+    que faltavam. EM BREVE sem preço (a maioria dos órfãos da DUTE) fica de
+    fora. Teto de 12 páginas por catálogo."""
+    if not produtos or not _ensure_initialized():
+        return produtos
+    formatos = Counter(_formato_codigo(p.get("codigo")) for p in produtos if p.get("codigo"))
+    if not formatos:
+        return produtos
+    formato, n = formatos.most_common(1)[0]
+    if n < 0.6 * sum(formatos.values()) or len(formato) < 4:
+        return produtos
+    rx = _regex_do_formato(formato)
+    textos = _textos_por_pagina(pdf_path)
+    tem = {str(p.get("codigo") or "").strip().upper() for p in produtos}
+    orfaos: Dict[int, set] = {}
+    for i, t in enumerate(textos):
+        up = t.upper()
+        for m in rx.finditer(up):
+            cod = m.group(0)
+            if cod in tem:
+                continue
+            janela = up[max(0, m.start() - 250):m.end() + 250]
+            if _RS_VALOR_RE.search(janela) and "EM BREVE" not in janela:
+                orfaos.setdefault(i + 1, set()).add(cod)
+    if not orfaos or len(orfaos) > 12:
+        return produtos
+    hints = get_supplier_hints(supplier, client_rules)
+    novos = []
+    try:
+        doc = fitz.open(pdf_path)
+        textos_ia = {pn: page_text_for_ai(doc[pn - 1]) for pn in orfaos}
+        doc.close()
+    except Exception:
+        return produtos
+    for pn, cods in sorted(orfaos.items()):
+        try:
+            prods, _ok = _extract_text_chunk([textos_ia[pn]], pn, hints, MODEL_FLASH, [pn])
+        except Exception as e:  # noqa: BLE001
+            print(f"[CodigoOrfao] pág {pn}: releitura falhou: {e}")
+            continue
+        # na página relida vale qualquer código que faltava e veio com preço
+        # (o texto da DUTE embaralha: o preço do DT10133 fica longe do código)
+        for p in prods or []:
+            if str(p.get("codigo") or "").strip().upper() not in tem and p.get("preco"):
+                p["paginaOrigem"] = pn
+                novos.append(p)
+    if novos:
+        print(f"[CodigoOrfao] {len(novos)} produto(s) que a IA pulou relidos em {len(orfaos)} página(s): "
+              + ", ".join(str(p.get('codigo')) for p in novos))
+    return produtos + novos
+
+
 def _em_breve_com_preco_isolado(produtos: list) -> list:
     """No catálogo em que EM BREVE é produto SEM preço (PETRIN Teste 10: 235
     de 236 sem preço), o único marcado EM BREVE com preço impresso é engano
@@ -4684,6 +4741,7 @@ def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str =
         result["produtos"] = _fix_missing_code_prefix(result["produtos"])
         result["produtos"] = _fix_ocr_digit_letter_confusion(result["produtos"])
         result["produtos"] = _conferir_codigos_pelo_texto(pdf_path, result["produtos"])
+        result["produtos"] = _reler_paginas_com_codigo_orfao(pdf_path, result["produtos"], supplier, client_rules)
         result["produtos"] = _fix_labeled_unit_prices(pdf_path, result["produtos"])
         result["produtos"] = _fix_labeled_promo_price(pdf_path, result["produtos"])
         result["produtos"], result["avisosPrecoCorrigido"] = _verify_prices_by_geometry(

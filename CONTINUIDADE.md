@@ -16,13 +16,16 @@
 4. **Nunca** registrar senha, token, chave ou URL com credencial. Só o NOME da variável.
 5. Entradas curtas (3–6 linhas). Detalhe técnico vai para o `guide.md`, não aqui.
 
-## Onde parou (13/10/2026)
+## Onde parou (13/10/2026, limite de uso)
 
-- Teste 10 do Josef (laudo das conversões de 12/10, em `_laudo/` — fora do git).
-- Parte DADOS no PR #182 (regras no fim de `extract_with_fallback`, `guide.md #14.42`).
-- Parte FOTOS em andamento: Neo ~223, DUTE 16, PETRIN 15, Tuka 7, GIRA Malas 4 /
-  Papelaria 3 / Utilidades 2 / Decoração 1, DAGIA 3, Goal 1, Lila 1.
-- Depois das fotos: falhas de segurança das bibliotecas (Dependabot), pedido do Gabriel.
+- PR #182 (dados do Teste 10) mergeado e no servidor.
+- Branch `fix/teste10-fotos` com commit local (NÃO enviado, sem PR, sem deploy): fotos GIRA
+  Malas/Papelaria/Decoração, Goal GK0173-0, Lila 2M, Tuka 5/7, Neo 28, DUTE DT10133/DT10174.
+- Falta: terminar a rodada de comparação (scratchpad `cv_ab.py`/`cmp_all.py`, catálogo
+  INTEIRO) com a regra final do selo — confirmar 0 mudanças fora da lista em DUTE, Petrin,
+  Levivan e FORTAL; depois PR, deploy (scp + docker compose) e docs.
+- Depois: falhas de segurança (pdfjs-dist 5→6, xlsx pelo CDN da SheetJS, vite/vitest).
+- Disco C: quase cheio (~500 MB livres): avisar o Gabriel.
 
 ## Raciocínio e decisões recentes
 
