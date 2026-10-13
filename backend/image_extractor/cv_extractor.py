@@ -3182,6 +3182,15 @@ def _resize_keep_aspect(img_rgb: np.ndarray, max_dim: int) -> np.ndarray:
     return cv2.resize(img_rgb, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
 
 
+def _nome_arquivo_do_codigo(sku_code: str) -> str:
+    """Nome do arquivo = o código como o cliente cadastra. "/" e "\\" viram "_";
+    o ponto fica (LILA "1.6M" não pode virar "16M", que é outro código);
+    o resto que não é letra/dígito/-/_ sai."""
+    pre = str(sku_code).replace("/", "_").replace("\\", "_")
+    clean = "".join(c for c in pre if c.isalnum() or c in ("-", "_", "."))
+    return clean.strip(".")
+
+
 def _save_image_hires(img_rgb: np.ndarray, sku_code: str, output_folder: str) -> str:
     """Variante de _save_image para kits — preserva resolução alta (1200px).
 
@@ -3189,8 +3198,7 @@ def _save_image_hires(img_rgb: np.ndarray, sku_code: str, output_folder: str) ->
     do default) porque a imagem é da caixa do produto e o cliente cadastra
     no Mercos.
     """
-    pre = sku_code.replace("/", "_").replace("\\", "_")
-    clean = "".join(c for c in pre if c.isalnum() or c in ("-", "_"))
+    clean = _nome_arquivo_do_codigo(sku_code)
     filepath = os.path.join(output_folder, f"{clean}.jpg")
     bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
     h, w = bgr.shape[:2]
@@ -3212,8 +3220,7 @@ def _save_image(img_rgb: np.ndarray, sku_code: str, output_folder: str) -> str:
     Qualidade (v19): max_dim 600→1000, JPEG 85→90 (cliente Nunes cadastra no
     Mercos e precisa de imagem clara). Tamanho ainda OK pra Supabase Storage.
     """
-    pre = sku_code.replace("/", "_").replace("\\", "_")
-    clean = "".join(c for c in pre if c.isalnum() or c in ("-", "_"))
+    clean = _nome_arquivo_do_codigo(sku_code)
     filepath = os.path.join(output_folder, f"{clean}.jpg")
     bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
 

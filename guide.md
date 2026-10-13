@@ -1951,6 +1951,57 @@ dos jobs de 29/09 (hash de cada foto), catálogo por catálogo.
   candidatas da "IA escolhe a foto". DAGIA com a IA: 9 dos 11.
 - Testes: `test_rodada_2909_fotos.py`.
 
+### 14.42 Teste 10 do Josef — dados (13/10/2026)
+
+Laudo das exportações de 12/10 (já com #179/#180), 16 representadas. Medido
+sem API: código antigo × novo sobre o resultado gravado de cada job de 12/10.
+Toda regra nova roda no fim de `extract_with_fallback` (vale pra qualquer
+fornecedor) e mede o sinal no próprio PDF:
+
+- **Template**: QTD sintetizado como `\d{2,3}` aceita 1 dígito ("CX8JG", GIRA
+  18 jogos "Cx c/ 1"); hífen de fim de linha com pedaço de 1-2 letras é
+  sílaba ("RE-/MOTO" → REMOTO, Goal); mesmo código com variantes diferentes
+  na linha do código ("GK2924 - CINZA" pág. 101, "GK2924 - PRETO" pág. 102)
+  sai com o código impresso — o 2º sumia como repetição de página.
+- **Página só imagem** no meio de catálogo com texto vai pra visão até 25%
+  das páginas (era 10%; a FORTAL tem 19 aberturas de seção e a pág. 4 com o
+  JDG-60*90 ficava de fora), 1 página por chamada.
+- **Nome** (`_nomes_pelo_texto_da_pagina`, `_nomes_iguais_com_medida`):
+  cor escrita no nome ≠ cor da bolinha do código (acima ou à esquerda) sai,
+  fica a marca ***CORES*** (Neo 48 festões/bolas); rótulo na linha acima do
+  código destroca variantes (árvore VERDE/NEVADO) — só quando o rótulo é a
+  variante, não o nome inteiro (PETRIN imprime o código antes do nome);
+  "CORES" solto que o catálogo não escreve sai (pancake). Produtos com o
+  MESMO nome ganham a medida que os separa quando o catálogo a usa como parte
+  do nome: na linha do nome ("Pote hermético redondo | 350ml", Levivan 16) ou
+  como 2ª linha ("TOALHAS LIMPA FÁCIL / 48UND", FORTAL), ou como rótulo de
+  cada código debaixo de UM nome (Neo VELA SPARKLE 30/45/60cm, SACO, MOLA).
+  Card com o nome repetido em cada produto fica (BOLHA DE SABÃO PATO).
+- **Código repetido** (`_unificar_codigo_repetido`): mesmo código e mesmo
+  preço → 1 linha (Tuka repete o urso em outra página; Neo 1 código para 4
+  cores). Preço diferente (FORTAL 5085) ou código impresso 2x na mesma
+  página (GIRA GU0144) seguem separados.
+- **Preço / caixa / IPI / promoção**: preço que não está impresso e que × N
+  dá o 1º preço do bloco, com N no bloco → preço do pacote impresso (regra
+  do LEIA-ME do Josef; Neo FITILHO, FOLHA, ARRANJO); caixa 1 com "R$ T c/N"
+  e T = preço × N → N (Neo Natal 54/61); caixa N sem apoio no bloco de um
+  preço só → 1 (letras nacaradas 25/26); IPI sem a palavra IPI na página
+  sai (VAESO 10: medidas viravam IPI), "IPI de N%" no bloco com o preço do
+  produto entra (Neo); promoção sem selo nenhum na página desmarca (VAESO
+  pág. 11, dois preços desenhados um sobre o outro; "Off-white" não é selo);
+  EM BREVE com preço num catálogo em que ≥95% dos EM BREVE não têm preço
+  (PETRIN RD2108).
+- **Tuka**: medida "13 x 13 cm" e mínimo grudado "MÍN. 12 PÇSCM" lidos no
+  bloco. **Foto**: nome do arquivo mantém o ponto ("1.6M.jpg", Lila).
+- Fora da lista e mantido: +99 nomes da Neo e 2 do FORTAL ganharam a medida
+  impressa (produtos diferentes que saíam com o mesmo nome); +45 preços de
+  pacote na Neo pela regra do LEIA-ME.
+- Ficou: Neo pág. 23 (2 preços de coluna), 141313, 7 caixas de Natal,
+  139319 IPI; GIRA TP1792 (código só na imagem), GIRA Malas 20", FOLIA
+  GRANDPA (sem código) e PESTISQUEIRA, JDG-60*90 com caixa 600 (a visão
+  multiplica 30 × 20).
+- Testes: `test_rodada_1210.py`.
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
