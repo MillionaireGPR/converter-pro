@@ -67,3 +67,6 @@ test-results/
 # Temporários do OS
 Thumbs.db
 desktop.ini
+
+# Laudos do cliente (arquivos de conferência, ficam só na máquina)
+_laudo/

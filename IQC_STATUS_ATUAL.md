@@ -1,9 +1,19 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 05/10/2026
+**Atualizado em:** 13/10/2026
 
 ---
+
+## ✅ ENTREGUE em 13/10 — Teste 10 do Josef, parte DADOS (PR #182)
+
+- Neo: nomes de festões/bolas sem a cor errada (48), árvore, pancake, velas,
+  sacos, mola com medida; caixas do Natal (54 de 61) e letras (25 de 26);
+  preço do pacote como impresso; 3 códigos que saíam em 4 linhas viram 1.
+- Levivan 16 e Tuka (coração, mínimo, 5 códigos em 2 linhas); FORTAL YM-09/10
+  e JDG-60*90; VAESO IPI (10) e ***PROMOCAO*** (4); GIRA 18 caixas de jogos;
+  Goal REMOTO e GK2924 PRETO; PETRIN RD2108; Lila "1.6M.jpg".
+- Fotos do Teste 10 seguem na próxima parte.
 
 ## ✅ ENTREGUE em 05/10 — Teste 9 do Josef, parte FOTOS (PR #180)
 

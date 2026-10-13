@@ -1876,10 +1876,13 @@ def extract_with_fallback_text_chunked(pdf_path: str, supplier: str = "", client
     n_pages = len(page_texts)
     # Página SÓ IMAGEM no meio de catálogo com texto (FORTAL 29/09/2026: pág. 4
     # inteira em imagem, JDG-60*90 sumia sem aviso). Capa e última página
-    # ficam de fora; acima de 10% das páginas o catálogo é de imagem e já
-    # segue a rota de visão — aqui é só a exceção.
+    # ficam de fora; a partir de 25% das páginas (mesma régua de
+    # MIN_PAGINAS_COM_SINAL_FRAC) o catálogo é de imagem e segue a rota de
+    # visão — aqui é só a exceção. Era 10%: a FORTAL tem 19 aberturas de seção
+    # só imagem (17%) e a pág. 4 continuava sumindo (Teste 10, 12/10/2026).
+    # Abertura de seção não tem código nem preço → a visão devolve 0 produtos.
     so_imagem = [pn for pn in so_imagem if 1 < pn < n_pages]
-    if len(so_imagem) > max(1, int(0.10 * n_pages)):
+    if len(so_imagem) >= max(2, int(MIN_PAGINAS_COM_SINAL_FRAC * n_pages)):
         so_imagem = []
     chunks = [(i, page_texts[i:i + TEXT_CHUNK_PAGES]) for i in range(0, n_pages, TEXT_CHUNK_PAGES)]
     print(f"[Gemini TextChunk] {n_pages} págs → {len(chunks)} chunks de {TEXT_CHUNK_PAGES} (paralelo={TEXT_CHUNK_WORKERS})")
@@ -1905,9 +1908,15 @@ def extract_with_fallback_text_chunked(pdf_path: str, supplier: str = "", client
         print(f"[Gemini TextChunk] {len(so_imagem)} página(s) só imagem → visão: {so_imagem}")
         try:
             jpegs = _render_pages_batch(pdf_path, so_imagem, dpi=VISION_DPI)
-            lote = [(pn, jpegs[pn]) for pn in so_imagem if pn in jpegs]
-            prods, _ok = _extract_vision_chunk(lote, supplier_hints, MODEL_FLASH, page_sizes)
-            all_produtos.extend(prods or [])
+            # 1 página por chamada (VISION_CHUNK_PAGES): com várias páginas
+            # juntas a visão inventa código
+            with ThreadPoolExecutor(max_workers=VISION_CHUNK_WORKERS) as pool:
+                futs = [pool.submit(_extract_vision_chunk, [(pn, jpegs[pn])], supplier_hints,
+                                    MODEL_FLASH, page_sizes)
+                        for pn in so_imagem if pn in jpegs]
+                for fut in as_completed(futs):
+                    prods, _ok = fut.result()
+                    all_produtos.extend(prods or [])
         except Exception as e:  # noqa: BLE001
             print(f"[Gemini TextChunk] visão das páginas só imagem falhou: {e}")
 
@@ -2238,7 +2247,10 @@ def _limpar_nome_template(nome: str, vocab: Optional[Dict[str, int]] = None) -> 
         esq, dir_ = m.group(1), m.group(2)
         if not dir_:
             return esq + " - "
-        if vocab and vocab.get(dir_.upper(), 0) and not vocab.get((esq + dir_).upper(), 0):
+        # pedaço de 1-2 letras antes do hífen é sílaba, não palavra: "RE-\nMOTO"
+        # (Goal 12/10/2026) tem "MOTO" solto no catálogo, mas é "REMOTO"
+        if (vocab and len(esq) >= 3 and vocab.get(dir_.upper(), 0)
+                and not vocab.get((esq + dir_).upper(), 0)):
             return f"{esq} - {dir_}"
         return esq + dir_
     nome = _HIFEN_QUEBRA_RE.sub(hifen, nome or "")
@@ -2394,6 +2406,11 @@ def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str
         # "R$16,50" na amostra e "R$ 16,50" em outra página (Goal 29/09/2026,
         # GK3604 sumiu por "preço não encontrado")
         v = v.replace("R\\$(", "R\\$\\s*(")
+        if key == "QTD":
+            # a amostra só tinha caixa de 2-3 dígitos ("CX60") e o QTD saiu
+            # \d{2,3}: "CX8JG"/"CX6" ficavam "Cx c/ 1" (GIRA 12/10/2026)
+            v = re.sub(r"\\d\{(\d+)(?:,(\d*))?\}",
+                       lambda m: "\\d{1,%s}" % (m.group(2) if m.group(2) is not None else m.group(1)), v)
         return re.compile(v, re.M | re.S)
 
     # NOME é tratado à parte (ver abaixo): classe de caractere ampliada +
@@ -2561,6 +2578,8 @@ def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str
                                 break
                         prod["nome"] = f"{base} {nome}" if base and len(nome.split()) <= 2 else nome
                         prod["_nome_proprio"] = True
+                        if base and len(nome.split()) <= 2:
+                            prod["_variante"] = (nome, base)
                 if not prod.get("nome"):
                     nome = _nome_linha_anterior(
                         txt[lo:m_ini], codigo,
@@ -2580,6 +2599,20 @@ def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str
                     except ValueError:
                         pass
             produtos.append(prod)
+    # Mesmo código com VARIANTES diferentes na linha do código ("GK2924 -
+    # CINZA" pág. 101, "GK2924 - PRETO" pág. 102): são produtos distintos e o
+    # código impresso inteiro é o que os separa — sem isso o 2º caía como
+    # repetição de página (Goal Teste 10, 12/10/2026). Variante única segue
+    # como estava (código base, variante no nome).
+    variantes: Dict[str, set] = {}
+    for p in produtos:
+        if p.get("_variante"):
+            variantes.setdefault(str(p["codigo"]).upper(), set()).add(p["_variante"][0].upper())
+    for p in produtos:
+        var = p.pop("_variante", None)
+        if var and len(variantes.get(str(p["codigo"]).upper(), ())) >= 2:
+            p["codigo"] = f"{p['codigo']} - {var[0]}"
+            p["nome"] = var[1]
     return produtos
 
 
@@ -3544,6 +3577,25 @@ def _bolinha_acima(desenhos: list, rect: fitz.Rect) -> Optional[str]:
     return melhor[1] if melhor else None
 
 
+def _bolinha_a_esquerda(desenhos: list, rect: fitz.Rect) -> Optional[str]:
+    """Cor da bolinha na mesma linha, logo à ESQUERDA do código (Neo pág. 23:
+    "● 135623 R$2,99Un.") ou centrada no bloco código+preço (pág. 24)."""
+    melhor = None
+    for d in desenhos:
+        r = d["rect"]
+        if not (8 <= r.width <= 25 and abs(r.width - r.height) <= 2):
+            continue
+        cy_b = (r.y0 + r.y1) / 2
+        if not (rect.y0 - 6 <= cy_b <= rect.y1 + 20) or not (-2 <= rect.x0 - r.x1 <= 20):
+            continue
+        fill = d.get("fill")
+        cor = _nome_da_cor(tuple(fill)) if fill else ("BRANCO" if d.get("color") is not None else None)
+        dist = rect.x0 - r.x1
+        if cor and (melhor is None or dist < melhor[0]):
+            melhor = (dist, cor)
+    return melhor[1] if melhor else None
+
+
 def _nomear_cores_por_bolinha(pdf_path: str, produtos: list) -> list:
     """Variação de cor indicada por BOLINHA colorida acima de cada código
     (Neo Festas pág. 87, Josef 24/09/2026: TOPO BOLO ARCO POMPOM com 4
@@ -3720,8 +3772,13 @@ def _conferir_codigos_pelo_texto(pdf_path: str, produtos: list) -> list:
     return produtos
 
 
-_LINHA_MEDIDA_RE = re.compile(r"^\d{1,3}(?:[.,]\d{1,2})?\s?(?:CM|MM|ML|M|L)$", re.I)
-_LINHA_MINIMO_RE = re.compile(r"^M[IÍ]N(?:IMO)?\.?\s*\d+\s*(?:P[CÇ]S?|PE[CÇ]AS|UN(?:IDADES)?|UND)\.?$", re.I)
+# "30 CM" ou "13 x 13 cm" (Tuka 1594-H5, Teste 10)
+_LINHA_MEDIDA_RE = re.compile(
+    r"^\d{1,3}(?:[.,]\d{1,2})?(?:\s?[xX]\s?\d{1,3}(?:[.,]\d{1,2})?)?\s?(?:CM|MM|ML|M|L)$", re.I)
+# "MÍN. 12 PÇSCM": o exportador do PDF grudou o "CM" da linha de baixo
+# (Tuka 66-6865-30, Teste 10); o que vale é só o "MÍN. 12 PÇS"
+_LINHA_MINIMO_RE = re.compile(
+    r"^(M[IÍ]N(?:IMO)?\.?\s*\d+\s*(?:P[CÇ]S?|PE[CÇ]AS|UN(?:IDADES)?|UND)\.?)(?:CM|MM)?$", re.I)
 _NOME_TEM_MEDIDA_RE = re.compile(r"\d\s?(?:CM|MM|ML|M|L)\b|\d+\s*[xX*]\s*\d+", re.I)
 
 
@@ -3771,7 +3828,7 @@ def _completar_atributos_do_bloco(pdf_path: str, produtos: list) -> list:
                 fim = next((k for k in marcos if k > ini), len(linhas))
                 bloco = linhas[ini + 1:fim]
                 medidas = [ln.upper() for ln in bloco if _LINHA_MEDIDA_RE.match(ln)]
-                minimos = [ln.upper() for ln in bloco if _LINHA_MINIMO_RE.match(ln)]
+                minimos = [_LINHA_MINIMO_RE.match(ln).group(1).upper() for ln in bloco if _LINHA_MINIMO_RE.match(ln)]
                 if len(medidas) != 1 and not minimos:
                     continue
                 achados.append((p, medidas, minimos))
@@ -3798,6 +3855,261 @@ def _completar_atributos_do_bloco(pdf_path: str, produtos: list) -> list:
             obs += 1
     if nomes or obs:
         print(f"[AtributosBloco] {nomes} nome(s) com a medida, {obs} observação(ões) com mínimo/medida")
+    return produtos
+
+
+_PALAVRA_COR_RE = re.compile(
+    r"\b(BRANC[OA]S?|PRET[OA]S?|PRATA|PRATEAD[OA]|DOURAD[OA]S?|OURO|AMAREL[OA]S?|LARANJA|VERMELH[OA]S?|"
+    r"ROSA|ROSÉ|PINK|ROX[OA]S?|LIL[AÁ]S|AZUL|AZUIS|VERDES?|MARROM|BEGE|NUDE|CINZA|VINHO|SALM[AÃ]O|"
+    r"CHAMPANHE|TIFFANY|ROSE GOLD|COLORID[OA]S?|TRANSPARENTE)\b", re.I)
+_MEDIDA_OBS_RE = re.compile(
+    r"\d+(?:[.,]\d+)?\s*[xX]\s*\d+(?:[.,]\d+)?(?:\s*[xX]\s*\d+(?:[.,]\d+)?)?\s*(?:CM|MM|M)\b"
+    r"|\d+(?:[.,]\d+)?\s*(?:ML|L|CM|MM|M|G|KG|UND|UN|P[CÇ]S)\b", re.I)
+
+
+def _sem_acento(s: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+
+def _base_do_nome(nome: str) -> str:
+    """Nome sem a marcação ***X*** do fim e sem o "CORES" solto."""
+    base = _MARCACAO_CLIENTE_RE.sub("", str(nome or "")).strip()
+    return _SUFIXO_CORES_RE.sub("", base).strip()
+
+
+def _com_sufixo(nome: str, extra: str) -> str:
+    """Põe `extra` no fim do nome, antes da marcação ***X*** do cliente."""
+    nome = str(nome or "").strip()
+    m = _MARCACAO_CLIENTE_RE.search(nome)
+    if m:
+        return f"{nome[:m.start()].rstrip()} {extra} {m.group(0).strip()}"
+    return f"{nome} {extra}"
+
+
+_FAMILIA_COR = {
+    "DOURADO": "OURO", "OURO": "OURO", "AMARELO": "OURO", "CHAMPANHE": "OURO", "BEGE": "OURO",
+    "PRATA": "PRATA", "PRATEADO": "PRATA", "CINZA": "PRATA",
+    "ROSA": "ROSA", "PINK": "ROSA", "SALMAO": "ROSA", "ROSE": "ROSA", "ROSA ESCURO": "ROSA", "ROSE GOLD": "ROSA",
+    "AZUL": "AZUL", "AZUL CLARO": "AZUL", "AZUL MARINHO": "AZUL", "TIFFANY": "AZUL",
+    "VERDE": "VERDE", "VERDE CLARO": "VERDE", "VERMELHO": "VERMELHO", "VINHO": "VERMELHO",
+    "ROXO": "ROXO", "LILAS": "ROXO", "BRANCO": "BRANCO", "PRETO": "PRETO", "MARROM": "MARROM",
+    "LARANJA": "LARANJA", "COLORIDO": "COLORIDO",
+}
+
+
+def _familia_da_cor(palavra: str) -> Optional[str]:
+    w = _sem_acento(palavra).upper().strip()
+    if w != "LILAS":
+        w = re.sub(r"S$", "", w)
+    for fem, masc in (("DOURADA", "DOURADO"), ("VERMELHA", "VERMELHO"), ("BRANCA", "BRANCO"),
+                      ("PRETA", "PRETO"), ("AMARELA", "AMARELO"), ("ROXA", "ROXO"),
+                      ("PRATEADA", "PRATEADO"), ("COLORIDA", "COLORIDO")):
+        if w == fem:
+            w = masc
+    return _FAMILIA_COR.get(w)
+
+
+def _nomes_pelo_texto_da_pagina(pdf_path: str, produtos: list) -> list:
+    """Nome conferido com o PDF em variantes do mesmo card (Neo Festas,
+    Teste 10, 12/10/2026):
+      - rótulo na linha logo acima do código ("VERDE / 119822 / NEVADO /
+        119709"): a IA trocou entre os dois → cada um fica com o seu;
+      - cor escrita no nome que NÃO é a da bolinha desenhada acima do código
+        (festões págs. 22-24: a IA escrevia VERDE/DOURADO/PRATA girados entre
+        os códigos) → sai a cor; com ***CORES*** se o lote usa essa marca;
+      - "CORES" solto (sem asteriscos) que não está no bloco do card sai."""
+    if not produtos:
+        return produtos
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception:
+        return produtos
+    usa_marca = sum(1 for p in produtos if "***CORES***" in str(p.get("nome") or "").upper()) >= 3
+    por_pagina: Dict[int, list] = {}
+    for p in produtos:
+        try:
+            pg = int(p.get("paginaOrigem") or 0)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= pg <= len(doc) and p.get("codigo") and p.get("nome"):
+            por_pagina.setdefault(pg, []).append(p)
+    rotulos = cores = soltos = 0
+    try:
+        for pg, lista in por_pagina.items():
+            page = doc.load_page(pg - 1)
+            texto = page.get_text()
+            if len(texto.strip()) < 30:
+                continue
+            linhas = [ln.strip() for ln in texto.split("\n")]
+            # 1) rótulo na linha de cima do código, trocado entre dois produtos
+            rot: Dict[int, str] = {}
+            for p in lista:
+                cod = str(p["codigo"]).strip().strip("*").upper()
+                idx = [i for i, ln in enumerate(linhas) if ln.upper() == cod]
+                if len(idx) == 1 and idx[0] > 0:
+                    acima = linhas[idx[0] - 1]
+                    if re.fullmatch(r"[A-Za-zÀ-ú]{3,}(?: [A-Za-zÀ-ú]{3,})?", acima):
+                        rot[id(p)] = acima.upper()
+            nomes_inteiros = {_nome_chave(_base_do_nome(x["nome"])) for x in lista}
+            for p in lista:
+                lp = rot.get(id(p))
+                if not lp or re.search(rf"\b{re.escape(lp)}\b", str(p["nome"]), re.I):
+                    continue
+                for q in lista:
+                    lq = rot.get(id(q))
+                    if q is p or not lq or lq == lp:
+                        continue
+                    # rótulo é a VARIANTE dentro de um nome maior; se ele É o
+                    # nome inteiro, a linha de cima é o nome do card anterior
+                    # (PETRIN imprime o código ANTES do nome: RD2203/RD2209)
+                    if {_nome_chave(lp), _nome_chave(lq)} & nomes_inteiros:
+                        continue
+                    if (re.search(rf"\b{re.escape(lq)}\b", str(p["nome"]), re.I)
+                            and re.search(rf"\b{re.escape(lp)}\b", str(q["nome"]), re.I)
+                            and not re.search(rf"\b{re.escape(lq)}\b", str(q["nome"]), re.I)):
+                        p["nome"] = re.sub(rf"\b{re.escape(lq)}\b", lp, str(p["nome"]), count=1, flags=re.I)
+                        q["nome"] = re.sub(rf"\b{re.escape(lp)}\b", lq, str(q["nome"]), count=1, flags=re.I)
+                        rotulos += 2
+                        break
+            # 2) cor do nome × cor da bolinha
+            desenhos = None
+            for p in lista:
+                nome = str(p["nome"])
+                base = _base_do_nome(nome)
+                # só a cor no FIM do nome ("FESTÃO ... 3,0cmx2,0m VERDE"); no
+                # meio ela é parte do nome ("ROSA BOTÃO" é a flor)
+                ditas = [m for m in _PALAVRA_COR_RE.finditer(base)
+                         if _familia_da_cor(m.group(0)) and not base[m.end():].strip()]
+                if not ditas:
+                    continue
+                rects = page.search_for(str(p["codigo"]).strip("*").strip())
+                if len(rects) != 1:
+                    continue
+                if desenhos is None:
+                    desenhos = page.get_drawings()
+                bola = _bolinha_acima(desenhos, rects[0]) or _bolinha_a_esquerda(desenhos, rects[0])
+                if not bola:
+                    continue
+                fam = _FAMILIA_COR.get(_sem_acento(bola).upper())
+                if any(_familia_da_cor(m.group(0)) == fam for m in ditas):
+                    continue
+                novo = base
+                for m in reversed(ditas):
+                    novo = novo[:m.start()] + novo[m.end():]
+                novo = re.sub(r"\s+", " ", novo).strip()
+                marca = _MARCACAO_CLIENTE_RE.search(nome)
+                if marca:
+                    novo = f"{novo} {marca.group(0).strip()}"
+                elif usa_marca:
+                    novo = f"{novo} ***CORES***"
+                p["nome"] = novo
+                cores += 1
+            # 3) "CORES" solto que o catálogo não escreve no bloco
+            sem = _sem_acento(texto).upper()
+            for p in lista:
+                nome = str(p["nome"]).strip()
+                if _MARCACAO_CLIENTE_RE.search(nome):
+                    continue
+                m = re.search(r"\s+CORES$", nome, re.I)
+                if not m:
+                    continue
+                cod = str(p["codigo"]).strip().strip("*").upper()
+                c = sem.find(cod)
+                ancoras = re.findall(r"[A-Za-zÀ-ú]{3,}", nome[:m.start()])[:2]
+                if c < 0 or not ancoras:
+                    continue
+                rx = re.compile(r"\s+".join(re.escape(_sem_acento(w).upper()) for w in ancoras))
+                inicio = max((x.start() for x in rx.finditer(sem) if x.start() < c), default=None)
+                if inicio is None or "CORES" in sem[inicio:c]:
+                    continue
+                p["nome"] = nome[:m.start()].strip()
+                soltos += 1
+    except Exception as e:  # noqa: BLE001
+        print(f"[NomeTexto] falha segura: {e}")
+    finally:
+        doc.close()
+    if rotulos or cores or soltos:
+        print(f"[NomeTexto] {rotulos} rótulo(s) destrocado(s), {cores} cor(es) diferente(s) da bolinha, "
+              f"{soltos} 'CORES' solto(s) tirado(s)")
+    return produtos
+
+
+def _nomes_iguais_com_medida(pdf_path: str, produtos: list) -> list:
+    """Produtos DIFERENTES com o MESMO nome e a medida que separa um do outro
+    só nas observações (Teste 10, 12/10/2026). Entra no nome quando o
+    catálogo a usa como parte do nome:
+      - a linha do nome traz a medida ("Pote hermético redondo | 550ml",
+        Levivan) — a IA cortou; ou
+      - vários códigos dividem UM bloco de nome e a medida é o rótulo de
+        cada um (Neo "VELA SPARKLE IMPORTADA" 30cm | 121002, 45cm, 60cm;
+        SACO PLÁSTICO 44x59…80x90cm; MOLA 5,0/6,5cm).
+    Card com o nome repetido em cada produto (BOLHA DE SABÃO PATO) fica."""
+    if not produtos:
+        return produtos
+    try:
+        doc = fitz.open(pdf_path)
+        textos = [_sem_acento(doc.load_page(i).get_text()).upper() for i in range(len(doc))]
+        doc.close()
+    except Exception:
+        return produtos
+    grupos: Dict[str, list] = {}
+    for p in produtos:
+        base = _base_do_nome(p.get("nome"))
+        if base and p.get("codigo") and not _NOME_TEM_MEDIDA_RE.search(base):
+            grupos.setdefault(_nome_chave(base), []).append(p)
+    mudados = 0
+    for grupo in grupos.values():
+        if len(grupo) < 2:
+            continue
+        medidas = []
+        for p in grupo:
+            obs = str(p.get("observacoes") or "")
+            m = next((m for m in _MEDIDA_OBS_RE.finditer(obs)
+                      if ":" not in obs[max(0, m.start() - 4):m.start()]
+                      and not re.search(r"M[IÍ]N", obs[max(0, m.start() - 8):m.start()], re.I)
+                      and not re.search(r"EMB(?:ALAGEM)?\b", obs[max(0, m.start() - 14):m.start()].upper())), None)
+            medidas.append(m.group(0).strip() if m else None)
+        if None in medidas or len({re.sub(r"\s", "", x.upper()) for x in medidas}) < 2:
+            continue
+        # códigos da página com o nome EXATAMENTE igual (a IA copia o mesmo
+        # nome do bloco dividido; "6COPOS" × "6 COPOS" são cards diferentes)
+        por_pg: Dict[Tuple[int, str], int] = {}
+        for p in grupo:
+            try:
+                pgx = int(p.get("paginaOrigem") or 0)
+            except (TypeError, ValueError):
+                continue
+            k = (pgx, _base_do_nome(p["nome"]).upper())
+            por_pg[k] = por_pg.get(k, 0) + 1
+        for p, med in zip(grupo, medidas):
+            try:
+                pg = int(p.get("paginaOrigem") or 0)
+            except (TypeError, ValueError):
+                continue
+            if not (1 <= pg <= len(textos)):
+                continue
+            t = textos[pg - 1]
+            base = _base_do_nome(p["nome"])
+            palavras = _sem_acento(base).upper().split()
+            b_rx = r"\s+".join(re.escape(w) for w in palavras)
+            m_rx = r"\s*".join(re.escape(ch) for ch in re.sub(r"\s", "", _sem_acento(med).upper()))
+            # na linha do nome ("Jarra | 1.100ml") ou como 2ª linha dele
+            # ("TOALHAS LIMPA FÁCIL / 48UND / YM-09", FORTAL)
+            na_linha = re.search(b_rx + r"[ \t]*(\|)?[ \t]*\n?[ \t]*" + m_rx + r"[ \t]*(?:\n|$)", t)
+            vezes = len(re.findall(b_rx, t)) if b_rx else 0
+            # nome impresso UMA vez para vários códigos da página
+            bloco_dividido = vezes == 1 and por_pg.get((pg, base.upper()), 0) >= 2
+            if not na_linha and not bloco_dividido:
+                continue
+            sep = " | " if na_linha and na_linha.group(1) else " "
+            med = med.upper() if base.upper() == base else med
+            nome = str(p["nome"]).strip()
+            cauda = nome[len(base):].strip() if nome.startswith(base) else ""
+            p["nome"] = f"{base}{sep}{med}" + (f" {cauda}" if cauda else "")
+            mudados += 1
+    if mudados:
+        print(f"[NomeMedida] medida no nome de {mudados} produto(s) com nome repetido")
     return produtos
 
 
@@ -4030,6 +4342,337 @@ def _conferir_selos_off(pdf_path: str, produtos: list) -> list:
     return produtos
 
 
+_RS_VALOR_RE = re.compile(r"R\$\s?(\d{1,3}(?:\.\d{3})*,\d{2})")
+_VALOR_BR_RE = re.compile(r"(?<![\d,])(\d{1,3}(?:\.\d{3})*,\d{2})(?!\d)")
+_CX_TEXTO_RE = re.compile(r"c/\s?0*(\d{1,3}(?:\.\d{3})?)\s*(?:un|pct|rolos?|cart|jg|p[cç]|pe[cç])", re.I)
+_PALAVRA_RE = re.compile(r"[A-Za-zÀ-ú]{3,}")
+
+
+def _valor_br(txt: str) -> float:
+    return float(txt.replace(".", "").replace(",", "."))
+
+
+def _numero_rx(n: int) -> str:
+    """Regex de um inteiro como o catálogo escreve: "05", "1.000", "1000"."""
+    s = str(n)
+    if n >= 1000:
+        s = s[:-3] + r"\.?" + s[-3:]
+    return rf"(?<![\d,.])0*{s}(?![\d,])"
+
+
+def _blocos_dos_codigos(texto: str, produtos: list) -> Tuple[Dict[int, str], Dict[int, str], str]:
+    """Bloco de texto de cada produto cujo código aparece UMA vez na página.
+    Retorna (bloco_antes, bloco_depois, lado). O lado do bloco (o nome vem
+    ANTES do código, como na Neo, ou DEPOIS, como na Levivan) é medido na
+    própria página. Código sem texto próprio antes dele (vários códigos
+    debaixo do mesmo nome: "A / 157007 / B / 157015") herda o bloco do
+    código anterior."""
+    up = texto.upper()
+    pos: List[Tuple[int, int, dict]] = []
+    marcos: List[int] = []
+    for p in produtos:
+        cod = str(p.get("codigo") or "").strip().strip("*").upper()
+        if not cod:
+            continue
+        ach = list(re.finditer(rf"(?<![A-Z0-9]){re.escape(cod)}(?![A-Z0-9])", up))
+        marcos.extend(m.start() for m in ach)
+        if len(ach) == 1:
+            pos.append((ach[0].start(), ach[0].end(), p))
+    marcos.sort()
+    pos.sort(key=lambda x: x[0])
+    antes: Dict[int, str] = {}
+    depois: Dict[int, str] = {}
+    votos = {"antes": 0, "depois": 0}
+    anterior = ""
+    for ini, fim, p in pos:
+        ant = max((m for m in marcos if m < ini), default=-1)
+        prox = min((m for m in marcos if m >= fim), default=len(texto))
+        a0 = texto.find("\n", ant) + 1 if ant >= 0 else 0
+        a_txt, d_txt = texto[a0:ini], texto[fim:prox]
+        palavra = next((w for w in _PALAVRA_RE.findall(str(p.get("nome") or "")) if len(w) >= 4), None)
+        if palavra:
+            w = _sem_acento(palavra).upper()
+            em_a, em_d = w in _sem_acento(a_txt).upper(), w in _sem_acento(d_txt).upper()
+            if em_a != em_d:
+                votos["antes" if em_a else "depois"] += 1
+        if not _PALAVRA_RE.search(a_txt):
+            a_txt = anterior + a_txt
+        antes[id(p)], depois[id(p)] = a_txt, d_txt
+        anterior = a_txt
+    lado = "antes" if votos["antes"] >= votos["depois"] else "depois"
+    return antes, depois, lado
+
+
+def _lado_dos_dados(antes: Dict[int, str], depois: Dict[int, str], lista: list) -> str:
+    """De que lado do código ficam os DADOS (preço, IPI, caixa), medido pelo
+    preço de cada produto: Neo antes do código, Lila depois ("CÓD: LH170 /
+    ... / IPI 0% / R$5,00")."""
+    votos = {"antes": 0, "depois": 0}
+    for p in lista:
+        try:
+            preco = round(float(p.get("preco") or 0), 2)
+        except (TypeError, ValueError):
+            continue
+        if not preco or id(p) not in antes:
+            continue
+        em_a = preco in [round(_valor_br(v), 2) for v in _RS_VALOR_RE.findall(antes[id(p)])]
+        em_d = preco in [round(_valor_br(v), 2) for v in _RS_VALOR_RE.findall(depois[id(p)])]
+        if em_a != em_d:
+            votos["antes" if em_a else "depois"] += 1
+    return "antes" if votos["antes"] >= votos["depois"] else "depois"
+
+
+def _textos_por_pagina(pdf_path: str) -> List[str]:
+    try:
+        doc = fitz.open(pdf_path)
+        t = [doc.load_page(i).get_text() for i in range(len(doc))]
+        doc.close()
+        return t
+    except Exception:
+        return []
+
+
+def _agrupar_por_pagina(produtos: list, n_paginas: int) -> Dict[int, list]:
+    por: Dict[int, list] = {}
+    for p in produtos:
+        try:
+            pg = int(p.get("paginaOrigem") or 0)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= pg <= n_paginas:
+            por.setdefault(pg, []).append(p)
+    return por
+
+
+def _preco_do_pacote_impresso(pdf_path: str, produtos: list) -> list:
+    """Preço que NÃO está impresso na página, mas que vezes N dá o PRIMEIRO
+    preço do bloco do produto, com o N escrito no bloco → vale o impresso.
+    A IA dividia o preço do pacote pela quantidade (Neo Teste 10: FITILHO
+    "R$ 4,89 Pct. c/10 rolos" saía 0,49; FOLHA METALIZADA "R$ 21,12 Cart."
+    com "25 folhas" saía 0,84; ARRANJO "R$ 24,87 c/03 un." saía 8,29). O
+    cliente vende pelo pacote impresso."""
+    textos = _textos_por_pagina(pdf_path)
+    if not textos:
+        return produtos
+    mudou = 0
+    for pg, lista in _agrupar_por_pagina(produtos, len(textos)).items():
+        texto = textos[pg - 1]
+        impressos = {_valor_br(v) for v in _VALOR_BR_RE.findall(texto)}
+        if not impressos:
+            continue
+        antes, depois, lado = _blocos_dos_codigos(texto, lista)
+        for p in lista:
+            try:
+                preco = float(p.get("preco") or 0)
+            except (TypeError, ValueError):
+                continue
+            if preco <= 0 or id(p) not in antes or any(abs(v - preco) < 0.006 for v in impressos):
+                continue
+            bloco = antes[id(p)] if lado == "antes" else depois[id(p)]
+            m = _RS_VALOR_RE.search(bloco)
+            if not m:
+                continue
+            v = _valor_br(m.group(1))
+            k = round(v / preco)
+            if 2 <= k <= 1000 and abs(v - preco * k) <= 0.006 * k and re.search(_numero_rx(k), bloco):
+                p["preco"] = v
+                mudou += 1
+    if mudou:
+        print(f"[PrecoImpresso] {mudou} preço(s) que não existiam no catálogo → preço do pacote impresso")
+    return produtos
+
+
+def _caixa_pelo_texto(pdf_path: str, produtos: list) -> list:
+    """Quantidade da caixa conferida com o texto do bloco do produto:
+      - caixa vazia/1, mas o bloco imprime "R$ T ... c/N un." com T = preço
+        × N → N (Neo Natal págs. 25-30, Teste 10: 61 códigos "Cx c/ 1" com
+        "R$ 20,16 Kit c/12 un." para R$ 1,68 a unidade);
+      - caixa N que não aparece no bloco do produto ("c/N", "CX N", "N un")
+        → 1 (Neo pág. 66: 26 letras "Cx c/ 5" — o "c/05" era de outro card)."""
+    textos = _textos_por_pagina(pdf_path)
+    if not textos:
+        return produtos
+    pelo_preco = sem_apoio = 0
+    for pg, lista in _agrupar_por_pagina(produtos, len(textos)).items():
+        texto = textos[pg - 1]
+        if len(texto.strip()) < 30:
+            continue
+        antes, depois, lado = _blocos_dos_codigos(texto, lista)
+        for p in lista:
+            if id(p) not in antes:
+                continue
+            try:
+                preco = float(p.get("preco") or 0)
+                qtd = int(p.get("quantidadeCaixa") or 0)
+            except (TypeError, ValueError):
+                continue
+            proprio = antes[id(p)] if lado == "antes" else depois[id(p)]
+            if qtd <= 1 and preco > 0:
+                for linha in proprio.split("\n"):
+                    m_v, m_n = _RS_VALOR_RE.search(linha), _CX_TEXTO_RE.search(linha)
+                    if m_v and m_n:
+                        n = int(m_n.group(1).replace(".", ""))
+                        if n >= 2 and abs(_valor_br(m_v.group(1)) - preco * n) <= 0.011 * n:
+                            p["quantidadeCaixa"] = n
+                            pelo_preco += 1
+                            break
+            elif (qtd >= 2 and preco > 0
+                  and [round(_valor_br(v), 2) for v in _RS_VALOR_RE.findall(proprio)] == [round(preco, 2)]):
+                # só quando o bloco é mesmo do produto: UM preço, o dele (texto
+                # embaralhado — PETRIN/DUTE com os preços em lista — fica)
+                if not re.search(_numero_rx(qtd), antes[id(p)] + "\n" + depois[id(p)]):
+                    p["quantidadeCaixa"] = 1
+                    sem_apoio += 1
+    if pelo_preco or sem_apoio:
+        print(f"[CaixaTexto] {pelo_preco} caixa(s) pelo preço do kit impresso, "
+              f"{sem_apoio} caixa(s) sem apoio no bloco → 1")
+    return produtos
+
+
+_IPI_TEXTO_RE = re.compile(r"IPI\s*(?:DE\s*)?(\d{1,2}(?:[.,]\d{1,2})?)\s*%", re.I)
+
+
+def _ipi_pelo_texto(pdf_path: str, produtos: list) -> list:
+    """IPI conferido com o texto da página (Teste 10, 12/10/2026):
+      - IPI sem a palavra "IPI" em lugar nenhum da página sai (VAESO: as
+        medidas "22,5 / 7 / 7" viraram IPI 7 em 10 códigos);
+      - IPI vazio com "IPI de N%" escrito no bloco do produto entra (Neo:
+        "IPI de 13% já incluso" e o IPI saía vazio)."""
+    textos = _textos_por_pagina(pdf_path)
+    if not textos:
+        return produtos
+    tirados = postos = 0
+    for pg, lista in _agrupar_por_pagina(produtos, len(textos)).items():
+        texto = textos[pg - 1]
+        if len(texto.strip()) < 30:
+            continue
+        tem_ipi = "IPI" in texto.upper()
+        antes, depois, _l = _blocos_dos_codigos(texto, lista) if tem_ipi else ({}, {}, "")
+        lado = _lado_dos_dados(antes, depois, lista) if tem_ipi else ""
+        for p in lista:
+            try:
+                ipi = float(p.get("ipi") or 0)
+            except (TypeError, ValueError):
+                continue
+            if ipi > 0 and not tem_ipi:
+                p["ipi"] = 0
+                tirados += 1
+            elif ipi == 0 and id(p) in antes:
+                proprio = antes[id(p)] if lado == "antes" else depois[id(p)]
+                achados = {m.group(1) for m in _IPI_TEXTO_RE.finditer(proprio)}
+                try:
+                    preco = round(float(p.get("preco") or 0), 2)
+                except (TypeError, ValueError):
+                    preco = 0
+                # bloco do produto de verdade: com o preço DELE
+                do_produto = preco in [round(_valor_br(v), 2) for v in _RS_VALOR_RE.findall(proprio)]
+                if len(achados) == 1 and do_produto:
+                    p["ipi"] = float(achados.pop().replace(",", "."))
+                    postos += 1
+    if tirados or postos:
+        print(f"[IPITexto] {tirados} IPI sem 'IPI' na página tirado(s), {postos} IPI escrito no bloco posto(s)")
+    return produtos
+
+
+# "Off-white" é cor, não selo (VAESO)
+_SELO_PROMO_RE = re.compile(r"PROMO|\bOFF\b(?!-)|DESCONTO|OFERTA|LIQUIDA|\d\s?%|\bDE\s*R\$|\bPOR\s*R\$", re.I)
+
+
+def _promocao_sem_selo(pdf_path: str, produtos: list) -> list:
+    """Promoção marcada pela IA sem preço promocional e sem NENHUM selo de
+    promoção na página (VAESO pág. 11, Teste 10: dois preços desenhados um
+    em cima do outro, "R$12,99" e "R$ 6,99", e a IA marcava ***PROMOCAO***
+    nos 4 açucareiros). Página com selo/OFF/% fica como está."""
+    textos = _textos_por_pagina(pdf_path)
+    if not textos:
+        return produtos
+    mudou = 0
+    for pg, lista in _agrupar_por_pagina(produtos, len(textos)).items():
+        texto = textos[pg - 1]
+        if len(texto.strip()) < 30 or _SELO_PROMO_RE.search(texto):
+            continue
+        for p in lista:
+            if p.get("promocional") and not p.get("precoPromocional"):
+                p["promocional"] = False
+                mudou += 1
+    if mudou:
+        print(f"[PromoSemSelo] {mudou} produto(s) sem selo de promoção na página desmarcado(s)")
+    return produtos
+
+
+def _em_breve_com_preco_isolado(produtos: list) -> list:
+    """No catálogo em que EM BREVE é produto SEM preço (PETRIN Teste 10: 235
+    de 236 sem preço), o único marcado EM BREVE com preço impresso é engano
+    da leitura — RD2108 saía "JARRA COM ESPREMEDOR ***EM BREVE***" com R$
+    9,00. Medido no lote: catálogo cujo EM BREVE tem preço (DAGIA DV003, Neo)
+    fica como está."""
+    marcados = [p for p in produtos if p.get("emBreve")]
+    com_preco = [p for p in marcados if isinstance(p.get("preco"), (int, float)) and p["preco"] > 0]
+    if len(marcados) >= 20 and len(com_preco) <= 0.05 * len(marcados):
+        for p in com_preco:
+            p["emBreve"] = False
+        if com_preco:
+            print(f"[EmBreve] {len(com_preco)} EM BREVE com preço num catálogo de EM BREVE sem preço → ativo")
+    return produtos
+
+
+def _unificar_codigo_repetido(pdf_path: str, produtos: list) -> list:
+    """Mesmo código, mesmo preço, em mais de uma linha → 1 linha (Teste 10,
+    12/10/2026): Tuka repete o mesmo urso em outra página do catálogo
+    (66-6738-30 págs. 8 e 16); Neo imprime 1 código para 4 cores e a IA
+    abria 1 linha por cor (151734 TIARA TEAM BRIDE). Nome = o começo comum
+    (≥2 palavras) + a marcação ***X***; sem começo comum, o da 1ª página.
+    Ficam separados: preço diferente (FORTAL 5085 são 2 produtos) e código
+    impresso 2 vezes na mesma página (GIRA GU0144 RETANG./OVAL)."""
+    if not produtos:
+        return produtos
+    try:
+        doc = fitz.open(pdf_path)
+        textos = [doc.load_page(i).get_text().upper() for i in range(len(doc))]
+        doc.close()
+    except Exception:
+        textos = []
+    grupos: Dict[Tuple[str, Any], list] = {}
+    for p in produtos:
+        cod = str(p.get("codigo") or "").strip().upper()
+        if cod and p.get("preco"):
+            grupos.setdefault((cod, round(float(p["preco"]), 2)), []).append(p)
+    fora: set = set()
+    for (cod, _preco), grupo in grupos.items():
+        if len(grupo) < 2:
+            continue
+        mesma_pagina: Dict[Any, int] = Counter(p.get("paginaOrigem") for p in grupo)
+        impresso_varias = False
+        for pg, n in mesma_pagina.items():
+            try:
+                t = textos[int(pg) - 1]
+            except (TypeError, ValueError, IndexError):
+                continue
+            vezes = len(re.findall(rf"(?<![A-Z0-9]){re.escape(cod)}(?![A-Z0-9])", t))
+            if n >= 2 and vezes >= n:
+                impresso_varias = True
+        if impresso_varias:
+            continue
+        grupo.sort(key=lambda p: int(p.get("paginaOrigem") or 0))
+        nomes = [_base_do_nome(p.get("nome")).split() for p in grupo]
+        comum: List[str] = []
+        for palavras in zip(*nomes):
+            if len({w.upper() for w in palavras}) != 1:
+                break
+            comum.append(palavras[0])
+        principal = grupo[0]
+        marca = next((m.group(0).strip() for p in grupo
+                      for m in [_MARCACAO_CLIENTE_RE.search(str(p.get("nome") or ""))] if m), "")
+        if len(comum) >= 2 and len({tuple(w.upper() for w in n) for n in nomes}) > 1:
+            principal["nome"] = " ".join(comum) + (f" {marca}" if marca else "")
+        for p in grupo[1:]:
+            fora.add(id(p))
+    if fora:
+        print(f"[CodigoRepetido] {len(fora)} linha(s) a mais do mesmo código e preço unificada(s)")
+        produtos = [p for p in produtos if id(p) not in fora]
+    return produtos
+
+
 def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str = "") -> Dict[str, Any]:
     """Wrapper único: chama a extração real e aplica correções pós-processamento
     (ex: prefixo de código) independente de qual caminho interno foi usado
@@ -4049,7 +4692,15 @@ def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str =
         result["produtos"] = _preco_un_abaixo_do_codigo(pdf_path, result["produtos"])
         result["produtos"] = _fix_struck_prices(pdf_path, result["produtos"])
         result["produtos"] = _conferir_selos_off(pdf_path, result["produtos"])
+        result["produtos"] = _promocao_sem_selo(pdf_path, result["produtos"])
+        result["produtos"] = _preco_do_pacote_impresso(pdf_path, result["produtos"])
+        result["produtos"] = _caixa_pelo_texto(pdf_path, result["produtos"])
+        result["produtos"] = _ipi_pelo_texto(pdf_path, result["produtos"])
         result["produtos"] = _completar_atributos_do_bloco(pdf_path, result["produtos"])
+        result["produtos"] = _nomes_pelo_texto_da_pagina(pdf_path, result["produtos"])
+        result["produtos"] = _nomes_iguais_com_medida(pdf_path, result["produtos"])
+        result["produtos"] = _unificar_codigo_repetido(pdf_path, result["produtos"])
+        result["produtos"] = _em_breve_com_preco_isolado(result["produtos"])
         result["produtos"] = _nomear_cores_por_bolinha(pdf_path, result["produtos"])
         result["avisosNomeDuplicado"] = _marcar_nomes_duplicados(result["produtos"])
     return result

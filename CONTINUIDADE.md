@@ -16,13 +16,13 @@
 4. **Nunca** registrar senha, token, chave ou URL com credencial. Só o NOME da variável.
 5. Entradas curtas (3–6 linhas). Detalhe técnico vai para o `guide.md`, não aqui.
 
-## Onde parou (06/10/2026)
+## Onde parou (13/10/2026)
 
-- `main` em `f144264` (PR #180). Teste 9 do Josef entregue em 2 PRs: dados (#179) e fotos (#180).
-- Código do backend no servidor = código da `main` (conferido por hash em 06/10).
-- Frontend na Vercel com o commit `f144264` (deploy de 05/10).
-- Resumo e mensagem para o Josef já foram enviados ao Gabriel; falta o Josef reconverter
-  os catálogos e conferir.
+- Teste 10 do Josef (laudo das conversões de 12/10, em `_laudo/` — fora do git).
+- Parte DADOS no PR #182 (regras no fim de `extract_with_fallback`, `guide.md #14.42`).
+- Parte FOTOS em andamento: Neo ~223, DUTE 16, PETRIN 15, Tuka 7, GIRA Malas 4 /
+  Papelaria 3 / Utilidades 2 / Decoração 1, DAGIA 3, Goal 1, Lila 1.
+- Depois das fotos: falhas de segurança das bibliotecas (Dependabot), pedido do Gabriel.
 
 ## Raciocínio e decisões recentes
 
@@ -73,6 +73,9 @@ medindo com A/B sem API sobre os jobs do Teste 9 já gravados no servidor.
 
 ## Diário
 
+- **13/10/2026** — Teste 10: laudo baixado; jobs de 12/10 copiados do servidor para o
+  scratchpad (A/B sem API). Dados corrigidos e testados (PR #182). 1 chamada de IA
+  (FORTAL pág. 4) para confirmar a visão. Render segue suspenso.
 - **06/10/2026** — Criado este arquivo e `.claude/settings.json` (só comandos de leitura/teste).
   Verificado: servidor = `main` (hash), Vercel = `f144264`, testes sem API passando
   (vitest 494/494 na 2ª rodada; a 1ª teve 1 falha intermitente; pytest 141 sem os 2 scripts manuais `test_cv.py`/`test_e2e.py`, que pedem PDF local).
