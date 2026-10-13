@@ -276,3 +276,23 @@ class SecurityUtils {
 - Nenhum dado de cartão passa pelo sistema: o pagamento acontece na página da
   InfinitePay.
 
+
+## 7. Dependências (13/10/2026)
+
+84 alertas do Dependabot, todos em bibliotecas JavaScript (o backend Python
+não tinha alerta). Corrigidos no PR de segurança:
+
+- **pdfjs-dist 5 → 6.4** (alta): PDF malicioso podia executar código ao ser
+  aberto no navegador — o cliente abre catálogo de fornecedor.
+- **xlsx 0.18.5 → 0.20.3** (alta: ReDoS e prototype pollution): a SheetJS não
+  publica correção no npm; o pacote vem do site oficial
+  (`https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`, no `package.json`).
+- **vite 5 → 6.4 e vitest 3 → 4.1** (crítico/alto, só ambiente de
+  desenvolvimento: servidor de dev e UI de teste).
+- `npm audit fix` nas transitivas; `uuid` forçado para 11.1 dentro do exceljs
+  (`overrides`).
+
+Ficam abertos, de propósito: **react-router** (open redirect — a correção só
+existe na v7, que exige migrar o app; os links do app são internos),
+**braces** e **postcss-selector-parser** (ferramentas de build do tailwind 3,
+não vão para o navegador). Revisar quando migrar tailwind 4 / react-router 7.

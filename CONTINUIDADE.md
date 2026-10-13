@@ -16,16 +16,12 @@
 4. **Nunca** registrar senha, token, chave ou URL com credencial. Só o NOME da variável.
 5. Entradas curtas (3–6 linhas). Detalhe técnico vai para o `guide.md`, não aqui.
 
-## Onde parou (13/10/2026, limite de uso)
+## Onde parou (13/10/2026)
 
-- PR #182 (dados do Teste 10) mergeado e no servidor.
-- Branch `fix/teste10-fotos` com commit local (NÃO enviado, sem PR, sem deploy): fotos GIRA
-  Malas/Papelaria/Decoração, Goal GK0173-0, Lila 2M, Tuka 5/7, Neo 28, DUTE DT10133/DT10174.
-- Falta: terminar a rodada de comparação (scratchpad `cv_ab.py`/`cmp_all.py`, catálogo
-  INTEIRO) com a regra final do selo — confirmar 0 mudanças fora da lista em DUTE, Petrin,
-  Levivan e FORTAL; depois PR, deploy (scp + docker compose) e docs.
-- Depois: falhas de segurança (pdfjs-dist 5→6, xlsx pelo CDN da SheetJS, vite/vitest).
-- Disco C: quase cheio (~500 MB livres): avisar o Gabriel.
+- Teste 10 do Josef: dados (#182) e fotos (#183) no ar e conferidos no servidor.
+- Segurança das bibliotecas: PR #184 (pdfjs-dist 6, xlsx 0.20.3 da SheetJS, vite 6, vitest 4).
+  Ficam react-router (só v7 corrige) e 2 do tailwind (build). Ver `SECURITY.md §7`.
+- Disco C: do Gabriel quase cheio (~1,4 GB livres): avisar.
 
 ## Raciocínio e decisões recentes
 
@@ -76,6 +72,9 @@ medindo com A/B sem API sobre os jobs do Teste 9 já gravados no servidor.
 
 ## Diário
 
+- **13/10/2026 (tarde)** — Fotos do Teste 10 (#183) com A/B no catálogo inteiro; deploy
+  conferido. Segurança: 84 → 3 alertas (#184). Arquivos de teste do scratchpad apagados
+  (disco cheio); PDFs dos jobs podem ser baixados de novo do servidor até ~02/11.
 - **13/10/2026** — Teste 10: laudo baixado; jobs de 12/10 copiados do servidor para o
   scratchpad (A/B sem API). Dados corrigidos e testados (PR #182). 1 chamada de IA
   (FORTAL pág. 4) para confirmar a visão. Render segue suspenso.
