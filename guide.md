@@ -2002,6 +2002,48 @@ fornecedor) e mede o sinal no próprio PDF:
   multiplica 30 × 20).
 - Testes: `test_rodada_1210.py`.
 
+### 14.43 Teste 10 do Josef — fotos (13/10/2026)
+
+**Achado de método:** A/B de foto rodando só as páginas da lista NÃO
+reproduz a produção — a amostra de páginas (logo/ícone repetido) muda com o
+catálogo inteiro. Sempre rodar o catálogo inteiro (a Neo leva ~1 min) e
+conferir que o "antes" bate com as fotos gravadas no job de produção.
+
+- **Grade de cores antes do filtro de selo**: miniatura de cor que encosta na
+  vizinha caía como "selo" (Neo pág. 61: sem a preta e a branca a grade 10×10
+  não fechava e os 10 balões saíam azul-claro). A grade tenta primeiro as
+  imagens filtradas e, para quem sobrou, as de antes do filtro (exige o mesmo
+  número de fotos e códigos). Neo 28 da lista (balões, cortinas pág. 89, saias
+  pág. 39, estrela pág. 91), 0 fora.
+- **Selo × foto de baixo** (`_descartar_selos`): imagem do tamanho de foto
+  (≥60pt) que só encosta pela borda de CIMA numa foto maior (faixa horizontal
+  ≤15pt) não é selo (GIRA Malas pág. 5: as 4 malas encostavam 8-15pt na foto
+  de grupo). Zoom/detalhe ao lado (faixa vertical — PETRIN, Levivan) e
+  miniatura segue como selo: com limite só por área, Neo 39/46/71, PETRIN e
+  Levivan trocavam fotos certas (medido e descartado).
+- **Imagem com fotos empilhadas** (`_fatias_por_codigos_empilhados`): 1
+  arquivo com N fotos e N códigos ao lado → fatia na altura de cada código, só
+  onde há vão liso entre as fotos (GIRA Papelaria TP2088/89/90).
+- **Camadas da mesma foto** (sombra + foto no mesmo lugar): vale a camada com
+  conteúdo e as legendas embaixo dividem a foto (GIRA Decoração GC0248).
+- **Variante em outro card** não herda a foto do código-base (Goal GK0173-0).
+- **Lista de tamanhos no mesmo card** (código colado ≤25pt a outro já com
+  foto) divide a foto (Lila 2M/1.6M); arquivo "1.6M.jpg" com o ponto.
+- **Foto ao lado** (`_fotos_ao_lado`, agora também no caminho embedded):
+  página de 1 código com foto grande ao lado; imagem repetida na página (faixa
+  do layout) não conta como foto colada. Tuka 5/7 (pág. 121 fica: afrouxar a
+  proteção da Lila trocava 24 fotos certas da Lila — medido e descartado).
+- **PETRIN** (card com o código no alto e várias fotos): restringir a foto à
+  coluna do card corrigia 6 dos 15, mas trocava ~15 fotos certas (bonés,
+  toucas, bandejas) — descartado; fica para uma rodada própria.
+- **Código órfão** (`_reler_paginas_com_codigo_orfao`, dados): código do
+  formato do lote, no texto, com preço no bloco, que a IA não devolveu → relê
+  só a página (DUTE DT10133/DT10174, 2 chamadas). Teto 12 páginas.
+- Ficou: Neo ~190 (cores/vizinho em várias páginas), DUTE 14 (pedaços de
+  layout), PETRIN 15, DAGIA 3 (foto de página inteira, caminho da IA), GIRA
+  TP2135/GU0144 (2 linhas com o mesmo código — a foto é por código).
+- Testes: `test_rodada_1210_fotos.py`.
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por

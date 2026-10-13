@@ -5,6 +5,16 @@
 
 ---
 
+## ✅ ENTREGUE em 13/10 — Teste 10 do Josef, parte FOTOS (PR #183)
+
+- GIRA Malas (4 malas), Papelaria (3 caixas fatiadas), Decoração GC0248;
+  Goal GK0173-0; Lila 2M e "1.6M.jpg"; Tuka (5 de 7).
+- Neo: balões pág. 61, cortinas pág. 89, saias pág. 39, estrela pág. 91 e 2
+  sacos que estavam sem foto (28 da lista + 2).
+- DUTE: DT10133 e DT10174 voltam (a IA pulava; a página é relida).
+- Ficam: Neo ~190, DUTE 14 (pedaços de layout), PETRIN 15, DAGIA 3, GIRA
+  TP2135/GU0144 (mesmo código em 2 linhas).
+
 ## ✅ ENTREGUE em 13/10 — Teste 10 do Josef, parte DADOS (PR #182)
 
 - Neo: nomes de festões/bolas sem a cor errada (48), árvore, pancake, velas,

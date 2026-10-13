@@ -13,6 +13,8 @@ ESTRATÉGIA:
 SAÍDA: {sku}.jpg contendo APENAS a foto do produto (sem textos, bordas, grid)
 """
 import os
+import shutil
+from collections import Counter
 import math
 import re
 import cv2
@@ -524,9 +526,34 @@ def _descartar_selos(page_imgs: List[Dict], tag: str) -> List[Dict]:
     # 162 produtos sem imagem.
     sobrepostas = set()
     toca_imagem_maior = set()
+
+    def _so_encosta_por_cima(i, r_selo, a_selo):
+        """Foto do tamanho de foto (>=60pt) que só encosta, pela borda de
+        CIMA, numa foto maior (faixa horizontal fina): é a foto de baixo
+        com folga no retângulo, não um selo (GIRA Malas pág. 5, Teste 10:
+        as 4 malas sumiam). Zoom/detalhe ao lado da foto (faixa vertical,
+        PETRIN/Levivan) segue como selo."""
+        if min(r_selo.width, r_selo.height) < 60:
+            return False
+        algum = False
+        for j, foto in enumerate(page_imgs):
+            r_foto, a_foto = foto.get("rect"), foto.get("area", 0)
+            if i == j or r_foto is None or a_foto <= a_selo:
+                continue
+            inter = r_selo & r_foto
+            if inter.is_empty or inter.width * inter.height <= 0:
+                continue
+            if not (inter.height <= 15 and inter.width >= 0.7 * r_selo.width
+                    and abs(inter.y0 - r_selo.y0) < 1):
+                return False
+            algum = True
+        return algum
+
     for i, selo in enumerate(page_imgs):
         r_selo, a_selo = selo.get("rect"), selo.get("area", 0)
         if r_selo is None or a_selo <= 0:
+            continue
+        if _so_encosta_por_cima(i, r_selo, a_selo):
             continue
         for j, foto in enumerate(page_imgs):
             if i == j:
@@ -1923,6 +1950,102 @@ def _detectar_orientacao_do_catalogo(
     return "acima"
 
 
+def _fotos_ao_lado(page_imgs: List[Dict], valid_skus: list, orientacao: str,
+                   used_img_ids: set, pre_matched: Dict[str, Dict]) -> Dict[str, Dict]:
+    """FOTO AO LADO na mesma faixa (Neo Festas 29/09/2026, balões págs.
+    57-64): card = foto de um lado + título e códigos do outro. A coluna de
+    códigos do card da esquerda fica MAIS PERTO da foto do card da direita
+    que da própria → os dois cards da linha trocavam de foto. Só vale se for
+    o desenho da PÁGINA (>=60% dos códigos com uma foto ao lado cobrindo a
+    altura do código). Usada no caminho de grade e no embedded (Tuka pág. 93,
+    Teste 10)."""
+    xrefs_na_pagina = Counter(img.get("xref") for img in page_imgs)
+    # catálogo medido como "foto ABAIXO do código" (PETRIN: código no alto do
+    # card e várias fotos de variação embaixo/à direita) — fica de fora
+    if orientacao == "abaixo":
+        return {}
+
+    def candidatas(sku):
+        sx, sy = sku["spatialContext"]["x"], sku["spatialContext"]["y"]
+        # foto COLADA acima ou abaixo do código (Lila, PETRIN): o desenho é o
+        # clássico e a regra "ao lado" trocava fotos certas — não se aplica
+        # (imagem repetida na página — faixa/caixa de texto do layout, Tuka
+        # pág. 93 — não é foto e não conta)
+        if any(
+            img.get("rect") is not None and img["rect"].x0 - 20 <= sx <= img["rect"].x1 + 20
+            and (0 <= sy - img["rect"].y1 <= 60 or 0 <= img["rect"].y0 - sy <= 60)
+            and xrefs_na_pagina.get(img.get("xref"), 0) < 2
+            for img in page_imgs
+        ):
+            return []
+        # ao lado: à esquerda (Neo balões) ou à direita (Tuka 29/09/2026,
+        # cards alternados — texto à esquerda e foto à direita)
+        return [
+            img for img in page_imgs
+            if img.get("rect") is not None and id(img) not in used_img_ids
+            # o código fica DENTRO da faixa da foto, não na borda de cima
+            # (PETRIN: código no alto do card, na altura do topo da foto do
+            # vizinho — 0%; balões 55-80%, Tuka 16-42%)
+            and img["rect"].y0 + 0.10 * img["rect"].height <= sy <= img["rect"].y1 + 6
+            and ((img["rect"].x1 <= sx and sx - img["rect"].x1 <= 250)
+                 or (img["rect"].x0 >= sx and img["rect"].x0 - sx <= 250))
+        ]
+
+    livres = [s for s in valid_skus if s.get("sku") not in pre_matched]
+    brutas = {id(s): candidatas(s) for s in livres}
+    a_esquerda: Dict[str, Dict] = {}
+    for sku in livres:
+        sx = sku["spatialContext"]["x"]
+        # Foto que tem OUTRO código colado embaixo (dentro da largura dela) é
+        # a foto desse código no desenho clássico (Lila 29/09/2026: a foto do
+        # LH605 desce até a linha do LH383, ao lado — trocava as duas)
+        cands = [
+            img for img in brutas[id(sku)]
+            if not any(
+                o is not sku and o.get("sku") != sku.get("sku")
+                and img["rect"].x0 - 5 <= o["spatialContext"]["x"] <= img["rect"].x1 + 5
+                and abs(o["spatialContext"]["y"] - img["rect"].y1) <= 90
+                for o in valid_skus
+            )
+        ]
+        # foto dos DOIS lados (códigos do card da esquerda, entre a própria
+        # foto e a do card vizinho): vale a da esquerda — a foto vem antes
+        # do texto na leitura
+        if len(cands) > 1:
+            esquerdas = [img for img in cands if img["rect"].x1 <= sx]
+            direitas = [img for img in cands if img["rect"].x0 >= sx]
+            if len(esquerdas) == 1 and len(direitas) == len(cands) - 1:
+                cands = esquerdas
+        # UMA foto só na faixa: card com várias fotos lado a lado (as cores
+        # de uma sacola, Neo pág. 79) tem uma foto por código — não se aplica
+        if len(cands) == 1:
+            a_esquerda[sku.get("sku")] = cands[0]
+    # Os códigos do card ficam LADO A LADO na mesma linha (os tamanhos do
+    # balão: 5" 12cm | 10" 25cm | 18" 45cm). Lista empilhada de códigos
+    # (cores do festão, pág. 23) tem foto por código — não se aplica.
+    pos = {s.get("sku"): (s["spatialContext"]["x"], s["spatialContext"]["y"]) for s in valid_skus}
+    grupos: Dict[int, list] = {}
+    for sku_code, img in a_esquerda.items():
+        grupos.setdefault(id(img), []).append(sku_code)
+    lado_a_lado = set()
+    for gid, cods in grupos.items():
+        pts = [pos[c] for c in cods if c in pos]
+        # 1 código por foto (Tuka) ou códigos lado a lado (tamanhos do balão)
+        foto = a_esquerda[cods[0]]["rect"]
+        # 1 código só: só com foto GRANDE (Tuka, ~300pt); item pequeno com
+        # 1 código ao lado (Neo págs. 37-76) já casava certo pelo desenho normal
+        if (len(pts) == 1 and foto.height >= 150) or any(abs(a[1] - b[1]) < 8 and abs(a[0] - b[0]) > 30
+                                for i, a in enumerate(pts) for b in pts[i + 1:]):
+            lado_a_lado.add(gid)
+    a_esquerda = {k: v for k, v in a_esquerda.items() if id(v) in lado_a_lado}
+    # página de UM código com a foto grande ao lado (Tuka págs. 174-176,
+    # Teste 10: cards de 1 produto saíam sem foto) também vale
+    if valid_skus and len(a_esquerda) >= 0.6 * len(valid_skus) and (
+            len(a_esquerda) >= 2 or len(valid_skus) == 1):
+        return a_esquerda
+    return {}
+
+
 def _match_via_grid(
     doc: fitz.Document,
     page: fitz.Page,
@@ -2054,6 +2177,35 @@ def _match_via_grid(
     # A FASE 1.6 so faz sentido no layout classico (foto em cima, legenda
     # embaixo). Num catalogo medido como "foto abaixo do codigo" ela casaria
     # justamente o enfeite que fica acima do codigo.
+    # Camada de uma foto: imagem que cobre outra quase inteira, com quase o
+    # mesmo tamanho (sombra/moldura desenhada junto da foto). É a MESMA foto —
+    # vale a camada com conteúdo (GIRA Decoração pág. 36, Teste 10: o GC0248
+    # pegava a sombra e saía um quadro preto; a foto dos 3 cubos é dele também).
+    _conteudo_cache: Dict[int, float] = {}
+
+    def _conteudo(img):
+        x = img.get("xref")
+        if x not in _conteudo_cache:
+            try:
+                _conteudo_cache[x] = float(_decode_xref_rgb(doc, x).std())
+            except Exception:
+                _conteudo_cache[x] = -1.0
+        return _conteudo_cache[x]
+    foto_da_camada: Dict[int, Dict] = {}
+    # página com dezenas de imagens (FORTAL: centenas "fantasma") não é o
+    # caso de 2 camadas de uma foto — não compara par a par
+    for a in (page_imgs if len(page_imgs) <= 40 else []):
+        for b in page_imgs:
+            ra, rb = a.get("rect"), b.get("rect")
+            if a is b or ra is None or rb is None or rb.width * rb.height <= 0:
+                continue
+            inter = ra & rb
+            if (not inter.is_empty and inter.width * inter.height >= 0.9 * rb.width * rb.height
+                    and ra.width * ra.height <= 1.25 * rb.width * rb.height
+                    and ra.width * ra.height > rb.width * rb.height):
+                foto = a if _conteudo(a) >= _conteudo(b) else b
+                foto_da_camada[id(a)] = foto
+                foto_da_camada[id(b)] = foto
     for sku in (valid_skus if orientacao == "acima" else []):
         sku_code = sku.get("sku", "UNKNOWN")
         sku_x, sku_y = sku["spatialContext"]["x"], sku["spatialContext"]["y"]
@@ -2068,14 +2220,24 @@ def _match_via_grid(
             if 0 <= gap <= 30.0 and rect.x0 <= sku_x <= rect.x1 and gap < melhor_gap:
                 melhor_gap, melhor = gap, img
         if melhor is not None:
-            pre_matched[sku_code] = melhor
+            foto = foto_da_camada.get(id(melhor))
+            pre_matched[sku_code] = foto if foto is not None else melhor
             used_img_ids.add(id(melhor))
             print(f"    [ColMatch] {sku_code}: foto grande logo acima da legenda (gap={melhor_gap:.1f}pt)")
 
     # Grade de fotos de cor ao lado da lista de códigos (ver `_variantes_em_grade`)
     if orientacao != "abaixo":
+        # sem grade nas imagens filtradas, tenta as de ANTES do filtro: miniatura
+        # de cor encosta nas vizinhas e caía como "selo" (Neo pág. 61, Teste
+        # 10: sem a preta e a branca a grade 10×10 não fechava e os 10 balões
+        # saíam com a foto do azul-claro). A grade exige o mesmo número de
+        # fotos e de códigos, então selo de verdade não entra.
         livres = [i for i in page_imgs if id(i) not in used_img_ids]
         grade = _variantes_em_grade([s for s in valid_skus if s.get("sku") not in pre_matched], livres)
+        usadas_grade = {id(i) for i in grade.values()}
+        livres = [i for i in raw_page_imgs if id(i) not in used_img_ids and id(i) not in usadas_grade]
+        grade.update(_variantes_em_grade(
+            [s for s in valid_skus if s.get("sku") not in pre_matched and s.get("sku") not in grade], livres))
         for sku_code, img in grade.items():
             pre_matched[sku_code] = img
             used_img_ids.add(id(img))
@@ -2088,86 +2250,19 @@ def _match_via_grid(
         if grade:
             print(f"    [ColMatch] {len(grade)} código(s) casados por ordem com a grade de fotos de cor")
 
-    # FOTO À ESQUERDA na mesma faixa (Neo Festas 29/09/2026, balões págs.
-    # 57-64): card = foto à esquerda + título e vários códigos à direita.
-    # A coluna de códigos do card da esquerda fica MAIS PERTO da foto do card
-    # da direita que da própria → os dois cards da linha trocavam de foto.
-    # Só vale se for o desenho da PÁGINA (>=60% dos códigos com uma foto à
-    # esquerda cobrindo a altura do código).
-    a_esquerda: Dict[str, Dict] = {}
-    # catálogo medido como "foto ABAIXO do código" (PETRIN: código no alto do
-    # card e várias fotos de variação embaixo/à direita) — fica de fora
-    for sku in (valid_skus if orientacao != "abaixo" else []):
-        if sku.get("sku") in pre_matched:
-            continue
-        sx, sy = sku["spatialContext"]["x"], sku["spatialContext"]["y"]
-        # foto COLADA acima ou abaixo do código (Lila, PETRIN): o desenho é o
-        # clássico e a regra "ao lado" trocava fotos certas — não se aplica
-        if any(
-            img.get("rect") is not None and img["rect"].x0 - 20 <= sx <= img["rect"].x1 + 20
-            and (0 <= sy - img["rect"].y1 <= 60 or 0 <= img["rect"].y0 - sy <= 60)
-            for img in page_imgs
-        ):
-            continue
-        # ao lado: à esquerda (Neo balões) ou à direita (Tuka 29/09/2026,
-        # cards alternados — texto à esquerda e foto à direita)
-        cands = [
-            img for img in page_imgs
-            if img.get("rect") is not None and id(img) not in used_img_ids
-            # o código fica DENTRO da faixa da foto, não na borda de cima
-            # (PETRIN: código no alto do card, na altura do topo da foto do
-            # vizinho — 0%; balões 55-80%, Tuka 16-42%)
-            and img["rect"].y0 + 0.10 * img["rect"].height <= sy <= img["rect"].y1 + 6
-            and ((img["rect"].x1 <= sx and sx - img["rect"].x1 <= 250)
-                 or (img["rect"].x0 >= sx and img["rect"].x0 - sx <= 250))
-        ]
-        # Foto que tem OUTRO código colado embaixo (dentro da largura dela) é
-        # a foto desse código no desenho clássico (Lila 29/09/2026: a foto do
-        # LH605 desce até a linha do LH383, ao lado — trocava as duas)
-        cands = [
-            img for img in cands
-            if not any(
-                o is not sku and o.get("sku") != sku.get("sku")
-                and img["rect"].x0 - 5 <= o["spatialContext"]["x"] <= img["rect"].x1 + 5
-                and abs(o["spatialContext"]["y"] - img["rect"].y1) <= 90
-                for o in valid_skus
-            )
-        ]
-        # foto dos DOIS lados (códigos do card da esquerda, entre a própria
-        # foto e a do card vizinho): vale a da esquerda — a foto vem antes
-        # do texto na leitura
-        if len(cands) > 1:
-            esquerdas = [img for img in cands if img["rect"].x1 <= sx]
-            direitas = [img for img in cands if img["rect"].x0 >= sx]
-            if len(esquerdas) == 1 and len(direitas) == len(cands) - 1:
-                cands = esquerdas
-        # UMA foto só na faixa: card com várias fotos lado a lado (as cores
-        # de uma sacola, Neo pág. 79) tem uma foto por código — não se aplica
-        if len(cands) == 1:
-            a_esquerda[sku.get("sku")] = cands[0]
-    # Os códigos do card ficam LADO A LADO na mesma linha (os tamanhos do
-    # balão: 5" 12cm | 10" 25cm | 18" 45cm). Lista empilhada de códigos
-    # (cores do festão, pág. 23) tem foto por código — não se aplica.
+    a_esquerda = _fotos_ao_lado(page_imgs, valid_skus, orientacao, used_img_ids, pre_matched)
     pos = {s.get("sku"): (s["spatialContext"]["x"], s["spatialContext"]["y"]) for s in valid_skus}
-    grupos: Dict[int, list] = {}
-    for sku_code, img in a_esquerda.items():
-        grupos.setdefault(id(img), []).append(sku_code)
-    lado_a_lado = set()
-    for gid, cods in grupos.items():
-        pts = [pos[c] for c in cods if c in pos]
-        # 1 código por foto (Tuka) ou códigos lado a lado (tamanhos do balão)
-        foto = a_esquerda[cods[0]]["rect"]
-        # 1 código só: só com foto GRANDE (Tuka, ~300pt); item pequeno com
-        # 1 código ao lado (Neo págs. 37-76) já casava certo pelo desenho normal
-        if (len(pts) == 1 and foto.height >= 150) or any(abs(a[1] - b[1]) < 8 and abs(a[0] - b[0]) > 30
-                                for i, a in enumerate(pts) for b in pts[i + 1:]):
-            lado_a_lado.add(gid)
-    a_esquerda = {k: v for k, v in a_esquerda.items() if id(v) in lado_a_lado}
-    if valid_skus and len(a_esquerda) >= 0.6 * len(valid_skus) and len(a_esquerda) >= 2:
+    if a_esquerda:
         for sku_code, img in a_esquerda.items():
             pre_matched[sku_code] = img
             used_img_ids.add(id(img))
         print(f"    [ColMatch] {len(a_esquerda)} código(s) com a foto à esquerda na mesma faixa")
+
+    fatias = _fatias_por_codigos_empilhados(
+        doc, page_imgs, [s for s in valid_skus if s.get("sku") not in pre_matched], used_img_ids)
+    if fatias:
+        pre_matched.update(fatias)
+        print(f"    [ColMatch] {len(fatias)} código(s) com a sua fatia de uma imagem de fotos empilhadas")
 
     # ═══════════════════════════════════════════════════════
     # FASE 2: Descobrir colunas via clustering de X (SKUs + Imagens)
@@ -2230,6 +2325,9 @@ def _match_via_grid(
     # reservado pra legenda-abaixo-da-foto-grande).
     # Mapa: sku_code → imagem matched (para variantes pegarem a mesma)
     variant_cache: Dict[str, Dict] = {}
+    # altura do código-base: variante em OUTRO card da página tem foto própria
+    # (Goal pág. 97: GK0173-0, 216pt abaixo do GK0173, saía com as 2 bolas dele)
+    variant_y: Dict[str, float] = {}
     # (coluna, x, y, imagem) de cada código já casado nesta página
     casados_pagina: List[Tuple[int, float, float, Dict]] = []
     coluna_da_imagem = {id(img): c for c, imgs in col_imgs.items() for img in imgs}
@@ -2250,6 +2348,7 @@ def _match_via_grid(
             if sku_code in pre_matched:
                 best_img = pre_matched[sku_code]
                 variant_cache[base] = best_img
+                variant_y[base] = sku_y
                 img_arr = _extract_perfect_image(doc, best_img, raster, width, height, scale)
                 if img_arr is not None and img_arr.size > 0:
                     filepath = _save_image(img_arr, sku_code, output_folder)
@@ -2260,7 +2359,7 @@ def _match_via_grid(
 
             # FAST-PATH para variantes: se o base já recebeu uma imagem na página,
             # reaproveita a mesma imagem para a variante (ex: NX445-A,-P,-V)
-            if base != sku_code and base in variant_cache:
+            if base != sku_code and base in variant_cache and abs(sku_y - variant_y.get(base, sku_y)) <= 80:
                 cached = variant_cache[base]
                 img_arr_var = _extract_perfect_image(doc, cached, raster, width, height, scale)
                 if img_arr_var is not None and img_arr_var.size > 0:
@@ -2395,6 +2494,7 @@ def _match_via_grid(
 
             used_img_ids.add(id(best_img))
             variant_cache[base] = best_img
+            variant_y[base] = sku_y
             casados_pagina.append((col_idx, sku_x, sku_y, best_img))
 
             # Verificar variações (múltiplas imagens agrupadas no mesmo Y)
@@ -2423,6 +2523,28 @@ def _match_via_grid(
                 matches.append(_make_match(sku, page_num, filepath, match_type))
             else:
                 unmatched.append({"sku": sku_code, "page": page_num, "reason": "extract_failed"})
+
+    # Código sem foto colado (mesma coluna, ≤25pt) a outro código JÁ com foto:
+    # é a lista de tamanhos do mesmo card e divide a foto (Lila pág. 25,
+    # Teste 10: "CÓD 2M / CÓD 1.6M" do TRIPÉ MOBILE — o 2M saía sem foto)
+    arquivo_de = {m["sku"]: m["local_path"] for m in matches}
+    restantes = []
+    for u in unmatched:
+        cod = u.get("sku")
+        xy = pos.get(cod)
+        irmaos = [c for c in arquivo_de if c in pos and xy
+                  and abs(pos[c][0] - xy[0]) < 15 and abs(pos[c][1] - xy[1]) <= 25]
+        if u.get("reason") == "no_img_in_col" and len(irmaos) == 1:
+            destino = os.path.join(output_folder, f"{_nome_arquivo_do_codigo(cod)}.jpg")
+            try:
+                shutil.copyfile(arquivo_de[irmaos[0]], destino)
+                sku = next(s for s in valid_skus if s.get("sku") == cod)
+                matches.append(_make_match(sku, page_num, destino, "variant_share"))
+                continue
+            except Exception:
+                pass
+        restantes.append(u)
+    unmatched = restantes
 
     print(f"  [ColMatch] Resultado: {len(matches)} matches | {len(unmatched)} unmatched")
     return matches, unmatched
@@ -2515,6 +2637,17 @@ def _match_via_embedded(
     chosen_by_sku: Dict[int, Dict] = {}
     used_sku_idx: set = set()
     used_img_idx: set = set()
+    # foto ao lado do texto do card (mesma regra do caminho de grade): reserva
+    # antes do guloso por distância (Tuka pág. 93, Teste 10: o 1410M-3 ficava
+    # com a foto do card de cima e o VTK-66-4481-80U sem foto)
+    ao_lado = _fotos_ao_lado(page_imgs, valid_skus, orientacao, set(), {})
+    for si, sku in enumerate(valid_skus):
+        img = ao_lado.get(sku.get("sku"))
+        if img is not None:
+            pi = next(i for i, x in enumerate(page_imgs) if x is img)
+            chosen_by_sku[si] = {"img": img, "score": 0.0}
+            used_sku_idx.add(si)
+            used_img_idx.add(pi)
     for _ordem, si, pi, s in pairs:
         if si in used_sku_idx or pi in used_img_idx:
             continue
@@ -2727,6 +2860,74 @@ def _decode_with_white_bg(decoded: np.ndarray, doc: fitz.Document, smask_xref: i
 # Extração padrão-ouro: doc.extract_image com fallback raster
 # ─────────────────────────────────────────────────────────────
 
+def _decode_xref_rgb(doc: fitz.Document, xref: int) -> np.ndarray:
+    """Arquivo da imagem (xref) decodificado em RGB com fundo branco."""
+    img_data = doc.extract_image(xref)
+    arr = np.frombuffer(img_data["image"], dtype=np.uint8)
+    decoded = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
+    if decoded is None or decoded.size == 0:
+        raise ValueError("imagem vazia")
+    return _decode_with_white_bg(decoded, doc, img_data.get("smask", 0))
+
+
+def _fatias_por_codigos_empilhados(doc: fitz.Document, page_imgs: List[Dict], valid_skus: list,
+                                   usadas: set) -> Dict[str, Dict]:
+    """UMA imagem com várias fotos empilhadas e um código ao lado de cada
+    foto (GIRA Papelaria pág. 9, Teste 10: as caixas TP2088/TP2089/TP2090 são
+    um arquivo só; a 1ª e a 3ª saíam sem foto e a do meio com as 3). Fatia na
+    altura de cada código, só onde a imagem tem um VÃO de verdade (linhas de
+    cor única) perto do meio entre dois códigos — foto contínua com a lista
+    de cores ao lado (festão da Neo) não tem vão e fica inteira."""
+    saida: Dict[str, Dict] = {}
+    for img in page_imgs:
+        r = img.get("rect")
+        if r is None or id(img) in usadas or img.get("xref") is None or r.height < 120:
+            continue
+        ao_lado = [
+            s for s in valid_skus
+            if r.y0 <= s["spatialContext"]["y"] <= r.y1
+            and (0 <= s["spatialContext"]["x"] - r.x1 <= 80
+                 or 0 <= r.x0 - (s["spatialContext"]["x"] + s["spatialContext"].get("width", 0)) <= 80)
+        ]
+        if len(ao_lado) < 2:
+            continue
+        xs = [s["spatialContext"]["x"] for s in ao_lado]
+        if max(xs) - min(xs) > 20:
+            continue
+        ao_lado.sort(key=lambda s: s["spatialContext"]["y"])
+        ys = [s["spatialContext"]["y"] for s in ao_lado]
+        if min(b - a for a, b in zip(ys, ys[1:])) < 30:
+            continue
+        try:
+            rgb = _decode_xref_rgb(doc, img["xref"])
+        except Exception:
+            continue
+        cinza = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY).astype(np.float32)
+        h = cinza.shape[0]
+        desvio = cinza.std(axis=1)
+        cortes = [0.0]
+        for a, b in zip(ys, ys[1:]):
+            meio = ((a + b) / 2 - r.y0) / r.height
+            folga = 0.25 * (b - a) / r.height
+            lo, hi = int(max(0.0, meio - folga) * h), int(min(1.0, meio + folga) * h)
+            if hi <= lo:
+                break
+            janela = desvio[lo:hi]
+            k = int(np.argmin(janela))
+            if janela[k] > 6:  # nenhuma linha lisa: não é vão entre fotos
+                break
+            cortes.append((lo + k) / h)
+        else:
+            cortes.append(1.0)
+            for s, y0f, y1f in zip(ao_lado, cortes, cortes[1:]):
+                fat = dict(img)
+                fat["fatia"] = (y0f, y1f)
+                fat["rect"] = fitz.Rect(r.x0, r.y0 + y0f * r.height, r.x1, r.y0 + y1f * r.height)
+                saida[s.get("sku")] = fat
+            usadas.add(id(img))
+    return saida
+
+
 def _extract_perfect_image(
     doc: fitz.Document,
     img_info: Dict,
@@ -2759,6 +2960,17 @@ def _extract_perfect_image(
 
     if img_info.get("tiles"):
         return _crop_raster_at_pdf_rect(rect, raster, width, height, scale)
+
+    # Fatia de uma imagem que junta várias fotos empilhadas (ver
+    # _fatias_por_codigos_empilhados): recorta as linhas do arquivo original
+    if img_info.get("fatia"):
+        y0f, y1f = img_info["fatia"]
+        try:
+            rgb = _decode_xref_rgb(doc, img_info["xref"])
+            h = rgb.shape[0]
+            return rgb[int(y0f * h):max(int(y0f * h) + 1, int(y1f * h))]
+        except Exception:
+            return _crop_raster_at_pdf_rect(rect, raster, width, height, scale)
 
     # Foto recortada pelo PDF: o arquivo tem mais do que aparece (4 coletes,
     # aparece 1) — vai direto pro recorte da parte visível.
@@ -3095,11 +3307,40 @@ def _icones_pela_amostra(doc: fitz.Document, page_imgs: List[Dict]) -> set:
     if not amostra:
         return set()
     xref_pages, digest_pages = amostra
+    pequenas = [img for img in page_imgs
+                if not img.get("tiles") and max(img["rect"].width, img["rect"].height) < 80]
+
+    # Grade de miniaturas de COR (4+ do mesmo tamanho na página: as bolinhas
+    # dos balões da Neo, que se repetem entre as páginas de balão) não é ícone
+    # — sem isso, no catálogo inteiro as cores sumiam e todos os códigos do
+    # card ficavam com a mesma foto (Neo pág. 61, Teste 10)
+    def em_grade(img):
+        w, h = img["rect"].width, img["rect"].height
+        iguais = [o for o in pequenas
+                  if abs(o["rect"].width - w) <= 0.15 * w and abs(o["rect"].height - h) <= 0.15 * h]
+        # bloco CONTÍNUO de miniaturas encostadas (a grade de cores do card),
+        # não ícones espalhados pela página
+        bloco, fila = [img], [img]
+        while fila:
+            a = fila.pop()
+            for o in iguais:
+                if o in bloco:
+                    continue
+                ra, ro = a["rect"], o["rect"]
+                if (max(ra.x0, ro.x0) - min(ra.x1, ro.x1) <= 4
+                        and max(ra.y0, ro.y0) - min(ra.y1, ro.y1) <= 4):
+                    bloco.append(o)
+                    fila.append(o)
+        # cores = conteúdos DIFERENTES; o ícone "CX C/6" repetido em cada card
+        # (DAGIA) é o mesmo conteúdo várias vezes
+        distintas = {o.get("digest") or o.get("xref") for o in bloco}
+        return len(bloco) >= 4 and len(distintas) >= 4
+
     return {
-        id(img) for img in page_imgs
-        if not img.get("tiles") and max(img["rect"].width, img["rect"].height) < 80
-        and (len(xref_pages.get(img["xref"], ())) >= 2
-             or (img.get("digest") and len(digest_pages.get(img["digest"], ())) >= 2))
+        id(img) for img in pequenas
+        if (len(xref_pages.get(img["xref"], ())) >= 2
+            or (img.get("digest") and len(digest_pages.get(img["digest"], ())) >= 2))
+        and not em_grade(img)
     }
 
 
