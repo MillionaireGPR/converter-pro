@@ -4547,13 +4547,30 @@ def _agrupar_por_pagina(produtos: list, n_paginas: int) -> Dict[int, list]:
     return por
 
 
+def _pacote_que_casa(preco: float, trechos: List[str]) -> Optional[float]:
+    """Primeiro "R$ V" dos trechos com V = preço × k e o k escrito no mesmo
+    trecho (k de 2 a 1000)."""
+    for trecho in trechos:
+        for m in _RS_VALOR_RE.finditer(trecho):
+            v = _valor_br(m.group(1))
+            k = round(v / preco)
+            if 2 <= k <= 1000 and abs(v - preco * k) <= 0.006 * k and re.search(_numero_rx(k), trecho):
+                return v
+    return None
+
+
 def _preco_do_pacote_impresso(pdf_path: str, produtos: list) -> list:
-    """Preço que NÃO está impresso na página, mas que vezes N dá o PRIMEIRO
-    preço do bloco do produto, com o N escrito no bloco → vale o impresso.
+    """Preço que NÃO está impresso na página, mas que vezes N dá um preço
+    impresso perto do código, com o N escrito ao lado → vale o impresso.
     A IA dividia o preço do pacote pela quantidade (Neo Teste 10: FITILHO
     "R$ 4,89 Pct. c/10 rolos" saía 0,49; FOLHA METALIZADA "R$ 21,12 Cart."
     com "25 folhas" saía 0,84; ARRANJO "R$ 24,87 c/03 un." saía 8,29). O
-    cliente vende pelo pacote impresso."""
+    cliente vende pelo pacote impresso.
+    Onde procurar, nessa ordem (Neo Teste 11: 30 preços de pacote divididos):
+    1. a linha do código ("110x160cm | R$ 353,52 c/12un | 124761");
+    2. o bloco do código, do preço mais perto para o mais longe;
+    3. a página, linha a linha ("R$ 2,98 c/10 un." acima da grade de
+       códigos das varetas da pág. 72)."""
     textos = _textos_por_pagina(pdf_path)
     if not textos:
         return produtos
@@ -4564,6 +4581,7 @@ def _preco_do_pacote_impresso(pdf_path: str, produtos: list) -> list:
         if not impressos:
             continue
         antes, depois, lado = _blocos_dos_codigos(texto, lista)
+        linhas = texto.split("\n")
         for p in lista:
             try:
                 preco = float(p.get("preco") or 0)
@@ -4571,13 +4589,21 @@ def _preco_do_pacote_impresso(pdf_path: str, produtos: list) -> list:
                 continue
             if preco <= 0 or id(p) not in antes or any(abs(v - preco) < 0.006 for v in impressos):
                 continue
+            cod = str(p.get("codigo") or "").strip()
+            rx_cod = re.compile(rf"(?<![\dA-Za-z]){re.escape(cod)}(?![\dA-Za-z])") if cod else None
+            da_linha = [ln for ln in linhas if rx_cod is not None and rx_cod.search(ln)]
             bloco = antes[id(p)] if lado == "antes" else depois[id(p)]
-            m = _RS_VALOR_RE.search(bloco)
-            if not m:
-                continue
-            v = _valor_br(m.group(1))
-            k = round(v / preco)
-            if 2 <= k <= 1000 and abs(v - preco * k) <= 0.006 * k and re.search(_numero_rx(k), bloco):
+            # do preço mais perto do código para o mais longe
+            partes = [ln for ln in bloco.split("\n") if ln.strip()]
+            if lado == "antes":
+                partes.reverse()
+            v = (_pacote_que_casa(preco, da_linha)
+                 or _pacote_que_casa(preco, partes)
+                 or _pacote_que_casa(preco, [bloco]))
+            if v is None:
+                achados = {x for x in (_pacote_que_casa(preco, [ln]) for ln in linhas) if x}
+                v = achados.pop() if len(achados) == 1 else None
+            if v is not None:
                 p["preco"] = v
                 mudou += 1
     if mudou:
@@ -4763,17 +4789,22 @@ def _reler_paginas_com_codigo_orfao(pdf_path: str, produtos: list, supplier: str
 _MARCADOR_NO_NOME_RE = re.compile(r"\s*\*{3}\s*(AGUARDANDO[^*]*|EM BREVE|ESGOTADO)\s*\*{3}", re.I)
 
 
+_SELOS_DE_TEXTO = ("ESGOTADO", "EM BREVE", "AGUARDANDO")
+
+
 def _marcador_de_selo_do_vizinho(pdf_path: str, produtos: list) -> list:
-    """Selo impresso como TEXTO ("AGUARDANDO REPOSIÇÃO") é do cartão cujo
-    código fica mais perto dele. Na ordem do texto ele cai depois do último
-    produto da página e a leitura o dava a esse produto (BM36 pág. 111, Teste
-    11: BM363056 e BM363057 saíram ***AGUARDANDO*** com o selo em cima do
-    WC411111 e do WC411119). Medido: o selo fica ~5pt acima do código do
-    próprio cartão. Só tira o marcador quando a página tem o selo em texto e
-    ele é de outro código; selo em imagem não é tocado."""
-    marcados = [p for p in produtos if _MARCADOR_NO_NOME_RE.search(str(p.get("nome") or ""))]
-    if not marcados:
-        return produtos
+    """Selo impresso como TEXTO (ESGOTADO, EM BREVE, AGUARDANDO REPOSIÇÃO) é
+    do cartão cujo código fica mais perto dele. Na ordem do texto o selo cai
+    longe do cartão e a leitura o dava ao vizinho:
+    - BM36 pág. 111 (Teste 11): BM363056/57 ***AGUARDANDO*** com o selo em
+      cima do WC411111 e do WC411119;
+    - Neo (Teste 11): 161 ESGOTADO saíam na exportação; 141283, 145467 e
+      156566 saíam ***EM BREVE*** pela tarja ESGOTADO do vizinho. Medido:
+      162/162 tarjas com o dono certo pelo código mais perto.
+    Dono de ESGOTADO → `esgotado` (a exportação tira). EM BREVE marcado pela
+    leitura, com preço, numa página que tem selo em texto mas nenhum dele →
+    não é EM BREVE. Marcador ***X*** no nome sem o selo X → sai do nome.
+    Página sem selo em texto (selo em imagem: Petrin, DUTE) não é tocada."""
     try:
         doc = fitz.open(pdf_path)
     except Exception:
@@ -4784,41 +4815,54 @@ def _marcador_de_selo_do_vizinho(pdf_path: str, produtos: list) -> list:
             por_pagina.setdefault(int(p.get("paginaOrigem") or 0), []).append(p)
         except (TypeError, ValueError):
             continue
-    tirados = []
+    esgotados, tirados = [], []
     try:
-        for pn in sorted({int(p.get("paginaOrigem") or 0) for p in marcados if str(p.get("paginaOrigem") or "").isdigit()}):
+        for pn, prods in sorted(por_pagina.items()):
             if not 1 <= pn <= len(doc):
                 continue
             page = doc[pn - 1]
+            selos = {s: page.search_for(s) for s in _SELOS_DE_TEXTO}
+            if not any(selos.values()):
+                continue
             centros = {}
-            for p in por_pagina.get(pn, []):
+            for p in prods:
                 cod = str(p.get("codigo") or "").strip()
                 achados = page.search_for(cod) if cod else []
                 if achados:
                     r = achados[0]
                     centros[cod] = ((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2)
-            for p in por_pagina.get(pn, []):
-                m = _MARCADOR_NO_NOME_RE.search(str(p.get("nome") or ""))
-                cod = str(p.get("codigo") or "").strip()
-                if not m or cod not in centros:
-                    continue
-                palavra = m.group(1).split()[0]
-                selos = page.search_for(palavra)
-                if not selos:
-                    continue
-                donos = set()
-                for r in selos:
+            if not centros:
+                continue
+            donos: Dict[str, set] = {}
+            for s, rects in selos.items():
+                for r in rects:
                     cx, cy = (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2
-                    donos.add(min(centros, key=lambda c: abs(centros[c][0] - cx) + abs(centros[c][1] - cy)))
-                if cod not in donos:
-                    p["nome"] = _MARCADOR_NO_NOME_RE.sub("", str(p["nome"])).strip()
-                    if palavra.upper() == "EM":
-                        p["emBreve"] = False
+                    dono = min(centros, key=lambda c: abs(centros[c][0] - cx) + abs(centros[c][1] - cy))
+                    donos.setdefault(s, set()).add(dono)
+            for p in prods:
+                cod = str(p.get("codigo") or "").strip()
+                if cod not in centros:
+                    continue
+                if cod in donos.get("ESGOTADO", ()):
+                    p["esgotado"] = True
+                    p["emBreve"] = False
+                    esgotados.append(cod)
+                    continue
+                if p.get("emBreve") and p.get("preco") and cod not in donos.get("EM BREVE", ()):
+                    p["emBreve"] = False
                     tirados.append(cod)
+                m = _MARCADOR_NO_NOME_RE.search(str(p.get("nome") or ""))
+                if m:
+                    selo = next((s for s in _SELOS_DE_TEXTO if m.group(1).upper().startswith(s)), None)
+                    if selo and selos.get(selo) and cod not in donos.get(selo, ()):
+                        p["nome"] = _MARCADOR_NO_NOME_RE.sub("", str(p["nome"])).strip()
+                        tirados.append(cod)
     finally:
         doc.close()
+    if esgotados:
+        print(f"[Selo] {len(esgotados)} produto(s) com tarja ESGOTADO em texto → fora da exportação")
     if tirados:
-        print(f"[Selo] marcador de selo do vizinho tirado de {len(tirados)}: {', '.join(tirados[:10])}")
+        print(f"[Selo] selo do vizinho tirado de {len(tirados)}: {', '.join(tirados[:10])}")
     return produtos
 
 
