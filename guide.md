@@ -2044,6 +2044,17 @@ conferir que o "antes" bate com as fotos gravadas no job de produção.
   TP2135/GU0144 (2 linhas com o mesmo código — a foto é por código).
 - Testes: `test_rodada_1210_fotos.py`.
 
+### 14.44 MOMENT — caixa inner e master lado a lado (16/10/2026)
+
+Pedido da Michelle (via Josef): ver as duas caixas sem abrir o Jaweb. Quando a
+planilha tem a coluna inner (`Qtd Caixa inner`/`ini`/`Qtd Cai Inn`...) **com
+número** e a coluna da caixa cheia (`Qtd Caixa`/`Qtd Cai`), a família Clink grava
+`quantidadeCaixaMaster` e o export escreve em Informações adicionais:
+`Cx inner c/ 12 unidades | Cx master c/ 96 unidades` (sem o "CX: 12" antigo).
+O múltiplo continua a inner. Inner "NÃO POSSUI CX INNER" → só `Cx c/ N unidades`
+(master), como antes. Clink/Flash não têm inner → não mudam. Teste:
+`src/core/supplierRules/moment-inner-master.test.ts` (planilha → pipeline → Mercos).
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por

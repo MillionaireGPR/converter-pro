@@ -72,6 +72,7 @@ medindo com A/B sem API sobre os jobs do Teste 9 já gravados no servidor.
 
 ## Diário
 
+- **16/10/2026** — MOMENT: caixa inner e master lado a lado em Informações adicionais (pedido da Michelle). guide.md §14.44.
 - **13/10/2026 (tarde)** — Fotos do Teste 10 (#183) com A/B no catálogo inteiro; deploy
   conferido. Segurança: 84 → 3 alertas (#184). Arquivos de teste do scratchpad apagados
   (disco cheio); PDFs dos jobs podem ser baixados de novo do servidor até ~02/11.

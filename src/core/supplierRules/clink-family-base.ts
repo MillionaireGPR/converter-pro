@@ -892,6 +892,18 @@ export function extractClinkFamily(
       if (outerQtd > 0) quantidadeCaixa = outerQtd;
     }
 
+    // Caixa master ao lado da inner (pedido da Michelle, 16/10/2026): só quando
+    // a planilha tem as DUAS colunas com número. Clink/Flash não têm inner.
+    let quantidadeCaixaMaster: number | undefined;
+    const chaveInner = Object.keys(campos).find(k => /^(qtd)?(caixa|cai|cx)(inner|inn|ini)$/.test(norm(k)));
+    if (chaveInner !== undefined && toNum(campos[chaveInner]) > 0) {
+      const outerAliases = ['qtdcaixa', 'qtd caixa', 'qtd cai', 'qtdcai', 'quantidade caixa', 'qtde caixa', 'caixa', 'cx', 'master'];
+      for (const alias of outerAliases) {
+        const k = Object.keys(campos).find(c => norm(c) === norm(alias));
+        if (k !== undefined && toNum(campos[k]) > 0) { quantidadeCaixaMaster = toNum(campos[k]); break; }
+      }
+    }
+
     if (!quantidadeCaixa || quantidadeCaixa <= 0) {
       const qtdExtraida = extractCaixa(`${descricao} ${descricaoComplementar} ${allValues}`);
       if (qtdExtraida) {
@@ -932,7 +944,9 @@ export function extractClinkFamily(
     // === INFORMAÇÕES ADICIONAIS ===
     const observacoes = toStr(findValue(campos, fa.observacoes));
     const informacoesAdicionais = buildInformacoesAdicionais(
-      quantidadeCaixa,
+      // Com inner + master o texto "Cx inner c/ N | Cx master c/ M" já sai no
+      // export; "CX: N" ao lado confundiria qual caixa é.
+      quantidadeCaixaMaster ? undefined : quantidadeCaixa,
       multiplo,
       visualCategory,
       observacoes,
@@ -987,6 +1001,7 @@ export function extractClinkFamily(
       priceSource: descontoAutomatico > 0 ? 'precoFinal' : 'preco',
       unidade: 'UN',
       quantidadeCaixa,
+      quantidadeCaixaMaster,
       multiplo,
       ncm,
       ipi,
