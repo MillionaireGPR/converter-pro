@@ -2593,7 +2593,9 @@ def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str
                     prod["preco"] = _norm_price(fm.group(1), fmt)
             if rx_qtd:
                 fm = rx_qtd.search(blk)
-                if fm and fm.groups():
+                # grupo opcional que não casou vem None (DUTE 13/10/2026: o
+                # TypeError derrubava o template e a conversão inteira)
+                if fm and fm.groups() and fm.group(1) is not None:
                     try:
                         prod["quantidadeCaixa"] = int(re.sub(r"\D", "", fm.group(1)) or 0) or None
                     except ValueError:
@@ -4804,7 +4806,15 @@ def _extract_with_fallback_impl(pdf_path: str, supplier: str = "", client_rules:
             print("[Gemini] vision-chunked não achou produtos → segue cadeia normal")
         if size_mb > LARGE_CATALOG_MB or n_pages > LARGE_CATALOG_PAGES:
             print(f"[Gemini] Catálogo grande ({size_mb:.0f}MB, {n_pages} págs) → v33 TEMPLATE-synth (fallback text-chunked)")
-            tpl_result = extract_via_template(pdf_path, supplier, client_rules)
+            # Erro no template NÃO pode cair na visão do PDF inteiro: catálogo
+            # grande ali sempre dá "400 invalid argument" (DUTE 13/10/2026,
+            # Teste 11: o QTD opcional do template dava TypeError e a
+            # conversão saía sem planilha). Segue para o text-chunked.
+            try:
+                tpl_result = extract_via_template(pdf_path, supplier, client_rules)
+            except Exception as e:  # noqa: BLE001
+                print(f"[Gemini] template falhou ({e}) → AI-first text-chunked")
+                tpl_result = None
             if tpl_result and tpl_result.get("success"):
                 return tpl_result
             print("[Gemini] template não atingiu cobertura → AI-first text-chunked")

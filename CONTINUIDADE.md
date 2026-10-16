@@ -52,6 +52,13 @@
 
 ## Pendências
 
+**Teste 11 (16/10/2026)** — laudo em `ENVIO-GABRIEL-TESTE11` (zip no Drive). Feito: DUTE sem planilha.
+Falta: BM36 575 sumidos + PROM50%/AGUARDANDO + 439890; Neo ESGOTADO (161), preço/caixa do pacote,
+***CORES*** só com mais de uma cor, nomes por bolinha, fotos (págs. 33, 41, 74, 85, 90, 91); Levivan
+(EM BREVE, preços, nomes, duplicados); Dagia/Petrin/BM36 marcador de promoção; Goal 16 sumidos;
+Folia nomes + JRF-50.0451; VAESO cor no nome; FORTAL JDG-60*90, 5085, JZ-2516; GIRA TP2135/GU0144/TP1792;
+Tuka 11-18336-22, 88H-24046-32, VTK-66-4231-80U.
+
 **Esperando o Gabriel / Josef**
 - Josef: reconverter GIRA (4), Goal, Tuka, FORTAL, Lila, Neo, DUTE, DAGIA, FOLIA (2) e BM36 e conferir.
 - Josef: como separar BM36 × World Classic (o código 439890 não tem prefixo).
@@ -76,6 +83,8 @@ medindo com A/B sem API sobre os jobs do Teste 9 já gravados no servidor.
 
 ## Diário
 
+- **16/10/2026 (tarde)** — Fotos da Neo no ar (#186). Teste 11 baixado do Drive (zip na pasta
+  CATALOGOS FORNECEDORES). DUTE sem planilha: template quebrava com QTD vazio → corrigido (guide.md §14.46).
 - **16/10/2026** — Neo: fotos casadas pela moldura do cartão (cor da bolinha, peças por cor,
   emenda de estampas). A/B sem API: Neo 30 → 0 sem foto; outros 15 catálogos sem mudança. guide.md §14.45.
   Drive "CATALOGOS FORNECEDORES": nada novo do Josef até hoje (pedido o link).
