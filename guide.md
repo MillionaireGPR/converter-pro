@@ -2077,6 +2077,19 @@ Resultado no catálogo inteiro: 182 dos 223 itens do Josef mudaram, sem foto 30�
 as ~180 mudanças fora da lista foram conferidas uma a uma (foto inteira no lugar
 de pedaço, ou a cor certa). Teste: `test_neo_moldura.py`.
 
+### 14.46 DUTE sem planilha — template quebrado (16/10/2026)
+
+Teste 11: o catálogo DUTE de 13/10 não gerava planilha e o zip saía com 50
+`igo.jpg` iguais. Causa: o template sintetizado tinha o QTD com grupo opcional;
+quando não casava, `fm.group(1)` era `None` e o `TypeError` subia até o
+roteamento de `_extract_with_fallback_impl`, que caía na visão do PDF inteiro
+(57 MB → "400 invalid argument" em todos os modelos).
+
+- `_apply_template`: grupo do QTD vazio é ignorado.
+- Catálogo grande: erro no template segue para o text-chunked, nunca para a
+  visão do PDF inteiro.
+- Testes: `test_rodada_1610.py`.
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
