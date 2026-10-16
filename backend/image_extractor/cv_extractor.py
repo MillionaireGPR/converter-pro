@@ -153,6 +153,30 @@ def extract_cells_via_cv(
         if not grade_de_cards:
             page_imgs = _costurar_tiles(page_imgs)
 
+        # Cartão com moldura (Neo Festas, Teste 10): o código fica à direita da
+        # moldura da foto do seu cartão — decide antes de qualquer estratégia
+        # por distância (grade ou embedded) e só o resto segue pra elas.
+        pm_moldura: List[Dict] = []
+        if not grade_de_cards:
+            com_xy = [s for s in page_skus
+                      if (s.get("spatialContext") or {}).get("x") is not None
+                      and (s.get("spatialContext") or {}).get("y") is not None]
+            por_moldura = _casar_por_moldura(doc, page, raster, scale,
+                                             _descartar_selos(page_imgs, "Moldura"), page_imgs, com_xy)
+            for sku in com_xy:
+                img = por_moldura.get(sku.get("sku"))
+                if img is None:
+                    continue
+                arr = _extract_perfect_image(doc, img, raster, width, height, scale)
+                if arr is not None and arr.size > 0:
+                    pm_moldura.append(_make_match(sku, page_num, _save_image(arr, sku.get("sku"), output_folder), "moldura"))
+            if pm_moldura:
+                feitos = {m["sku"] for m in pm_moldura}
+                page_skus = [s for s in page_skus if s.get("sku") not in feitos]
+                usadas = {id(i) for i in por_moldura.values()}
+                page_imgs = [i for i in page_imgs if id(i) not in usadas]
+                print(f"    [Moldura] Pág {page_num}: {len(pm_moldura)} código(s) casados pela moldura do cartão")
+
         pct = int((page_idx + 1) / total_pages * 100)
         print(f"[CV] [{page_idx+1}/{total_pages} {pct}%] Pág {page_num}: {n_interior_v} V-int | {len(page_imgs)} imgs", end="")
 
@@ -172,6 +196,7 @@ def extract_cells_via_cv(
             pm, pu = _match_via_embedded(doc, raster, page_skus, page_imgs,
                                          scale, output_folder, page_num,
                                          orientacao=orientacao)
+        pm = pm_moldura + pm
 
         # ─── v24: GEMINI VISION PICKER memory-safe (substitui heurística) ───
         # Quando use_ai_picker=True (opção "IA escolhe a foto" no cadastro do
@@ -2046,6 +2071,401 @@ def _fotos_ao_lado(page_imgs: List[Dict], valid_skus: list, orientacao: str,
     return {}
 
 
+def _molduras_com_foto(page: fitz.Page, imgs: List[Dict], desenhos: list) -> List[fitz.Rect]:
+    """Molduras desenhadas em volta da foto de cada cartão (Neo Festas:
+    retângulo de cantos arredondados, ~106pt, com a foto dentro e o texto à
+    direita). Só conta moldura que contém pelo menos uma imagem."""
+    largura = page.rect.width
+    molduras: List[fitz.Rect] = []
+    for g in desenhos:
+        r = fitz.Rect(g["rect"])
+        if (g.get("color") is None or len(g.get("items") or []) < 4
+                or r.width < 60 or r.height < 60 or r.width > 0.6 * largura):
+            continue
+        if any(abs(r.x0 - m.x0) < 3 and abs(r.y0 - m.y0) < 3 and abs(r.x1 - m.x1) < 3 and abs(r.y1 - m.y1) < 3
+               for m in molduras):
+            continue
+        if any(i.get("rect") is not None and i["rect"].get_area() > 0
+               and ((i["rect"] & r).get_area() >= 0.5 * i["rect"].get_area()
+                    # imagem maior recortada pela moldura (bandeirinhas
+                    # giradas da pág. 52)
+                    or (i["rect"] & r).get_area() >= 0.3 * r.get_area()) for i in imgs):
+            molduras.append(r)
+    return molduras
+
+
+def _cor_lab(rgb: Optional[np.ndarray]) -> Optional[np.ndarray]:
+    """Cor (Lab, mediana) do que não é fundo branco; None se vazia."""
+    if rgb is None or rgb.size == 0:
+        return None
+    px = rgb.reshape(-1, 3).astype(np.float32)
+    objeto = px[(px < 225).any(axis=1)]
+    if len(objeto) < 0.03 * len(px):
+        objeto = px
+    lab = cv2.cvtColor((objeto / 255.0).reshape(-1, 1, 3), cv2.COLOR_RGB2LAB).reshape(-1, 3)
+    # objeto colorido: a cor é a dos pixels mais saturados (pisca-pisca da
+    # pág. 32: os fios pretos dominavam a mediana e o rosa virava preto)
+    croma = np.hypot(lab[:, 1], lab[:, 2])
+    corte = np.percentile(croma, 75)
+    if corte > 15:
+        return lab[croma >= corte].mean(axis=0)
+    return np.median(lab, axis=0)
+
+
+def _menor_custo(custo: List[List[float]]) -> List[int]:
+    """Atribuição de menor custo total (método húngaro), linhas ≤ colunas.
+    Devolve a coluna de cada linha. Escolher sempre o par mais barato
+    primeiro errava o resto (pág. 61: a bolinha azul pegava o balão
+    azul-claro e sobrava o azul pro azul-claro)."""
+    n, m = len(custo), len(custo[0])
+    INF = float("inf")
+    u, v = [0.0] * (n + 1), [0.0] * (m + 1)
+    p, way = [0] * (m + 1), [0] * (m + 1)
+    for i in range(1, n + 1):
+        p[0] = i
+        j0 = 0
+        minv = [INF] * (m + 1)
+        usado = [False] * (m + 1)
+        while True:
+            usado[j0] = True
+            i0, delta, j1 = p[j0], INF, 0
+            for j in range(1, m + 1):
+                if not usado[j]:
+                    cur = custo[i0 - 1][j - 1] - u[i0] - v[j]
+                    if cur < minv[j]:
+                        minv[j], way[j] = cur, j0
+                    if minv[j] < delta:
+                        delta, j1 = minv[j], j
+            for j in range(m + 1):
+                if usado[j]:
+                    u[p[j]] += delta
+                    v[j] -= delta
+                else:
+                    minv[j] -= delta
+            j0 = j1
+            if p[j0] == 0:
+                break
+        while True:
+            j1 = way[j0]
+            p[j0] = p[j1]
+            j0 = j1
+            if j0 == 0:
+                break
+    linha_col = [0] * n
+    for j in range(1, m + 1):
+        if p[j]:
+            linha_col[p[j] - 1] = j - 1
+    return linha_col
+
+
+def _distancia_de_cor(a: np.ndarray, b: np.ndarray) -> float:
+    """Duas cores vivas comparam pelo matiz (a foto do pisca-pisca roxo da
+    pág. 32 é bem menos saturada que a bolinha roxa e, pela distância comum,
+    ficava mais perto da bolinha rosa); as demais pela distância Lab."""
+    ca, cb = float(np.hypot(a[1], a[2])), float(np.hypot(b[1], b[2]))
+    if ca > 15 and cb > 15:
+        ang = abs(np.degrees(np.arctan2(a[2], a[1]) - np.arctan2(b[2], b[1]))) % 360
+        # claridade e saturação pesam: azul-claro × azul (balões da pág. 61)
+        # têm o mesmo matiz
+        return float(min(ang, 360 - ang) + 0.8 * abs(a[0] - b[0]) + 0.8 * abs(ca - cb))
+    return float(np.linalg.norm(a - b))
+
+
+def _bolinha_de_cor(desenhos: list, cod_rect: fitz.Rect) -> Optional[np.ndarray]:
+    """Bolinha de cor do código (Lab): círculo de 5-20pt logo à esquerda do
+    código na mesma linha ou logo acima dele (Neo Festas)."""
+    melhor, melhor_d = None, 99.0
+    meio_y = (cod_rect.y0 + cod_rect.y1) / 2
+    for g in desenhos:
+        r = fitz.Rect(g["rect"])
+        if not (5 <= r.width <= 20 and 5 <= r.height <= 20 and abs(r.width - r.height) <= 2):
+            continue
+        # círculo = só curvas (o triângulo de alerta "220V" da pág. 32,
+        # amarelo e colado no código, não é bolinha de cor)
+        itens = g.get("items") or []
+        if not itens or any(it[0] != "c" for it in itens):
+            continue
+        cx = (r.x0 + r.x1) / 2
+        # a bolinha de cima encosta no código (Neo pág. 12: -0,5pt)
+        ao_lado = abs((r.y0 + r.y1) / 2 - meio_y) <= 5 and -2 <= cod_rect.x0 - r.x1 <= 12
+        acima = -3 <= cod_rect.y0 - r.y1 <= 14 and cod_rect.x0 - 6 <= cx <= cod_rect.x1 + 6
+        if not (ao_lado or acima):
+            continue
+        d = (cod_rect.x0 - r.x1) if ao_lado else (cod_rect.y0 - r.y1)
+        fill = g.get("fill")
+        if fill is None:
+            fill = (1.0, 1.0, 1.0)
+        if d >= melhor_d or len(fill) != 3:
+            continue
+        melhor_d = d
+        melhor = cv2.cvtColor(np.array([[fill]], dtype=np.float32), cv2.COLOR_RGB2LAB).reshape(3)
+    return melhor
+
+
+def _pecas_da_foto(rgb: Optional[np.ndarray]) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """Objetos separados por fundo branco numa foto (pó colorido da pág. 47:
+    4 pacotes numa imagem; fitilhos da pág. 70: 4 carretéis). Devolve
+    (recorte com os outros objetos apagados, cor Lab) de cada peça, só as de
+    tamanho parecido com a maior (≥25% da área) — texto e enfeite pequeno
+    ficam de fora."""
+    if rgb is None or rgb.size == 0 or rgb.ndim != 3:
+        return []
+    h, w = rgb.shape[:2]
+    mascara = (rgb < 230).any(axis=2).astype(np.uint8)
+    k = max(1, int(0.01 * max(h, w)))
+    mascara = cv2.morphologyEx(mascara, cv2.MORPH_CLOSE, np.ones((k, k), np.uint8))
+    n, rotulos, stats, _ = cv2.connectedComponentsWithStats(mascara, connectivity=8)
+    comps = [i for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] >= 0.02 * h * w]
+    if not comps:
+        return []
+    maior = max(stats[i, cv2.CC_STAT_AREA] for i in comps)
+    pecas = []
+    for i in comps:
+        if stats[i, cv2.CC_STAT_AREA] < 0.25 * maior:
+            continue
+        x, y = stats[i, cv2.CC_STAT_LEFT], stats[i, cv2.CC_STAT_TOP]
+        ww, hh = stats[i, cv2.CC_STAT_WIDTH], stats[i, cv2.CC_STAT_HEIGHT]
+        x0, y0 = max(0, x - 3), max(0, y - 3)
+        x1, y1 = min(w, x + ww + 3), min(h, y + hh + 3)
+        recorte = rgb[y0:y1, x0:x1].copy()
+        rot = rotulos[y0:y1, x0:x1]
+        recorte[(rot != i) & (rot != 0)] = 255
+        cor = _cor_lab(rgb[rotulos == i].reshape(-1, 1, 3))
+        if cor is not None:
+            pecas.append((recorte, cor, float(stats[i, cv2.CC_STAT_AREA]), ww / max(hh, 1)))
+    return pecas
+
+
+def _emenda_no_meio(rgb: Optional[np.ndarray]) -> Optional[int]:
+    """Linha (pixel) da emenda entre duas fotos empilhadas, se existir: a
+    maior mudança entre linhas vizinhas, entre 40% e 60% da altura, ao menos
+    4× a mudança típica da imagem, numa imagem quase sem fundo branco."""
+    if rgb is None or rgb.ndim != 3 or rgb.shape[0] < 20:
+        return None
+    # só estampa de ponta a ponta: produto em fundo branco (bandeira de 2
+    # tamanhos, garrafa) não é foto empilhada
+    if float((rgb > 235).all(axis=2).mean()) > 0.08:
+        return None
+    dif = np.abs(np.diff(rgb.astype(np.float32), axis=0)).mean(axis=(1, 2))
+    h = rgb.shape[0]
+    a, b = int(0.4 * h), int(0.6 * h)
+    if b <= a:
+        return None
+    meio = a + int(np.argmax(dif[a:b]))
+    tipico = float(np.median(dif)) + 1e-3
+    return meio + 1 if dif[meio] >= 4 * tipico and dif[meio] >= 15 else None
+
+
+def _casar_por_moldura(doc: fitz.Document, page: fitz.Page, raster: np.ndarray, scale: float,
+                       page_imgs: List[Dict], raw_imgs: List[Dict], valid_skus: list) -> Dict[str, Dict]:
+    """Foto pelo cartão (Neo Festas, Teste 10: ~190 fotos). Cada código fica
+    à direita da moldura da foto do seu cartão, na altura dela. Pela
+    distância, o código pegava a foto do cartão VIZINHO quando ela ficava
+    mais perto (palitos da pág. 84 com as conchas, balão translúcido da pág.
+    70 com os fitilhos). Dentro do cartão:
+    - 1 código: a foto do cartão;
+    - códigos com bolinha de cor e uma foto por cor: a foto de cor mais
+      parecida com a bolinha (colares, saias, balões, cortinas);
+    - mesmo número de códigos e fotos, sem bolinha: ordem de leitura;
+    - senão: todos com a foto inteira do cartão (fumaça, tubetes, sacos).
+    Só liga quando ≥80% dos códigos da página têm moldura à esquerda."""
+    try:
+        desenhos = page.get_drawings()
+    except Exception:
+        return {}
+    # todas as imagens do PDF (sem os filtros de tamanho): as latas de spray da
+    # pág. 49 (17×55pt) caem no filtro de imagem pequena e a moldura ficava vazia
+    largura, altura = page.rect.width, page.rect.height
+    do_pdf = []
+    for info in page.get_image_info(xrefs=True):
+        r = fitz.Rect(info["bbox"])
+        if (info.get("xref") and min(r.width, r.height) >= 8
+                and not (r.width > 0.85 * largura and r.height > 0.85 * altura)):
+            do_pdf.append({"xref": info["xref"], "rect": r, "cx": (r.x0 + r.x1) / 2,
+                           "cy": (r.y0 + r.y1) / 2, "area": r.get_area()})
+    molduras = _molduras_com_foto(page, raw_imgs + do_pdf, desenhos)
+    if len(molduras) < 2:
+        return {}
+    palavras = page.get_text("words")
+    retangulo: Dict[str, fitz.Rect] = {}
+    for s in valid_skus:
+        x, y = s["spatialContext"]["x"], s["spatialContext"]["y"]
+        cod = str(s.get("sku"))
+        achados = [fitz.Rect(w[:4]) for w in palavras
+                   if cod in w[4] and abs((w[1] + w[3]) / 2 - y) <= 6 and w[0] - 2 <= x <= w[2] + 2]
+        retangulo[cod] = achados[0] if achados else fitz.Rect(x - 12, y - 4, x + 12, y + 4)
+    dono: Dict[int, list] = {}
+    for s in valid_skus:
+        r = retangulo[s.get("sku")]
+        cy = (r.y0 + r.y1) / 2
+        cand = [k for k, m in enumerate(molduras)
+                if m.y0 - 6 <= cy <= m.y1 + 6 and m.x1 <= r.x0 + 2 and r.x0 - m.x1 <= 220]
+        if not cand:
+            # texto do cartão que desce além da foto (tubetes da pág. 92: código
+            # 6pt abaixo da moldura): a moldura logo acima, até 18pt
+            cand = [k for k, m in enumerate(molduras)
+                    if m.y1 < cy <= m.y1 + 18 and m.x1 <= r.x0 + 2 and r.x0 - m.x1 <= 220]
+        if cand:
+            dono.setdefault(max(cand, key=lambda k: molduras[k].x1), []).append(s)
+    if sum(len(v) for v in dono.values()) < 0.8 * len(valid_skus):
+        return {}
+    height, width = raster.shape[:2]
+    saida: Dict[str, Dict] = {}
+    for k, skus in dono.items():
+        m = molduras[k]
+
+        def na_moldura(lista):
+            return [i for i in lista if i.get("rect") is not None and i["rect"].get_area() > 0
+                    and (i["rect"] & m).get_area() >= 0.5 * i["rect"].get_area()]
+
+        brutas = na_moldura(raw_imgs) or na_moldura(do_pdf)
+        if not brutas:
+            # só imagens maiores recortadas pela moldura: a foto é o que
+            # aparece dentro dela
+            dentro_m = fitz.Rect(m.x0 + 2, m.y0 + 2, m.x1 - 2, m.y1 - 2)
+            arr = _crop_raster_at_pdf_rect(dentro_m, raster, width, height, scale)
+            if arr is not None and arr.size > 0:
+                f = {"rect": dentro_m, "pronta": arr, "cx": (m.x0 + m.x1) / 2,
+                     "cy": (m.y0 + m.y1) / 2, "area": dentro_m.get_area(), "xref": 0}
+                for s in skus:
+                    saida[s.get("sku")] = f
+            continue
+        # fotos do cartão: as de tamanho de foto (≥20% da maior). Sem o filtro
+        # de selo: máscaras sobrepostas (pág. 41) caíam como selo e a foto
+        # inteira saía com uma máscara só.
+        maior = max(i["rect"].get_area() for i in brutas)
+        fotos = [i for i in brutas if i["rect"].get_area() >= 0.2 * maior]
+        # círculo de zoom (detalhe dentro de um círculo desenhado, págs. 10 e
+        # 90) não entra: a foto é a do produto inteiro
+        zoom = [fitz.Rect(g["rect"]) for g in desenhos
+                if g.get("color") is not None and 20 <= g["rect"].width <= 70
+                and abs(g["rect"].width - g["rect"].height) <= 3 and fitz.Rect(g["rect"]) in m]
+
+        def sem_zoom(lista):
+            return [i for i in lista
+                    if not any((i["rect"] & z).get_area() >= 0.6 * i["rect"].get_area() for z in zoom)] or lista
+
+        fotos = sem_zoom(fotos)
+        dentro = fotos
+
+        def foto_inteira():
+            if len(dentro) == 1:
+                return dentro[0]
+            arr = _crop_composition_masked(dentro, raster, width, height, scale, page=page)
+            if arr is None or arr.size == 0:
+                return None
+            uniao = fitz.Rect(dentro[0]["rect"])
+            for i in dentro[1:]:
+                uniao |= i["rect"]
+            return {"rect": uniao, "pronta": arr, "cx": (uniao.x0 + uniao.x1) / 2,
+                    "cy": (uniao.y0 + uniao.y1) / 2, "area": uniao.get_area(), "xref": 0}
+
+        if len(skus) == 1:
+            f = foto_inteira()
+            if f is not None:
+                saida[skus[0].get("sku")] = f
+            continue
+
+        cores = {s.get("sku"): _bolinha_de_cor(desenhos, retangulo[s.get("sku")]) for s in skus}
+        com_cor = [s for s in skus if cores[s.get("sku")] is not None]
+        # foto costurada de fatias (pág. 12: 3 flores de cor encostadas viraram
+        # uma) entra pelas fatias, cada uma de uma cor
+        de_cor = [t for i in fotos for t in (i["tiles"] if i.get("tiles") and not i.get("montar") else [i])]
+        de_cor = sem_zoom(de_cor)
+        maior_cor = max(i["rect"].get_area() for i in de_cor)
+        de_cor = [i for i in de_cor if i["rect"].get_area() >= 0.2 * maior_cor]
+        # fotos de cor têm tamanho parecido; foto do produto + acessório
+        # (controle remoto da pág. 33) não é uma foto por cor
+        areas = [i["rect"].get_area() for i in de_cor]
+        parecidas = len(de_cor) >= 2 and max(areas) <= 2.5 * min(areas)
+        # uma foto com vários objetos de cor (pacotes, carretéis, cortinas):
+        # cada código fica com o objeto da cor da sua bolinha
+        if len(com_cor) >= 2 and not (parecidas and len(de_cor) >= len(com_cor)):
+            pecas = [pc for i in de_cor for pc in _pecas_da_foto(
+                _extract_perfect_image(doc, i, raster, width, height, scale))]
+            # variantes de cor têm o mesmo formato e tamanho; produto + estaca
+            # (luz solar da pág. 32), + controle (pág. 33), tubo + confete
+            # (pág. 91) ou cortina + círculo de zoom (pág. 90) não se separam
+            if pecas:
+                areas = [pc[2] for pc in pecas]
+                formas = [pc[3] for pc in pecas]
+                if max(areas) > 3 * min(areas) or max(formas) > 1.6 * min(formas):
+                    pecas = []
+            if len(pecas) >= len(com_cor):
+                custo = [[_distancia_de_cor(cores[s.get("sku")], pc[1]) for pc in pecas] for s in com_cor]
+                uniao = fitz.Rect(de_cor[0]["rect"])
+                for i in de_cor[1:]:
+                    uniao |= i["rect"]
+                for si, pi in enumerate(_menor_custo(custo)):
+                    saida[com_cor[si].get("sku")] = {
+                        "rect": uniao, "pronta": pecas[pi][0], "cx": (uniao.x0 + uniao.x1) / 2,
+                        "cy": (uniao.y0 + uniao.y1) / 2, "area": uniao.get_area(), "xref": 0}
+                sem = [s for s in skus if s.get("sku") not in saida]
+                f = foto_inteira() if sem else None
+                for s in sem:
+                    if f is not None:
+                        saida[s.get("sku")] = f
+                continue
+        if parecidas and len(com_cor) >= 2:
+            # menos fotos que cores (pág. 32: 3 cores, 2 fotos): só casa foto e
+            # cor que são a melhor escolha uma da outra; a cor sem foto fica
+            # com a foto inteira
+            parcial = len(de_cor) < len(com_cor)
+            fotos = de_cor
+            # cor pela própria imagem do PDF: fotos sobrepostas (lança-confete da
+            # pág. 92) traziam o confete do vizinho no recorte da página
+            cor_foto = [_cor_lab(_extract_perfect_image(doc, i, raster, width, height, scale))
+                        for i in fotos]
+            pares = sorted(
+                (_distancia_de_cor(cores[s.get("sku")], cf), si, fi)
+                for si, s in enumerate(com_cor) for fi, cf in enumerate(cor_foto) if cf is not None)
+            if parcial:
+                melhor_s, melhor_f = {}, {}
+                for _d, si, fi in pares:
+                    melhor_s.setdefault(si, fi)
+                    melhor_f.setdefault(fi, si)
+                for si, fi in melhor_s.items():
+                    if melhor_f.get(fi) == si:
+                        saida[com_cor[si].get("sku")] = fotos[fi]
+            elif all(cf is not None for cf in cor_foto):
+                custo = [[_distancia_de_cor(cores[s.get("sku")], cf) for cf in cor_foto] for s in com_cor]
+                for si, fi in enumerate(_menor_custo(custo)):
+                    saida[com_cor[si].get("sku")] = fotos[fi]
+            sem = [s for s in skus if s.get("sku") not in saida]
+            f = foto_inteira() if sem else None
+            for s in sem:
+                if f is not None:
+                    saida[s.get("sku")] = f
+            continue
+        # 2 estampas empilhadas numa imagem só e os 2 códigos lado a lado
+        # (JOGOS AMERICANOS da pág. 89): a de cima é do código da esquerda.
+        # Só corta com emenda nítida no meio (mudança brusca entre linhas).
+        if len(skus) == 2 and len(fotos) == 1 and not com_cor:
+            r0, r1 = retangulo[skus[0].get("sku")], retangulo[skus[1].get("sku")]
+            if abs((r0.y0 + r0.y1) / 2 - (r1.y0 + r1.y1) / 2) <= 4:
+                rgb = _extract_perfect_image(doc, fotos[0], raster, width, height, scale)
+                corte = _emenda_no_meio(rgb)
+                if corte:
+                    esq, dir_ = sorted(skus, key=lambda s: retangulo[s.get("sku")].x0)
+                    r = fotos[0]["rect"]
+                    for s, parte in ((esq, rgb[:corte]), (dir_, rgb[corte:])):
+                        saida[s.get("sku")] = {"rect": r, "pronta": parte, "cx": fotos[0]["cx"],
+                                               "cy": fotos[0]["cy"], "area": r.get_area(), "xref": 0}
+                    continue
+        if len(fotos) == len(skus) and not com_cor:
+            alt = min(i["rect"].height for i in fotos) / 2
+            ordem_f = _ordem_de_leitura(fotos, lambda i: (i["cx"], i["cy"]), alt)
+            ordem_s = _ordem_de_leitura(skus, lambda s: (s["spatialContext"]["x"], s["spatialContext"]["y"]), 15.0)
+            for s, i in zip(ordem_s, ordem_f):
+                saida[s.get("sku")] = i
+            continue
+        f = foto_inteira()
+        if f is not None:
+            for s in skus:
+                saida[s.get("sku")] = f
+    return saida
+
+
 def _match_via_grid(
     doc: fitz.Document,
     page: fitz.Page,
@@ -2209,6 +2629,8 @@ def _match_via_grid(
     for sku in (valid_skus if orientacao == "acima" else []):
         sku_code = sku.get("sku", "UNKNOWN")
         sku_x, sku_y = sku["spatialContext"]["x"], sku["spatialContext"]["y"]
+        if sku_code in pre_matched:
+            continue
         melhor, melhor_gap = None, float("inf")
         for img in page_imgs:
             if id(img) in used_img_ids:
@@ -2948,6 +3370,10 @@ def _extract_perfect_image(
     Retorna numpy array RGB ou None se ambos falharem.
     """
     rect = img_info["rect"]
+
+    # Recorte já montado (foto inteira de um cartão com várias imagens)
+    if img_info.get("pronta") is not None:
+        return img_info["pronta"]
 
     # Foto fatiada pelo exportador do PDF (ver _costurar_tiles): nenhum xref
     # sozinho contem a foto inteira, entao recorta o raster na uniao das

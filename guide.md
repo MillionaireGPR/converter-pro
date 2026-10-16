@@ -2055,6 +2055,28 @@ O múltiplo continua a inner. Inner "NÃO POSSUI CX INNER" → só `Cx c/ N unid
 (master), como antes. Clink/Flash não têm inner → não mudam. Teste:
 `src/core/supplierRules/moment-inner-master.test.ts` (planilha → pipeline → Mercos).
 
+### 14.45 Neo — foto pela moldura do cartão (16/10/2026)
+
+Pendência do Teste 10 (fotos da Neo). Cada cartão da Neo tem a foto dentro de
+uma moldura desenhada (~106pt) e o texto à direita; medido: 2238 de 2254 códigos
+têm a moldura à esquerda, na altura deles. Pela distância o código pegava a foto
+do cartão vizinho. `_casar_por_moldura` (roda antes de grade/embedded, só quando
+≥80% dos códigos da página têm moldura — nos outros 15 catálogos não liga):
+- 1 código: a foto inteira do cartão (todas as imagens dele; antes saía um pedaço).
+- vários códigos com bolinha de cor (círculo de 5-20pt ao lado/acima do código):
+  foto de cor ↔ bolinha pela menor soma de distâncias (método húngaro; a escolha
+  gulosa trocava azul-claro × azul). Cor comparada pelo matiz + claridade +
+  saturação; cor da foto = pixels mais saturados da imagem do PDF.
+- uma foto com vários objetos de cor do mesmo formato (pó colorido, carretéis,
+  cortinas): separa os objetos pelo fundo branco e casa por cor.
+- mesmo número de fotos e códigos sem bolinha: ordem de leitura.
+- 2 estampas empilhadas e 2 códigos lado a lado (jogos americanos): corta na emenda.
+- senão: todos com a foto inteira (fumaça, tubetes, sacos).
+Fora: círculo de zoom, triângulo "220V", produto + acessório (controle, estaca).
+Resultado no catálogo inteiro: 182 dos 223 itens do Josef mudaram, sem foto 30→0;
+as ~180 mudanças fora da lista foram conferidas uma a uma (foto inteira no lugar
+de pedaço, ou a cor certa). Teste: `test_neo_moldura.py`.
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
