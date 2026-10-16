@@ -1037,6 +1037,7 @@ const normalizeExtracted = (
       ncm: e.ncm,
       unidade: e.unidade || 'UN',
       quantidadeCaixa: e.quantidadeCaixa || 1,
+      quantidadeCaixaMaster: e.quantidadeCaixaMaster,
       embalagem: e.embalagem,
       dimensoes: e.dimensoes,
       material: e.material,

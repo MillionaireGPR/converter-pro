@@ -102,6 +102,9 @@ export interface ProdutoExtraido {
   camposMercos?: Record<string, string | number>;
   unidade?: string;
   quantidadeCaixa?: number;
+  /** Caixa master quando o fornecedor também tem caixa inner (MOMENT): o
+   *  múltiplo é a inner (quantidadeCaixa); a master vai só para o texto. */
+  quantidadeCaixaMaster?: number;
   embalagem?: string;
   ncm?: string;
   ipi?: number;
@@ -148,6 +151,7 @@ export interface ProdutoNormalizadoV2 {
   ncm?: string;
   unidade: string;
   quantidadeCaixa: number;
+  quantidadeCaixaMaster?: number;
   embalagem?: string;
   dimensoes?: string;
   material?: string;
