@@ -330,10 +330,13 @@ SUPPLIER_HINTS: Dict[str, str] = {
     "BM36": (
         "DICAS ESPECÍFICAS DO FORNECEDOR BM36 (e WORD CLASSIC):\n"
         "- nome: linha de descrição em CAIXA ALTA (ex: 'LUMINARIA LED GLOBO 8CM').\n"
-        "- código: o valor de 'CD: BM######' ou 'CD: WC######'. O OUTRO 'CD:' com 13 "
+        "- código: o valor de 'CD: BM...' ou 'CD: WC...' com TODOS os dígitos (6 ou 7: "
+        "'WC4010003', 'BM361552'), com o sufixo se houver ('BM363056-c/refil'); alguns "
+        "são só número ('CD: 439890') e saem assim. O OUTRO 'CD:' com 13 "
         "dígitos é o EAN/código de barras (vai em ncm/codigoBarras), NUNCA o código.\n"
         "- preço: padrão 'B<n1>B<n2>' (ex: 'B3600B4320'). Use o PRIMEIRO número (n1) "
-        "em CENTAVOS → divida por 100: 'B3600B4320'→36.00.\n"
+        "em CENTAVOS → divida por 100: 'B3600B4320'→36.00, 'B2250B2700'→22.50, "
+        "'B990B1188'→9.90 (n1 pode ter 3 dígitos).\n"
         "- quantidadeCaixa: 'CX: N'."
     ),
     "NEO FESTAS": (
@@ -2453,7 +2456,16 @@ def _apply_template(page_texts: List[str], tpl: Dict[str, str]) -> List[Dict[str
             if qm and re.match(r"[A-Za-z]", qm.group(0)):
                 continue
             fim = mm.end()
-            sm = _SUFIXO_CODIGO_RE.match(txt, mm.end(1) if mm.groups() else mm.end())
+            fim_cod = mm.end(1) if mm.groups() else mm.end()
+            # CODE com nº fixo de dígitos corta o código mais comprido
+            # (BM36 Teste 11: "WC\d{6}" lia WC4010003 como WC401000 — linha
+            # fantasma e o produto certo sumia). Dígito colado = mesmo código.
+            dm = re.match(r"\d+", txt[fim_cod:fim_cod + 12]) if codigo[-1:].isdigit() else None
+            if dm:
+                codigo = codigo.strip() + dm.group(0)
+                fim_cod += len(dm.group(0))
+                fim = max(fim, fim_cod)
+            sm = _SUFIXO_CODIGO_RE.match(txt, fim_cod)
             if sm and sm.group(0):
                 codigo = codigo.strip() + sm.group(0)
                 sufixos[mm.start()] = (sm.start(), sm.end())
@@ -2664,6 +2676,67 @@ def _template_desalinhado(page_texts: List[str], tpl: Dict[str, str],
     return None
 
 
+def _paginas_com_preco_perdido(page_texts: List[str], tpl: Dict[str, str],
+                               produtos: List[Dict[str, Any]]) -> set:
+    """Páginas com produto que o PRECO do template não leu, mas com preço
+    impresso no bloco dele. O PRECO sintetizado na amostra é estreito para as
+    variantes do resto do catálogo (Teste 11: Goal "Preço: 48,34" sem o R$,
+    16 sumidos; BM36 "B990" com 3 dígitos, 9,90). Com 1 de 4 produtos sem
+    preço a página passava da régua de 60% e o produto sumia calado.
+    Releitura por IA (pagefix) só dessas páginas."""
+    rx_largo = None
+    if tpl.get("PRECO") not in (None, "", "NONE"):
+        try:
+            rx_largo = re.compile(re.sub(r"\\d\{\d+(?:,\d*)?\}", r"\\d+", tpl["PRECO"]), re.M)
+        except re.error:
+            rx_largo = None
+    preco_br = re.compile(r"\d+,\d{2}(?!\d)")
+    por_pagina: Dict[int, List[Dict[str, Any]]] = {}
+    for p in produtos:
+        try:
+            por_pagina.setdefault(int(p.get("paginaOrigem") or 0), []).append(p)
+        except (TypeError, ValueError):
+            continue
+    paginas = set()
+    for pg, prods in por_pagina.items():
+        if not 1 <= pg <= len(page_texts) or all(p.get("preco") for p in prods):
+            continue
+        txt = page_texts[pg - 1]
+        pos = sorted(i for i in (txt.find(str(p.get("codigo") or "")) for p in prods if p.get("codigo")) if i >= 0)
+        for p in prods:
+            if p.get("preco"):
+                continue
+            ini = txt.find(str(p.get("codigo") or ""))
+            if ini < 0:
+                continue
+            fim = next((i for i in pos if i > ini), len(txt))
+            bloco = txt[ini:fim]
+            if preco_br.search(bloco) or (rx_largo is not None and rx_largo.search(bloco)):
+                paginas.add(pg)
+                break
+    return paginas
+
+
+def _codigos_fora_do_template(page_texts: List[str], tpl: Dict[str, str],
+                              produtos: List[Dict[str, Any]]) -> Optional[str]:
+    """O CODE sintetizado pode ser estreito demais e o produto some sem aviso
+    (BM36 Teste 11, 16/10/2026: "CD: BM + 6 dígitos" deixava de fora os 557 WC
+    da World Classic). A caixa ("CX: 50") sai uma vez por produto: muito mais
+    caixas que códigos lidos = códigos que o template não enxerga. Medido nos
+    templates guardados no servidor: caixas/códigos de 0,55 a 1,00 nos
+    catálogos certos; 1,89 na BM36 que perdeu os WC."""
+    q = tpl.get("QTD")
+    if not q or q == "NONE" or not produtos:
+        return None
+    try:
+        caixas = sum(len(re.findall(q, t, re.M)) for t in page_texts)
+    except re.error:
+        return None
+    if caixas >= 1.2 * len(produtos) and caixas - len(produtos) >= 10:
+        return f"{caixas} caixas para {len(produtos)} códigos (CODE do template estreito demais)"
+    return None
+
+
 def extract_via_template(pdf_path: str, supplier: str = "", client_rules: str = "") -> Optional[Dict[str, Any]]:
     """
     Caminho RÁPIDO: IA infere template de amostra, código aplica em todas as
@@ -2757,7 +2830,7 @@ def extract_via_template(pdf_path: str, supplier: str = "", client_rules: str = 
     if cov_code < TEMPLATE_MIN_COVERAGE:
         print(f"[Template] código válido {cov_code:.0%} < {TEMPLATE_MIN_COVERAGE:.0%} → fallback AI-first (CODE regex inferido errado)")
         return None
-    motivo = _template_desalinhado(page_texts, tpl, deduped)
+    motivo = _template_desalinhado(page_texts, tpl, deduped) or _codigos_fora_do_template(page_texts, tpl, produtos)
     if motivo:
         print(f"[Template] {motivo} → fallback AI-first")
         return None
@@ -2794,6 +2867,7 @@ def extract_via_template(pdf_path: str, supplier: str = "", client_rules: str = 
             st[1] += 1
     bad_pages = sorted([pg for pg, (tot, ok) in page_stats.items()
                         if pg >= 1 and tot >= 2 and (ok / tot) < 0.6])
+    bad_pages = sorted(set(bad_pages) | _paginas_com_preco_perdido(page_texts, tpl, deduped))
     fallback_used = 0
     if bad_pages and len(bad_pages) <= len(page_stats):  # nunca o catálogo inteiro
         print(f"[Template] {len(bad_pages)} páginas abaixo de 60% preço → fallback IA por página")
@@ -2851,11 +2925,27 @@ def extract_via_template(pdf_path: str, supplier: str = "", client_rules: str = 
     }
 
 
+_PREFIXO_PROMO_RE = re.compile(r"^\s*\(PROM?\s*\d{1,3}\s*%\)\s*", re.I)
+
+
+def _prefixo_promocional_no_nome(produtos: list) -> list:
+    """"(PROM50%)COLHER CAFÉ..." / "(PRO50%)ENF.TORRE...": o prefixo é a
+    marca de promoção da BM36 impressa no nome. Sai do nome e o produto vira
+    promocional (***PROMOCAO***). Teste 11: BM361601 e BM362043 saíam com o
+    prefixo e sem o marcador."""
+    for p in produtos:
+        nome = str(p.get("nome") or "")
+        if _PREFIXO_PROMO_RE.match(nome):
+            p["nome"] = _PREFIXO_PROMO_RE.sub("", nome, count=1).strip()
+            p["promocional"] = True
+    return produtos
+
+
 _PREFIXED_CODE_RE = re.compile(r"^([A-Z]{1,4})(-?)(\d{3,})$")
 _NUMERIC_CODE_RE = re.compile(r"^\d{3,}$")
 
 
-def _fix_missing_code_prefix(produtos: list) -> list:
+def _fix_missing_code_prefix(produtos: list, pdf_path: Optional[str] = None) -> list:
     """Completa o prefixo de letras que a IA às vezes tira do código
     (Goal Kids: "GK1234" saía "1234" — reunião 22/07/2026).
 
@@ -2881,9 +2971,20 @@ def _fix_missing_code_prefix(produtos: list) -> list:
         return produtos
     separador = Counter(sep for sep, _ in amostras).most_common(1)[0][0]
     digitos = Counter(n for _, n in amostras).most_common(1)[0][0]
+    # Código só-número IMPRESSO assim no catálogo fica como está (BM36 Teste
+    # 11: "CD: 439890" virava BM439890 e ficava sem foto). O prefixo só
+    # completa o que a IA tirou ("GK1234" no PDF, "1234" na leitura).
+    impresso = ""
+    if pdf_path:
+        try:
+            impresso = "\n".join(_textos_por_pagina(pdf_path)).upper()
+        except Exception:
+            impresso = ""
     fixed = 0
     for p in numeric:
         codigo = str(p.get("codigo")).strip()
+        if impresso and re.search(rf"(?<![A-Z0-9]){re.escape(codigo)}(?![0-9])", impresso):
+            continue
         if len(codigo) == digitos:
             p["codigo"] = f"{prefix}{separador}{codigo}"
             fixed += 1
@@ -4659,6 +4760,68 @@ def _reler_paginas_com_codigo_orfao(pdf_path: str, produtos: list, supplier: str
     return produtos + novos
 
 
+_MARCADOR_NO_NOME_RE = re.compile(r"\s*\*{3}\s*(AGUARDANDO[^*]*|EM BREVE|ESGOTADO)\s*\*{3}", re.I)
+
+
+def _marcador_de_selo_do_vizinho(pdf_path: str, produtos: list) -> list:
+    """Selo impresso como TEXTO ("AGUARDANDO REPOSIÇÃO") é do cartão cujo
+    código fica mais perto dele. Na ordem do texto ele cai depois do último
+    produto da página e a leitura o dava a esse produto (BM36 pág. 111, Teste
+    11: BM363056 e BM363057 saíram ***AGUARDANDO*** com o selo em cima do
+    WC411111 e do WC411119). Medido: o selo fica ~5pt acima do código do
+    próprio cartão. Só tira o marcador quando a página tem o selo em texto e
+    ele é de outro código; selo em imagem não é tocado."""
+    marcados = [p for p in produtos if _MARCADOR_NO_NOME_RE.search(str(p.get("nome") or ""))]
+    if not marcados:
+        return produtos
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception:
+        return produtos
+    por_pagina: Dict[int, list] = {}
+    for p in produtos:
+        try:
+            por_pagina.setdefault(int(p.get("paginaOrigem") or 0), []).append(p)
+        except (TypeError, ValueError):
+            continue
+    tirados = []
+    try:
+        for pn in sorted({int(p.get("paginaOrigem") or 0) for p in marcados if str(p.get("paginaOrigem") or "").isdigit()}):
+            if not 1 <= pn <= len(doc):
+                continue
+            page = doc[pn - 1]
+            centros = {}
+            for p in por_pagina.get(pn, []):
+                cod = str(p.get("codigo") or "").strip()
+                achados = page.search_for(cod) if cod else []
+                if achados:
+                    r = achados[0]
+                    centros[cod] = ((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2)
+            for p in por_pagina.get(pn, []):
+                m = _MARCADOR_NO_NOME_RE.search(str(p.get("nome") or ""))
+                cod = str(p.get("codigo") or "").strip()
+                if not m or cod not in centros:
+                    continue
+                palavra = m.group(1).split()[0]
+                selos = page.search_for(palavra)
+                if not selos:
+                    continue
+                donos = set()
+                for r in selos:
+                    cx, cy = (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2
+                    donos.add(min(centros, key=lambda c: abs(centros[c][0] - cx) + abs(centros[c][1] - cy)))
+                if cod not in donos:
+                    p["nome"] = _MARCADOR_NO_NOME_RE.sub("", str(p["nome"])).strip()
+                    if palavra.upper() == "EM":
+                        p["emBreve"] = False
+                    tirados.append(cod)
+    finally:
+        doc.close()
+    if tirados:
+        print(f"[Selo] marcador de selo do vizinho tirado de {len(tirados)}: {', '.join(tirados[:10])}")
+    return produtos
+
+
 def _em_breve_com_preco_isolado(produtos: list) -> list:
     """No catálogo em que EM BREVE é produto SEM preço (PETRIN Teste 10: 235
     de 236 sem preço), o único marcado EM BREVE com preço impresso é engano
@@ -4740,7 +4903,8 @@ def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str =
     result = _extract_with_fallback_impl(pdf_path, supplier, client_rules)
     if result and result.get("produtos"):
         result["produtos"] = _limpar_marcador_do_codigo(result["produtos"])
-        result["produtos"] = _fix_missing_code_prefix(result["produtos"])
+        result["produtos"] = _prefixo_promocional_no_nome(result["produtos"])
+        result["produtos"] = _fix_missing_code_prefix(result["produtos"], pdf_path)
         result["produtos"] = _fix_ocr_digit_letter_confusion(result["produtos"])
         result["produtos"] = _conferir_codigos_pelo_texto(pdf_path, result["produtos"])
         result["produtos"] = _reler_paginas_com_codigo_orfao(pdf_path, result["produtos"], supplier, client_rules)
@@ -4761,6 +4925,7 @@ def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str =
         result["produtos"] = _nomes_iguais_com_medida(pdf_path, result["produtos"])
         result["produtos"] = _unificar_codigo_repetido(pdf_path, result["produtos"])
         result["produtos"] = _em_breve_com_preco_isolado(result["produtos"])
+        result["produtos"] = _marcador_de_selo_do_vizinho(pdf_path, result["produtos"])
         result["produtos"] = _nomear_cores_por_bolinha(pdf_path, result["produtos"])
         result["avisosNomeDuplicado"] = _marcar_nomes_duplicados(result["produtos"])
     return result

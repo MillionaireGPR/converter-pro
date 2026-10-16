@@ -2090,6 +2090,38 @@ roteamento de `_extract_with_fallback_impl`, que caía na visão do PDF inteiro
   visão do PDF inteiro.
 - Testes: `test_rodada_1610.py`.
 
+### 14.47 BM36 e Goal — produtos sumidos do template (16/10/2026)
+
+Teste 11: BM36 com 575 produtos fora da exportação (557 WC da World Classic) e
+Goal com 16. O template sintetizado na amostra era estreito para o resto do
+catálogo:
+- BM36: CODE "CD: BM + 6 dígitos" (sem WC, sem 7 dígitos) e PRECO "B + 4
+  dígitos" (perdia "B990" = 9,90).
+- Goal: PRECO exigia "R" ("Preço: 48,34" sem R$ ficava sem preço). Com 1 de 4
+  produtos sem preço a página passava da régua de 60% e não era relida.
+
+Correções (genéricas, medidas no catálogo):
+- `_codigos_fora_do_template`: caixas ("CX: 50", o QTD do template) ≥ 1,2× os
+  códigos lidos → template recusado, vai para o text-chunked. Medido nos
+  templates do servidor: 0,55–1,00 nos certos, 1,89 na BM36 do Teste 11.
+- `_paginas_com_preco_perdido`: produto sem preço com preço impresso no bloco
+  (BR "12,34" ou o PRECO com os dígitos soltos) → a página entra na releitura
+  por IA (pagefix).
+- `_apply_template`: dígito colado ao código capturado é do mesmo código
+  ("WC\d{6}" não corta mais WC4010003).
+- `_prefixo_promocional_no_nome`: "(PROM50%)"/"(PRO50%)" sai do nome e vira
+  promoção.
+- `_fix_missing_code_prefix`: código só-número impresso assim fica como está
+  (439890 não vira BM439890).
+- `_marcador_de_selo_do_vizinho`: selo em texto (AGUARDANDO REPOSIÇÃO, EM
+  BREVE, ESGOTADO) é do código mais perto; marcador de selo de outro cartão
+  sai do nome (BM363056/BM363057).
+- Hint BM36: códigos de 7 dígitos, sufixo, só-número e preço "B990".
+
+Validação com IA real usando os templates que falharam: BM36 575/575 com o
+preço da lista do Josef; Goal 16/16. Catálogos do Teste 10: nenhuma mudança.
+Testes: `test_rodada_1610.py`.
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
