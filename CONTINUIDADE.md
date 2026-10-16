@@ -52,11 +52,11 @@
 
 ## Pendências
 
-**Teste 11 (16/10/2026)** — laudo em `ENVIO-GABRIEL-TESTE11` (zip no Drive). Feito: DUTE sem planilha; BM36 (575 sumidos, PROM50%, AGUARDANDO, 439890); Goal 16 sumidos.
-Falta: Neo ESGOTADO (161), preço/caixa do pacote,
-***CORES*** só com mais de uma cor, nomes por bolinha, fotos (págs. 33, 41, 74, 85, 90, 91); Levivan
+**Teste 11 (16/10/2026)** — laudo em `ENVIO-GABRIEL-TESTE11` (zip no Drive). Feito: DUTE sem planilha; BM36 (575 sumidos, PROM50%, AGUARDANDO, 439890); Goal 16 sumidos; Neo ESGOTADO, preço/caixa do pacote,
+***CORES*** só com mais de uma cor (+ VAESO cor no nome).
+Falta: Neo preços de layout (págs. 23, 24, 54), nomes por bolinha/vizinho, fotos (págs. 33, 41, 74, 85, 90, 91); Levivan
 (EM BREVE, preços, nomes, duplicados); Dagia/Petrin/BM36 marcador de promoção;
-Folia nomes + JRF-50.0451; VAESO cor no nome; FORTAL JDG-60*90, 5085, JZ-2516; GIRA TP2135/GU0144/TP1792;
+Folia nomes + JRF-50.0451; VAESO ***PROMOCAO*** sobrando (PHA4501-4); FORTAL JDG-60*90, 5085, JZ-2516; GIRA TP2135/GU0144/TP1792;
 Tuka 11-18336-22, 88H-24046-32, VTK-66-4231-80U.
 
 **Esperando o Gabriel / Josef**
@@ -83,6 +83,8 @@ medindo com A/B sem API sobre os jobs do Teste 9 já gravados no servidor.
 
 ## Diário
 
+- **16/10/2026 (noite 2)** — Neo: ESGOTADO 162/162 pela tarja em texto; preço do pacote 38/48;
+  caixa do kit 20/27; ***CORES*** só em variantes (também VAESO). guide.md §14.48.
 - **16/10/2026 (noite)** — BM36 575/575 e Goal 16/16 recuperados (template estreito → trava de caixas,
   releitura de página com preço perdido). guide.md §14.47.
 - **16/10/2026 (tarde)** — Fotos da Neo no ar (#186). Teste 11 baixado do Drive (zip na pasta

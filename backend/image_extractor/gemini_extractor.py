@@ -4578,20 +4578,39 @@ def _preco_do_pacote_impresso(pdf_path: str, produtos: list) -> list:
     for pg, lista in _agrupar_por_pagina(produtos, len(textos)).items():
         texto = textos[pg - 1]
         impressos = {_valor_br(v) for v in _VALOR_BR_RE.findall(texto)}
+        # "R$0,220Un." / "R$ 0,089 Un." (3 casas) também é preço impresso
+        impressos |= {float(v.replace(",", ".")) for v in re.findall(r"(?<![\d,])(\d+,\d{3})(?![\d,])", texto)}
         if not impressos:
             continue
         antes, depois, lado = _blocos_dos_codigos(texto, lista)
         linhas = texto.split("\n")
+        codigos_pag = {str(q.get("codigo") or "").strip() for q in lista if q.get("codigo")}
         for p in lista:
             try:
                 preco = float(p.get("preco") or 0)
             except (TypeError, ValueError):
                 continue
-            if preco <= 0 or id(p) not in antes or any(abs(v - preco) < 0.006 for v in impressos):
+            if preco <= 0 or id(p) not in antes:
                 continue
             cod = str(p.get("codigo") or "").strip()
             rx_cod = re.compile(rf"(?<![\dA-Za-z]){re.escape(cod)}(?![\dA-Za-z])") if cod else None
             da_linha = [ln for ln in linhas if rx_cod is not None and rx_cod.search(ln)]
+            # Linha de variante "TRANSPARENTE | R$ 44,50 c/50un. | 156566": o
+            # único preço da linha do código é o dele, mesmo quando a IA trouxe
+            # um preço impresso de outro cartão (Neo Teste 11: 156566 saía
+            # 0,89, o "Un." do vizinho; 146960 saía 3,18).
+            if len(da_linha) == 1:
+                valores = _RS_VALOR_RE.findall(da_linha[0])
+                outros = [c for c in codigos_pag if c != cod and re.search(
+                    rf"(?<![\dA-Za-z]){re.escape(c)}(?![\dA-Za-z])", da_linha[0])]
+                if len(valores) == 1 and not outros:
+                    v = _valor_br(valores[0])
+                    if abs(v - preco) >= 0.006:
+                        p["preco"] = v
+                        mudou += 1
+                    continue
+            if any(abs(v - preco) < 0.006 for v in impressos):
+                continue
             bloco = antes[id(p)] if lado == "antes" else depois[id(p)]
             # do preço mais perto do código para o mais longe
             partes = [ln for ln in bloco.split("\n") if ln.strip()]
@@ -4608,6 +4627,70 @@ def _preco_do_pacote_impresso(pdf_path: str, produtos: list) -> list:
                 mudou += 1
     if mudou:
         print(f"[PrecoImpresso] {mudou} preço(s) que não existiam no catálogo → preço do pacote impresso")
+    return produtos
+
+
+def _kit_que_fecha(preco: float, trecho: str) -> Optional[int]:
+    """M de "R$ T ... c/M" no trecho com T = preço × M (M >= 2)."""
+    for m_v in _RS_VALOR_RE.finditer(trecho):
+        m_n = _CX_TEXTO_RE.search(trecho, m_v.end())
+        if not m_n:
+            continue
+        prox = _RS_VALOR_RE.search(trecho, m_v.end())
+        if prox and prox.start() < m_n.start():
+            continue
+        n = int(m_n.group(1).replace(".", ""))
+        if n >= 2 and abs(_valor_br(m_v.group(1)) - preco * n) <= 0.011 * n:
+            return n
+    return None
+
+
+def _caixa_do_kit_impresso(pdf_path: str, produtos: list) -> list:
+    """Caixa = M quando o preço do cartão está impresso com o total "R$ T
+    ... c/M" e T = preço × M (Josef, Teste 11: caixa na mesma unidade do
+    preço). Neo: "R$ 14,90 Pct. c/02 raquetes | R$ 59,60 Kit c/04 pct."
+    saía Cx c/ 2 (devia 4); "R$ 21,12 Cart. | R$ 105,60 c/05 cart." saía
+    125; "R$ 6,28 Pct. | R$ 37,68 c/06 pct." acima de 14 bandeirinhas saía 1.
+    Onde: a linha do código; a linha seguinte (sem outro código); o bloco de
+    preço mais perto acima do código (linhas seguidas com R$ ou "c/N") —
+    nunca o preço de outro cartão mais acima."""
+    textos = _textos_por_pagina(pdf_path)
+    if not textos:
+        return produtos
+    mudou = 0
+    for pg, lista in _agrupar_por_pagina(produtos, len(textos)).items():
+        linhas = textos[pg - 1].split("\n")
+        codigos = [str(q.get("codigo") or "").strip() for q in lista if q.get("codigo")]
+        rx = {c: re.compile(rf"(?<![\dA-Za-z]){re.escape(c)}(?![\dA-Za-z])") for c in codigos}
+        tem_cod = lambda ln: any(r.search(ln) for r in rx.values())  # noqa: E731
+        for p in lista:
+            try:
+                preco = float(p.get("preco") or 0)
+                qtd = int(p.get("quantidadeCaixa") or 0)
+            except (TypeError, ValueError):
+                continue
+            cod = str(p.get("codigo") or "").strip()
+            if preco <= 0 or cod not in rx:
+                continue
+            i = next((k for k, ln in enumerate(linhas) if rx[cod].search(ln)), None)
+            if i is None:
+                continue
+            trechos = [linhas[i]]
+            if i + 1 < len(linhas) and not tem_cod(linhas[i + 1]):
+                trechos.append(linhas[i + 1])
+            bloco, k = [], i - 1
+            while k >= 0 and i - k <= 15 and not _RS_VALOR_RE.search(linhas[k]):
+                k -= 1
+            while k >= 0 and (_RS_VALOR_RE.search(linhas[k]) or _CX_TEXTO_RE.search(linhas[k])):
+                bloco.insert(0, linhas[k])
+                k -= 1
+            trechos.append(" ".join(bloco))
+            n = next((x for x in (_kit_que_fecha(preco, t) for t in trechos) if x), None)
+            if n and n != qtd:
+                p["quantidadeCaixa"] = n
+                mudou += 1
+    if mudou:
+        print(f"[CaixaKit] {mudou} caixa(s) pelo total do kit impresso (preço × M)")
     return produtos
 
 
@@ -4866,6 +4949,74 @@ def _marcador_de_selo_do_vizinho(pdf_path: str, produtos: list) -> list:
     return produtos
 
 
+_COR_NO_NOME_RE = re.compile(
+    r"\s*\b(?:BRANC[OA]S?|PRET[OA]S?|PRATA|PRATEAD[OA]S?|DOURAD[OA]S?|OURO(?: VELHO)?|AMAREL[OA]S?|"
+    r"LARANJA|VERMELH[OA]S?|ROSA|ROS[ÉE](?: GOLD)?|PINK|ROX[OA]S?|LIL[AÁ]S|AZUL|AZUIS|VERDES?|MARROM|"
+    r"BEGE|NUDE|CINZA|VINHO|SALM[AÃ]O|CHAMPANHE|TIFFANY|OFF[- ]WHITE|AVEL[AÃ]|COBRE|BRONZE|GRAFITE|"
+    r"TURQUESA|CORAL|MAGENTA|F[UÚ]CSIA)(?:\s+(?:CLAR[OA]|ESCUR[OA]|BEB[EÊ]|PINK|[AÁ]GUA|METALIZAD[OA]))?\b",
+    re.I)
+
+
+def _cores_so_em_variantes(produtos: list) -> list:
+    """***CORES*** só em produto com mais de uma cor, e o nome sem a cor (a
+    cor vai para Informações adicionais). Critério do Josef, Teste 11: a
+    marca saía nos 2.249 nomes da Neo (PRESÉPIO OURO VELHO, DENTADURA
+    BRANCA, de uma cor só) e a VAESO saía "AÇUCAREIRO PRETO - 450ML
+    ***CORES***" ou "CAIXA MULTIUSO 4,5 L PRETA" sem a marca.
+    Variante = outro produto da MESMA página com o mesmo nome tirando as
+    cores (cores diferentes, ou o mesmo nome em códigos diferentes). Só age
+    em lote que já usa ***CORES*** (3 ou mais)."""
+    if sum(1 for p in produtos if "***CORES***" in str(p.get("nome") or "").upper()) < 3:
+        return produtos
+    grupos: Dict[Tuple[int, str, bool], list] = {}
+    for p in produtos:
+        nome = str(p.get("nome") or "")
+        if not nome or not p.get("codigo"):
+            continue
+        sem = _base_do_nome(nome)
+        sem_cor = re.sub(r"\s+", " ", _COR_NO_NOME_RE.sub(" ", sem)).strip(" -|")
+        chave = _nome_chave(sem_cor)
+        if not chave:
+            continue
+        p["_sem_cor"] = sem_cor
+        try:
+            pg = int(p.get("paginaOrigem") or 0)
+        except (TypeError, ValueError):
+            pg = 0
+        # com cor só agrupa com quem também tem cor: "DENTADURA BRANCA" e
+        # "DENTADURA" (sortidas) na mesma página são produtos diferentes
+        tem_cor = bool(_COR_NO_NOME_RE.search(sem))
+        grupos.setdefault((pg, chave, tem_cor), []).append(p)
+    tirou = pos = 0
+    for lista in grupos.values():
+        codigos = {str(p.get("codigo")).strip().upper() for p in lista}
+        for p in lista:
+            nome = str(p["nome"])
+            sem_cor = p.pop("_sem_cor")
+            tem_marca = "***CORES***" in nome.upper()
+            if len(codigos) >= 2:
+                base = _base_do_nome(nome)
+                cores = [m.group(0).strip() for m in _COR_NO_NOME_RE.finditer(base)]
+                if cores and sem_cor:
+                    obs = str(p.get("observacoes") or "").strip()
+                    cor = "Cor: " + " ".join(cores).upper()
+                    if cor.upper() not in obs.upper():
+                        p["observacoes"] = f"{obs} | {cor}" if obs else cor
+                    base = sem_cor
+                novo = f"{base} ***CORES***"
+                if novo != nome:
+                    p["nome"] = novo
+                    pos += 1
+            elif tem_marca:
+                p["nome"] = re.sub(r"\s*\*{3}\s*CORES\s*\*{3}", "", nome, flags=re.I).strip()
+                tirou += 1
+    for p in produtos:
+        p.pop("_sem_cor", None)
+    if tirou or pos:
+        print(f"[Cores] ***CORES*** tirado de {tirou} produto(s) de cor única; {pos} variante(s) sem a cor no nome")
+    return produtos
+
+
 def _em_breve_com_preco_isolado(produtos: list) -> list:
     """No catálogo em que EM BREVE é produto SEM preço (PETRIN Teste 10: 235
     de 236 sem preço), o único marcado EM BREVE com preço impresso é engano
@@ -4962,6 +5113,7 @@ def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str =
         result["produtos"] = _conferir_selos_off(pdf_path, result["produtos"])
         result["produtos"] = _promocao_sem_selo(pdf_path, result["produtos"])
         result["produtos"] = _preco_do_pacote_impresso(pdf_path, result["produtos"])
+        result["produtos"] = _caixa_do_kit_impresso(pdf_path, result["produtos"])
         result["produtos"] = _caixa_pelo_texto(pdf_path, result["produtos"])
         result["produtos"] = _ipi_pelo_texto(pdf_path, result["produtos"])
         result["produtos"] = _completar_atributos_do_bloco(pdf_path, result["produtos"])
@@ -4971,6 +5123,7 @@ def extract_with_fallback(pdf_path: str, supplier: str = "", client_rules: str =
         result["produtos"] = _em_breve_com_preco_isolado(result["produtos"])
         result["produtos"] = _marcador_de_selo_do_vizinho(pdf_path, result["produtos"])
         result["produtos"] = _nomear_cores_por_bolinha(pdf_path, result["produtos"])
+        result["produtos"] = _cores_so_em_variantes(result["produtos"])
         result["avisosNomeDuplicado"] = _marcar_nomes_duplicados(result["produtos"])
     return result
 
