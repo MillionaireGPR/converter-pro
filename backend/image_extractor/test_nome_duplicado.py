@@ -50,7 +50,7 @@ def test_extract_with_fallback_anexa_avisos_ao_resultado(monkeypatch):
         ge, "_extract_with_fallback_impl",
         lambda pdf_path, supplier="", client_rules="": {"success": True, "produtos": produtos},
     )
-    monkeypatch.setattr(ge, "_fix_missing_code_prefix", lambda produtos: produtos)
+    monkeypatch.setattr(ge, "_fix_missing_code_prefix", lambda produtos, pdf_path=None: produtos)
     monkeypatch.setattr(ge, "_fix_labeled_unit_prices", lambda pdf_path, produtos: produtos)
 
     resultado = ge.extract_with_fallback("catalogo.pdf", supplier="GIRA")
