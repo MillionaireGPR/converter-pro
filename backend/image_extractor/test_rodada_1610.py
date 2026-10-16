@@ -91,3 +91,65 @@ def test_selo_de_texto_fica_com_o_codigo_mais_perto(tmp_path):
     ge._marcador_de_selo_do_vizinho(pdf, prods)
     assert prods[0]["nome"] == "DIFUSOR ***AGUARDANDO REPOSIÇÃO***"
     assert prods[1]["nome"] == "REFIL"
+
+
+def _pdf_texto(tmp_path, linhas, nome="n.pdf"):
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=600, height=1400)
+    for i, ln in enumerate(linhas):
+        page.insert_text((40, 40 + i * 14), ln, fontsize=9)
+    path = str(tmp_path / nome)
+    doc.save(path)
+    return path
+
+
+def test_preco_unico_da_linha_do_codigo_vale(tmp_path):
+    pdf = _pdf_texto(tmp_path, ["PEGA BALAO", "R$ 0,89 Un.", "R$ 21,25 Pct. c/24 un.", "148300",
+                                "TRANSPARENTE | R$ 44,50 c/50un. | 156566",
+                                "10cm | R$34,90 c/50un. | 131296"])
+    prods = [{"codigo": "148300", "preco": 0.89, "paginaOrigem": 1},
+             {"codigo": "156566", "preco": 0.89, "paginaOrigem": 1},
+             {"codigo": "131296", "preco": 0.698, "paginaOrigem": 1}]
+    ge._preco_do_pacote_impresso(pdf, prods)
+    assert [p["preco"] for p in prods] == [0.89, 44.5, 34.9]
+
+
+def test_caixa_e_o_numero_de_pacotes_do_kit(tmp_path):
+    pdf = _pdf_texto(tmp_path, ["RAQUETE", "R$ 14,90 Pct. c/ 02 raquetes", "R$ 59,60 Kit c/04 pct.", "150266",
+                                "BANDEIRINHA", "R$ 6,28 Pct.", "R$ 37,68 c/06 pct.", "10 bandeiras",
+                                "ARGENTINA | 145262", "CANADA | 119628"])
+    prods = [{"codigo": "150266", "preco": 14.9, "quantidadeCaixa": 2, "paginaOrigem": 1},
+             {"codigo": "145262", "preco": 6.28, "quantidadeCaixa": 1, "paginaOrigem": 1},
+             {"codigo": "119628", "preco": 6.28, "quantidadeCaixa": 1, "paginaOrigem": 1}]
+    ge._caixa_do_kit_impresso(pdf, prods)
+    assert [p["quantidadeCaixa"] for p in prods] == [4, 6, 6]
+
+
+def test_tarja_esgotado_em_texto_e_do_codigo_mais_perto(tmp_path):
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((40, 100), "135801 R$ 7,97Un.", fontsize=9)
+    page.insert_text((40, 300), "135828 R$ 5,97Un.", fontsize=9)
+    page.insert_text((45, 108), "ESGOTADO", fontsize=9)
+    pdf = str(tmp_path / "e.pdf")
+    doc.save(pdf)
+    prods = [{"codigo": "135801", "nome": "CORTINA", "preco": 7.97, "paginaOrigem": 1},
+             {"codigo": "135828", "nome": "CORTINA", "preco": 5.97, "paginaOrigem": 1, "emBreve": True}]
+    ge._marcador_de_selo_do_vizinho(pdf, prods)
+    assert prods[0].get("esgotado") is True
+    assert not prods[1].get("esgotado") and prods[1]["emBreve"] is False
+
+
+def test_cores_so_em_produto_com_mais_de_uma_cor():
+    prods = [{"codigo": c, "nome": n, "paginaOrigem": 1} for c, n in (
+        ("1", "FITILHO 5mm VERMELHO ***CORES***"), ("2", "FITILHO 5mm AZUL ***CORES***"),
+        ("3", "DENTADURA BRANCA ***CORES***"), ("4", "DENTADURA CORES SORTIDAS ***CORES***"),
+        ("5", "PRESÉPIO OURO VELHO P/MESA ***CORES***"))]
+    ge._cores_so_em_variantes(prods)
+    nomes = {p["codigo"]: (p["nome"], p.get("observacoes")) for p in prods}
+    assert nomes["1"] == ("FITILHO 5mm ***CORES***", "Cor: VERMELHO")
+    assert nomes["2"] == ("FITILHO 5mm ***CORES***", "Cor: AZUL")
+    assert nomes["3"][0] == "DENTADURA BRANCA"
+    assert nomes["5"][0] == "PRESÉPIO OURO VELHO P/MESA"

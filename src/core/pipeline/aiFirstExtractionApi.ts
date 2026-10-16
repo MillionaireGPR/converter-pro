@@ -49,6 +49,8 @@ export interface AiProduto {
   observacoes?: string | null;
   emBreve?: boolean;
   promocional?: boolean;  // item já com desconto aplicado (tag/selo) → bloqueia desconto
+  /** Tarja ESGOTADO impressa no cartão (backend: _marcador_de_selo_do_vizinho) → fora da exportação */
+  esgotado?: boolean;
 }
 
 export interface ResultadoAiExtraction {
@@ -393,6 +395,10 @@ export const mapAiProductsToBrutos = (produtos: AiProduto[]): ProdutoBruto[] => 
     const p = produtos[i];
     const codigo = String(p.codigo || '').trim();
     if (!codigo) continue; // sem código não há produto
+    // Tarja ESGOTADO no cartão: não sai (critério do Josef, Teste 11 — Neo
+    // exportava 161 esgotados). O statusEstoque não chega à tela de
+    // exportação, então o corte é aqui, na entrada.
+    if (p.esgotado === true) continue;
 
     const campos: Record<string, any> = {
       codigo,

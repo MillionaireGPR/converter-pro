@@ -2122,6 +2122,33 @@ Validação com IA real usando os templates que falharam: BM36 575/575 com o
 preço da lista do Josef; Goal 16/16. Catálogos do Teste 10: nenhuma mudança.
 Testes: `test_rodada_1610.py`.
 
+### 14.48 Neo — ESGOTADO, preço/caixa do pacote e ***CORES*** (16/10/2026)
+
+Teste 11, critérios do Josef: ESGOTADO não sai; preço = o impresso por
+unidade de venda (pacote que não se vende separado = 1 unidade); caixa na
+mesma unidade do preço (pacotes por kit); ***CORES*** só em produto com mais
+de uma cor, nome sem a cor (a cor vai para Informações adicionais).
+
+- `_marcador_de_selo_do_vizinho`: selo em texto (ESGOTADO, EM BREVE,
+  AGUARDANDO) é do código mais perto. Dono de ESGOTADO → `esgotado: true`, e o
+  frontend (`mapAiProductsToBrutos`) não o põe no lote. Medido: 162/162
+  tarjas com o dono da lista do Josef. EM BREVE marcado pela IA, com preço,
+  em página com selo em texto que não é dele → sai.
+- `_preco_do_pacote_impresso`: o único "R$" da linha do código vale
+  ("TRANSPARENTE | R$ 44,50 c/50un. | 156566"); depois o preço do pacote que
+  fecha a conta preço × N, procurando na linha do código, no bloco e na página.
+  "R$0,220Un." (3 casas) conta como impresso.
+- `_caixa_do_kit_impresso`: "R$ T ... c/M" com T = preço × M na linha do código,
+  na seguinte ou no bloco de preço logo acima → caixa M.
+- `_cores_so_em_variantes`: produtos da mesma página com o mesmo nome sem as
+  cores (2+ códigos) → nome sem a cor + ***CORES*** e "Cor: X" nas observações;
+  produto sozinho → sem ***CORES***. Só em lote que já usa a marca (≥3).
+
+Validação sem API sobre a conversão de 15/10: preços da lista 38/48, caixas
+20/27 (os que faltam dependem do preço de layout: págs. 23, 24, 54). A/B nos
+outros 14 catálogos: só a VAESO muda (cor fora do nome, pedido do Josef).
+Testes: `test_rodada_1610.py`, `esgotado-ai-first.test.ts`.
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por
