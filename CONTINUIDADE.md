@@ -16,7 +16,11 @@
 4. **Nunca** registrar senha, token, chave ou URL com credencial. Só o NOME da variável.
 5. Entradas curtas (3–6 linhas). Detalhe técnico vai para o `guide.md`, não aqui.
 
-## Onde parou (13/10/2026)
+## Onde parou (16/10/2026)
+
+- Neo: foto pela moldura do cartão (bolinha de cor, peças, emenda). 182 de 223 itens do Josef
+  mudaram; 15 outros catálogos com 0 fotos mudadas no A/B. Ver `guide.md §14.45`.
+  Restam na Neo: págs. 10, 20, 24, 71, 89 (estampa clara) e 91.
 
 - Teste 10 do Josef: dados (#182) e fotos (#183) no ar e conferidos no servidor.
 - Segurança das bibliotecas: PR #184 (pdfjs-dist 6, xlsx 0.20.3 da SheetJS, vite 6, vitest 4).
@@ -60,7 +64,7 @@
   sem erro novo nos 15 fornecedores. Até lá, poupar API (rodar só páginas, nunca o catálogo inteiro sem aval).
 
 **Em investigação / próxima rodada (sem custo de API para medir)**
-- Fotos: PETRIN (15), GIRA Malas/Papelaria (foto de grupo), DUTE pedaços de layout + 3 fotos, Neo restante.
+- Fotos: PETRIN (15), GIRA Malas/Papelaria (foto de grupo), DUTE pedaços de layout + 3 fotos, Neo págs. 10/20/24/71/89/91.
 - Neo: quantidade das caixas do kit de Natal (61), cor do nome × bolinha (47), 82775.
 - Outros: GIRA TP1792 (código só na imagem), GIRA Malas sem 20", FORTAL YM-09/10, FOLIA GEL→GELO e PESTISQUEIRA.
 - Recurso "Solicitar ajuste" no painel: só proposta, aguarda o Gabriel.
@@ -72,6 +76,9 @@ medindo com A/B sem API sobre os jobs do Teste 9 já gravados no servidor.
 
 ## Diário
 
+- **16/10/2026** — Neo: fotos casadas pela moldura do cartão (cor da bolinha, peças por cor,
+  emenda de estampas). A/B sem API: Neo 30 → 0 sem foto; outros 15 catálogos sem mudança. guide.md §14.45.
+  Drive "CATALOGOS FORNECEDORES": nada novo do Josef até hoje (pedido o link).
 - **16/10/2026** — MOMENT: caixa inner e master lado a lado em Informações adicionais (pedido da Michelle). guide.md §14.44.
 - **13/10/2026 (tarde)** — Fotos do Teste 10 (#183) com A/B no catálogo inteiro; deploy
   conferido. Segurança: 84 → 3 alertas (#184). Arquivos de teste do scratchpad apagados
