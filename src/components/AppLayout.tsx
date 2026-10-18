@@ -5,6 +5,8 @@ import { ConversoesEmAndamento } from "@/components/ConversoesEmAndamento";
 import { AssinaturaBloqueio, AssinaturaFaixa } from "@/components/AssinaturaAviso";
 import { useAssinatura } from "@/hooks/useAssinatura";
 import { precisaBloquear } from "@/core/billing/assinatura";
+import { BannerAtualizacao, VersaoBadge } from "@/components/AtualizacaoDisponivel";
+import { CentralNovidades } from "@/components/CentralNovidades";
 
 export function AppLayout() {
   const location = useLocation();
@@ -18,11 +20,15 @@ export function AppLayout() {
       <div className="min-h-screen flex w-full">
         <AppSidebar />
         <div className="flex-1 flex flex-col min-w-0">
+          {/* Barra amarela "Nova atualização disponível" — só quando saiu versão nova */}
+          <BannerAtualizacao />
           <header className="h-14 flex items-center justify-between border-b bg-card/80 backdrop-blur-sm px-4 sm:px-6 shrink-0 sticky top-0 z-10">
             <div className="flex items-center gap-3">
               <SidebarTrigger />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 print:hidden">
+              <CentralNovidades />
+              <VersaoBadge />
               <div className="w-8 h-8 rounded-full gradient-primary flex items-center justify-center text-xs font-bold text-primary-foreground shadow-sm">
                 NR
               </div>
