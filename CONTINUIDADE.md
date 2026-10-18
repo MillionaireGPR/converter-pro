@@ -6,6 +6,8 @@
 
 ## Regras de manutenção (valem para toda sessão)
 
+- **Versão + Central de novidades:** toda entrega sobe `VERSAO` (`src/lib/versao.ts`) e escreve a entrada em `src/data/novidades.ts` (CLAUDE.md).
+
 1. **Pasta certa:** `C:\Users\Gabriel Pantoni\Desktop\Projetos LOVABLE e GITHUB\Converter-Pro-Merged`.
    Existe uma cópia em `...\OneDrive\Desktop\...` SEM git (o OneDrive corrompe o `.git`): nunca trabalhe nela.
    Confirme com `git log --oneline -1` antes de tudo.
@@ -83,6 +85,8 @@ medindo com A/B sem API sobre os jobs do Teste 9 já gravados no servidor.
 
 ## Diário
 
+- **17/10/2026** — v295: selo da versão, aviso de atualização e Central de novidades (✨) no topo.
+  Regra no CLAUDE.md: toda entrega sobe `VERSAO` + entrada em `src/data/novidades.ts`.
 - **16/10/2026 (noite 2)** — Neo: ESGOTADO 162/162 pela tarja em texto; preço do pacote 38/48;
   caixa do kit 20/27; ***CORES*** só em variantes (também VAESO). guide.md §14.48.
 - **16/10/2026 (noite)** — BM36 575/575 e Goal 16/16 recuperados (template estreito → trava de caixas,

@@ -266,6 +266,22 @@ Gemini SEM ciclo deploy→spike (~5min cada), escreva um script local que carreg
 imprima o valor da key nem a commite. Valide contra o catálogo real, depois
 deploye 1× só. (Foi assim que v26 resolveu LX15016/DXP57 em minutos.)
 
+## 🏷️ VERSÃO + CENTRAL DE NOVIDADES (obrigatório a cada entrega — desde 17/10/2026, v295)
+
+Antes do commit da entrega, subir `VERSAO` em `src/lib/versao.ts` e escrever a entrada nova no
+topo de `src/data/novidades.ts` (mesmo número, linguagem de quem usa, com "Como testar"). O teste
+`novidades.test.ts` quebra se esquecer. O aviso "Nova atualização disponível" é automático.
+
+- **Número** = `git rev-list --count HEAD` + 1 (o commit que sobe a versão). Manual de propósito:
+  a Vercel clona raso. A antiga sequência v36–v54 é do motor (`SERVICE_VERSION`, parada em v52).
+- **Entrega em duas partes:** o aviso de atualização vale para a tela (Vercel). Mudança só no
+  motor de conversão (servidor Integrator / Render de reserva) também é entrega: ganha versão e
+  entrada na Central, mesmo sem mudar a tela (o selo sobe no próximo deploy da Vercel do mesmo merge).
+- **Como funciona:** `vite.config.ts` grava `dist/build-version.json` e embute o mesmo id
+  (`__APP_BUILD__`); `AtualizacaoDisponivel.tsx` compara a cada 3 min e ao voltar à aba;
+  `vercel.json` serve `index.html` e `build-version.json` com `no-cache, no-store` e tira o
+  `build-version.json` do rewrite para o `index.html`. Selo, ✨ e barra ficam em `AppLayout.tsx`.
+
 ## ✅ Workflow obrigatório de qualquer mudança
 
 1. **Crie branch** (nunca commit direto em main):

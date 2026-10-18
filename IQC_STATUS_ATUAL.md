@@ -5,6 +5,19 @@
 
 ---
 
+## ✅ ENTREGUE em 17/10 — Selo da versão + Central de novidades (v295)
+
+- Selo "v295" no topo (ao lado do NR), barra amarela "Nova atualização disponível" quando sai
+  versão nova (clique recarrega), Central de novidades (✨) com o histórico v284–v295.
+- Regra: toda entrega sobe `VERSAO` e escreve a entrada da Central (ver CLAUDE.md).
+
+## ✅ ENTREGUE em 16/10 — Teste 11 do Josef: DUTE, BM36, Goal, Neo (PRs #186–#189)
+
+- Neo: foto pela moldura do cartão (#186); ESGOTADO fora da planilha, preço/caixa do pacote,
+  ***CORES*** só em variantes (#189, também VAESO).
+- DUTE de 13/10 voltou a gerar planilha (#187). BM36 575 e Goal 16 produtos sumidos de volta (#188).
+- MOMENT: caixa inner e master em Informações adicionais (#185).
+
 ## ✅ ENTREGUE em 13/10 — Teste 10 do Josef, parte FOTOS (PR #183)
 
 - GIRA Malas (4 malas), Papelaria (3 caixas fatiadas), Decoração GC0248;
