@@ -664,7 +664,7 @@ export default function ConversaoProdutos() {
                   className="hidden" 
                 />
                 <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center shadow-sm ${selectedFile ? 'bg-success text-success-foreground' : 'gradient-primary text-primary-foreground'}`}>
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center shadow-xs ${selectedFile ? 'bg-success text-success-foreground' : 'gradient-primary text-primary-foreground'}`}>
                     {selectedFile ? <FileSpreadsheet className="h-4 w-4" /> : <Upload className="h-4 w-4" />}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -789,7 +789,7 @@ export default function ConversaoProdutos() {
               )}
 
               <Button
-                className="w-full gradient-primary text-primary-foreground font-semibold h-9 shadow-sm"
+                className="w-full gradient-primary text-primary-foreground font-semibold h-9 shadow-xs"
                 onClick={handleProcessar}
               >
                 Processar Arquivo
@@ -911,7 +911,7 @@ export default function ConversaoProdutos() {
 
                     {/* Botões de Ação */}
                     <div className="grid grid-cols-2 gap-2 pt-1">
-                      <Button size="sm" className="h-8 gradient-success text-primary-foreground font-semibold shadow-sm" onClick={() => navigate('/exportacoes')}>
+                      <Button size="sm" className="h-8 gradient-success text-primary-foreground font-semibold shadow-xs" onClick={() => navigate('/exportacoes')}>
                         <ArrowRight className="h-3.5 w-3.5 mr-1" /> Exportar
                       </Button>
                       {job.imageResult?.zipUrl && (

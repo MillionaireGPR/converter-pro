@@ -699,7 +699,7 @@ export default function DescontosCatalogos() {
         {/* Coluna Direita: Resumo e Ações */}
         <div className="xl:col-span-5 space-y-3">
           {/* Card Resumo */}
-          <Card className="shadow-card overflow-hidden border-l-4 border-l-primary bg-gradient-to-br from-primary/5 to-background">
+          <Card className="shadow-card overflow-hidden border-l-4 border-l-primary bg-linear-to-br/srgb from-primary/5 to-background">
             <CardContent className="p-4">
               <div className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Resumo da Configuração</div>
               <div className="space-y-2">
@@ -837,10 +837,10 @@ export default function DescontosCatalogos() {
             <Button variant="outline" size="sm" className="h-9 gap-1" onClick={handleSalvar}>
               <Save className="h-3.5 w-3.5" /> Salvar
             </Button>
-            <Button size="sm" className="h-9 gradient-primary text-primary-foreground gap-1 shadow-sm" onClick={handleGerarPDF}>
+            <Button size="sm" className="h-9 gradient-primary text-primary-foreground gap-1 shadow-xs" onClick={handleGerarPDF}>
               <FileDown className="h-3.5 w-3.5" /> PDF
             </Button>
-            <Button size="sm" className="h-9 gradient-success text-primary-foreground gap-1 shadow-sm" onClick={handleGerarExcel}>
+            <Button size="sm" className="h-9 gradient-success text-primary-foreground gap-1 shadow-xs" onClick={handleGerarExcel}>
               <FileSpreadsheet className="h-3.5 w-3.5" /> Excel
             </Button>
           </div>
@@ -861,7 +861,7 @@ export default function DescontosCatalogos() {
         </CardHeader>
         <CardContent>
             {showPreview ? (
-              <div className="rounded-xl border shadow-sm overflow-hidden">
+              <div className="rounded-xl border shadow-xs overflow-hidden">
                 <div className="gradient-primary p-6 text-primary-foreground">
                   <div className="flex items-center gap-4">
                     <img src={logo} alt="Logo" className="w-14 h-14 rounded-full border-2 border-white/20 shadow-lg" />

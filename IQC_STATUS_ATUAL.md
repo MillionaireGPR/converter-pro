@@ -5,6 +5,11 @@
 
 ---
 
+## ✅ ENTREGUE em 18/10 — Atualização de segurança (v296)
+
+- 0 alertas de dependência: React Router 7, Tailwind 4 (sem mudança visual, comprovado por medição
+  e prints lado a lado da versão anterior). Vite segue no 6.4.4. Motor Python sem vulnerabilidade.
+
 ## ✅ ENTREGUE em 17/10 — Selo da versão + Central de novidades (v295)
 
 - Selo "v295" no topo (ao lado do NR), barra amarela "Nova atualização disponível" quando sai

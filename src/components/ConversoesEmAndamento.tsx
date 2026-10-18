@@ -34,7 +34,7 @@ export function ConversoesEmAndamento() {
       type="button"
       onClick={() => navigate(ROTA_CONVERSAO)}
       aria-label={`Voltar para ${total} conversão(ões) em andamento`}
-      className="fixed bottom-4 right-4 z-50 flex items-center gap-3 rounded-xl border border-primary/30 bg-card/95 px-4 py-3 text-left shadow-lg backdrop-blur-sm transition-colors hover:bg-muted"
+      className="fixed bottom-4 right-4 z-50 flex items-center gap-3 rounded-xl border border-primary/30 bg-card/95 px-4 py-3 text-left shadow-lg backdrop-blur-xs transition-colors hover:bg-muted"
     >
       <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
       <span className="min-w-0">

@@ -1,8 +1,187 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap')
+layer(base);
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+@plugin 'tailwindcss-animate';
+
+@custom-variant dark (&:is(.dark *));
+
+@utility container {
+  margin-inline: auto;
+  padding-inline: 2rem;
+  @media (width >= --theme(--breakpoint-sm)) {
+    max-width: none;
+  }
+  @media (width >= 1400px) {
+    max-width: 1400px;
+  }
+}
+
+@theme {
+  /* Compatibilidade com o Tailwind 3 (migração v4, 18/10/2026 — mesmo ajuste da
+     Nunê): no v3 a altura de linha de text-sm/text-xs era um valor fixo
+     (1.25rem…) que os filhos herdavam; no v4 virou proporção e textos menores
+     (text-[10px]) encolhiam. */
+  --text-xs--line-height: 1rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg--line-height: 1.75rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl--line-height: 2rem;
+  --text-3xl--line-height: 2.25rem;
+  --text-4xl--line-height: 2.5rem;
+
+  /* Compatibilidade com o Tailwind 3: a paleta padrão do v4 é outra (oklch) e o
+     âmbar dos avisos/verde/vermelho mudavam de tom. Mantém as cores do v3 nas
+     famílias que o conversor usa. */
+  --color-amber-50: #fffbeb; --color-amber-100: #fef3c7; --color-amber-200: #fde68a; --color-amber-300: #fcd34d; --color-amber-400: #fbbf24; --color-amber-500: #f59e0b; --color-amber-600: #d97706; --color-amber-700: #b45309; --color-amber-800: #92400e; --color-amber-900: #78350f; --color-amber-950: #451a03;
+  --color-blue-50: #eff6ff; --color-blue-100: #dbeafe; --color-blue-200: #bfdbfe; --color-blue-300: #93c5fd; --color-blue-400: #60a5fa; --color-blue-500: #3b82f6; --color-blue-600: #2563eb; --color-blue-700: #1d4ed8; --color-blue-800: #1e40af; --color-blue-900: #1e3a8a; --color-blue-950: #172554;
+  --color-emerald-50: #ecfdf5; --color-emerald-100: #d1fae5; --color-emerald-200: #a7f3d0; --color-emerald-300: #6ee7b7; --color-emerald-400: #34d399; --color-emerald-500: #10b981; --color-emerald-600: #059669; --color-emerald-700: #047857; --color-emerald-800: #065f46; --color-emerald-900: #064e3b; --color-emerald-950: #022c22;
+  --color-gray-50: #f9fafb; --color-gray-100: #f3f4f6; --color-gray-200: #e5e7eb; --color-gray-300: #d1d5db; --color-gray-400: #9ca3af; --color-gray-500: #6b7280; --color-gray-600: #4b5563; --color-gray-700: #374151; --color-gray-800: #1f2937; --color-gray-900: #111827; --color-gray-950: #030712;
+  --color-green-50: #f0fdf4; --color-green-100: #dcfce7; --color-green-200: #bbf7d0; --color-green-300: #86efac; --color-green-400: #4ade80; --color-green-500: #22c55e; --color-green-600: #16a34a; --color-green-700: #15803d; --color-green-800: #166534; --color-green-900: #14532d; --color-green-950: #052e16;
+  --color-indigo-50: #eef2ff; --color-indigo-100: #e0e7ff; --color-indigo-200: #c7d2fe; --color-indigo-300: #a5b4fc; --color-indigo-400: #818cf8; --color-indigo-500: #6366f1; --color-indigo-600: #4f46e5; --color-indigo-700: #4338ca; --color-indigo-800: #3730a3; --color-indigo-900: #312e81; --color-indigo-950: #1e1b4b;
+  --color-red-50: #fef2f2; --color-red-100: #fee2e2; --color-red-200: #fecaca; --color-red-300: #fca5a5; --color-red-400: #f87171; --color-red-500: #ef4444; --color-red-600: #dc2626; --color-red-700: #b91c1c; --color-red-800: #991b1b; --color-red-900: #7f1d1d; --color-red-950: #450a0a;
+  --color-sky-50: #f0f9ff; --color-sky-100: #e0f2fe; --color-sky-200: #bae6fd; --color-sky-300: #7dd3fc; --color-sky-400: #38bdf8; --color-sky-500: #0ea5e9; --color-sky-600: #0284c7; --color-sky-700: #0369a1; --color-sky-800: #075985; --color-sky-900: #0c4a6e; --color-sky-950: #082f49;
+
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  --color-success: hsl(var(--success));
+  --color-success-foreground: hsl(var(--success-foreground));
+
+  --color-warning: hsl(var(--warning));
+  --color-warning-foreground: hsl(var(--warning-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+
+  --color-sidebar: hsl(var(--sidebar-background));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-primary: hsl(var(--sidebar-primary));
+  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --color-sidebar-ring: hsl(var(--sidebar-ring));
+
+  --font-sans: Inter, system-ui, sans-serif;
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+  --animate-fade-in: fade-in 0.3s ease-out;
+  --animate-scale-in: scale-in 0.2s ease-out;
+
+  @keyframes accordion-down {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(--radix-accordion-content-height);
+    }
+  }
+  @keyframes accordion-up {
+    from {
+      height: var(--radix-accordion-content-height);
+    }
+    to {
+      height: 0;
+    }
+  }
+  @keyframes fade-in {
+    0% {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes scale-in {
+    0% {
+      transform: scale(0.95);
+      opacity: 0;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+@utility gradient-primary {
+  background: linear-gradient(135deg, hsl(262, 60%, 50%), hsl(262, 70%, 65%));
+}
+
+@utility gradient-sidebar {
+  background: linear-gradient(180deg, hsl(262, 40%, 18%), hsl(262, 35%, 12%));
+}
+
+@utility gradient-success {
+  background: linear-gradient(135deg, hsl(142, 71%, 45%), hsl(142, 60%, 55%));
+}
+
+@utility shadow-card {
+  box-shadow:
+    0 1px 3px 0 hsl(0 0% 0% / 0.04),
+    0 1px 2px -1px hsl(0 0% 0% / 0.04);
+}
+
+@utility shadow-card-hover {
+  box-shadow:
+    0 8px 25px -5px hsl(262 60% 50% / 0.1),
+    0 4px 10px -4px hsl(0 0% 0% / 0.06);
+}
+
+@utility shadow-premium {
+  box-shadow:
+    0 20px 60px -15px hsl(262 60% 50% / 0.15),
+    0 0 0 1px hsl(262 60% 50% / 0.05);
+}
 
 @layer base {
   :root {
@@ -61,27 +240,6 @@
   body {
     @apply bg-background text-foreground font-sans antialiased;
     font-family: 'Inter', system-ui, sans-serif;
-  }
-}
-
-@layer utilities {
-  .gradient-primary {
-    background: linear-gradient(135deg, hsl(262, 60%, 50%), hsl(262, 70%, 65%));
-  }
-  .gradient-sidebar {
-    background: linear-gradient(180deg, hsl(262, 40%, 18%), hsl(262, 35%, 12%));
-  }
-  .gradient-success {
-    background: linear-gradient(135deg, hsl(142, 71%, 45%), hsl(142, 60%, 55%));
-  }
-  .shadow-card {
-    box-shadow: 0 1px 3px 0 hsl(0 0% 0% / 0.04), 0 1px 2px -1px hsl(0 0% 0% / 0.04);
-  }
-  .shadow-card-hover {
-    box-shadow: 0 8px 25px -5px hsl(262 60% 50% / 0.1), 0 4px 10px -4px hsl(0 0% 0% / 0.06);
-  }
-  .shadow-premium {
-    box-shadow: 0 20px 60px -15px hsl(262 60% 50% / 0.15), 0 0 0 1px hsl(262 60% 50% / 0.05);
   }
 }
 
@@ -166,3 +324,26 @@
 ::-webkit-scrollbar-thumb:hover {
   background: hsl(220 10% 80%);
 }
+
+/* Compatibilidade com o Tailwind 3: no v4 o space-y-* põe a margem DEPOIS de cada
+   item, e <label> (em linha) ignora margem vertical — o rótulo colava no campo.
+   Como no v3, o campo logo depois do rótulo recebe a margem de cima. Fica FORA de
+   @layer de propósito (e só com :where, sem display/margem genérica: CSS fora de
+   camada ganha de qualquer classe do Tailwind 4). */
+:where(.space-y-0\.5 > label + *) { margin-top: calc(var(--spacing) * 0.5); }
+:where(.space-y-1 > label + *) { margin-top: calc(var(--spacing) * 1); }
+:where(.space-y-1\.5 > label + *) { margin-top: calc(var(--spacing) * 1.5); }
+:where(.space-y-2 > label + *) { margin-top: calc(var(--spacing) * 2); }
+:where(.space-y-2\.5 > label + *) { margin-top: calc(var(--spacing) * 2.5); }
+:where(.space-y-3 > label + *) { margin-top: calc(var(--spacing) * 3); }
+:where(.space-y-4 > label + *) { margin-top: calc(var(--spacing) * 4); }
+:where(.space-y-5 > label + *) { margin-top: calc(var(--spacing) * 5); }
+:where(.space-y-6 > label + *) { margin-top: calc(var(--spacing) * 6); }
+:where(.space-y-8 > label + *) { margin-top: calc(var(--spacing) * 8); }
+
+/* Compatibilidade com o Tailwind 3: cabeçalho de card em linha (CardHeader com
+   flex-row, Dashboard e Descontos). No v3 o space-y-1.5 punha a margem em cima
+   do 2º item (o botão "Ver tudo", o mais alto) e o cabeçalho ficava 6 px mais
+   alto; no v4 ela vai embaixo do título e o cabeçalho encolhia. */
+:where(.flex-row.space-y-1\.5 > :not(:last-child)) { margin-bottom: 0; }
+:where(.flex-row.space-y-1\.5 > * + *) { margin-top: calc(var(--spacing) * 1.5); }
