@@ -2668,6 +2668,27 @@ def _template_desalinhado(page_texts: List[str], tpl: Dict[str, str],
                 depois += 1
         if antes >= 3 and antes >= 0.6 * (antes + depois):
             return f"preço vem ANTES do código em {antes}/{antes + depois} páginas (template lê depois)"
+    # 3. preço que é o IPI do próprio bloco ("IPI 9,75"): o PRECO solto
+    #    "(\d{1,3},\d{2})" pegava o IPI (Levivan Teste 11: LV1001, LV1011,
+    #    LV1038… saíam 9,75; 0 de 23 preços certos).
+    com_preco = [p for p in produtos if p.get("preco")]
+    if len(com_preco) >= 3:
+        no_ipi = 0
+        for pg, txt in enumerate(page_texts, 1):
+            daqui = [p for p in com_preco if p.get("paginaOrigem") == pg]
+            if not daqui:
+                continue
+            pos = sorted(i for i in (txt.find(str(q.get("codigo") or "")) for q in daqui) if i >= 0)
+            for p in daqui:
+                ini = txt.find(str(p.get("codigo") or ""))
+                if ini < 0:
+                    continue
+                fim = next((i for i in pos if i > ini), len(txt))
+                valor = f"{float(p['preco']):.2f}".replace(".", ",")
+                if re.search(rf"IPI\D{{0,6}}{re.escape(valor)}(?!\d)", txt[ini:fim], re.I):
+                    no_ipi += 1
+        if no_ipi >= 3 and no_ipi >= 0.2 * len(com_preco):
+            return f"{no_ipi}/{len(com_preco)} preços são o IPI do bloco"
     com_nome = [p for p in produtos if p.get("nome")]
     if com_nome:
         nomes_preco = sum(1 for p in com_nome if _NOME_COM_PRECO_RE.search(str(p["nome"])))

@@ -399,6 +399,10 @@ export const mapAiProductsToBrutos = (produtos: AiProduto[]): ProdutoBruto[] => 
     // exportava 161 esgotados). O statusEstoque não chega à tela de
     // exportação, então o corte é aqui, na entrada.
     if (p.esgotado === true) continue;
+    // Selo EM BREVE também não sai, mesmo com preço impresso (critério do
+    // Josef, Teste 11 — Levivan LV1020 "EM BREVE" + R$ 13,50). Sem preço já
+    // caía como inválido na exportação; agora nem entra no lote.
+    if (p.emBreve === true) continue;
 
     const campos: Record<string, any> = {
       codigo,

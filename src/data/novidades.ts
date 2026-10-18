@@ -28,6 +28,22 @@ export interface Novidade {
 /** Da mais nova para a mais antiga. */
 export const NOVIDADES: Novidade[] = [
   {
+    versao: 297,
+    data: "2026-10-18",
+    itens: [
+      {
+        tipo: "corrigido",
+        texto: "Levivan: preços certos (antes vários saíam 9,75, que era o IPI), nomes certos (sem \"Obs.: (ST)…\" nem NCM no lugar do nome), caixa da bandeja (36 pçs) e sem código repetido em 2 linhas. \"DE R$ 19,00 POR R$ 11,90\" sai 11,90 com ***PROMOCAO***.",
+        testar: "Converta o catálogo Levivan de 13/10 e confira LV1001 (pág. 4), LV1062/LV1063 (pág. 26) e LV1049 (pág. 8).",
+      },
+      {
+        tipo: "ajustado",
+        texto: "Produto com selo EM BREVE não sai mais na planilha, mesmo com preço impresso (vale para todos os fornecedores).",
+        testar: "Levivan: LV1050 (pág. 8) e LV1056 (pág. 6) não devem estar na planilha.",
+      },
+    ],
+  },
+  {
     versao: 296,
     data: "2026-10-18",
     itens: [
