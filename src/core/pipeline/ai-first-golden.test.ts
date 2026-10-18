@@ -21,15 +21,16 @@ describe('🔒 v23 AI-first — golden DAGIA (fixture real do Gemini)', () => {
     expect(produtos).toHaveLength(28);
   });
 
-  it('mapAiProductsToBrutos converte todos os 28', () => {
+  // Teste 11 (18/10/2026): EM BREVE não sai, mesmo com preço — os 5 DXPD
+  // ficam fora do lote; os outros 23 entram.
+  it('mapAiProductsToBrutos converte os 23 que não são EM BREVE', () => {
     const brutos = mapAiProductsToBrutos(produtos);
-    expect(brutos).toHaveLength(28);
+    expect(brutos).toHaveLength(23);
   });
 
-  it('🔒 todos os 28 códigos do catálogo presentes', () => {
+  it('🔒 os 23 códigos ativos do catálogo presentes', () => {
     const expectedCodes = [
       'DXP1', 'DXP2', 'DXP3', 'DXP24', 'DXP25',
-      'DXPD51', 'DXPD52', 'DXPD53', 'DXPD54', 'DXPD55',
       'DZ01', 'DZ02', 'DZ03', 'DZ04', 'LHSP75',
       'DXP57', 'CF026/L12', 'CF029A/L12', 'CF001/L12', 'DXP15',
       'LX15016', 'DPB01', 'DPB02', 'DCM25', 'DCM26',
@@ -58,25 +59,20 @@ describe('🔒 v23 AI-first — golden DAGIA (fixture real do Gemini)', () => {
     expect(parseFloat(byCode['LHSP75']['preco'])).toBeCloseTo(4.38, 2);
   });
 
-  it('🔒 DXPD51-55 (EM BREVE) mapeiam com __emBreve e SEM preço', () => {
+  it('🔒 DXPD51-55 (EM BREVE) ficam fora do lote', () => {
     // Fixture v23 (com hints): Gemini retorna emBreve=true explícito.
     const brutos = mapAiProductsToBrutos(produtos);
-    const emBreveCodes = ['DXPD51', 'DXPD52', 'DXPD53', 'DXPD54', 'DXPD55'];
-    for (const code of emBreveCodes) {
-      const bruto = brutos.find(b => b.campos['codigo'] === code);
-      expect(bruto, `${code} não encontrado`).toBeDefined();
-      expect(bruto!.campos['preco'], `${code} não deveria ter preço`).toBeUndefined();
-      expect(bruto!.campos['__emBreve'], `${code} deveria ter __emBreve`).toBe(true);
-      expect(bruto!.campos['informacoesAdicionais']).toBe('EM BREVE');
+    const codes = brutos.map(b => b.campos['codigo']);
+    for (const code of ['DXPD51', 'DXPD52', 'DXPD53', 'DXPD54', 'DXPD55']) {
+      expect(codes, `${code} é EM BREVE e não deveria entrar`).not.toContain(code);
     }
   });
 
-  it('🔒 qty CAIXA 100% correta (28/28 — validado contra etiquetas CX C/N Jgs)', () => {
+  it('🔒 qty CAIXA 100% correta (23/23 ativos — validado contra etiquetas CX C/N Jgs)', () => {
     // Re-spike v23 com hints: 28/28 (era 12/28 sem hints).
     // Ground truth = etiquetas "CX C/N Jgs" lidas manualmente do catálogo.
     const GT_CX: Record<string, number> = {
       'DXP1': 12, 'DXP2': 12, 'DXP3': 12, 'DXP24': 12, 'DXP25': 8,
-      'DXPD51': 12, 'DXPD52': 12, 'DXPD53': 12, 'DXPD54': 12, 'DXPD55': 12,
       'DZ01': 2, 'DZ02': 2, 'DZ03': 2, 'DZ04': 2, 'LHSP75': 72,
       'DXP57': 6, 'CF026/L12': 8, 'CF029A/L12': 8, 'CF001/L12': 8, 'DXP15': 8,
       'LX15016': 8, 'DPB01': 8, 'DPB02': 12, 'DCM25': 4, 'DCM26': 4,
@@ -90,7 +86,7 @@ describe('🔒 v23 AI-first — golden DAGIA (fixture real do Gemini)', () => {
     }
   });
 
-  it('produto com emBreve=true explícito seta __emBreve + informacoesAdicionais', () => {
+  it('produto com emBreve=true explícito não entra no lote (critério do Josef, Teste 11)', () => {
     const aiProds: AiProduto[] = [{
       codigo: 'TEST01',
       nome: 'Produto Futuro',
@@ -99,10 +95,7 @@ describe('🔒 v23 AI-first — golden DAGIA (fixture real do Gemini)', () => {
       paginaOrigem: 3,
     }];
     const brutos = mapAiProductsToBrutos(aiProds);
-    expect(brutos).toHaveLength(1);
-    expect(brutos[0].campos['__emBreve']).toBe(true);
-    expect(brutos[0].campos['informacoesAdicionais']).toBe('EM BREVE');
-    expect(brutos[0].campos['preco']).toBeUndefined();
+    expect(brutos).toHaveLength(0);
   });
 
   it('🔒 __postProcessed=true em TODOS (bloqueia heurística "menor numérico = preço")', () => {

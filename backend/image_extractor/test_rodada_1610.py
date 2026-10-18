@@ -153,3 +153,13 @@ def test_cores_so_em_produto_com_mais_de_uma_cor():
     assert nomes["2"] == ("FITILHO 5mm ***CORES***", "Cor: AZUL")
     assert nomes["3"][0] == "DENTADURA BRANCA"
     assert nomes["5"][0] == "PRESÉPIO OURO VELHO P/MESA"
+
+
+def test_preco_igual_ao_ipi_do_bloco_derruba_o_template():
+    # Levivan Teste 11: o PRECO solto pegava "IPI 9,75" (0 de 23 preços certos)
+    pagina = "".join(f"LV10{i:02d}\nCopo\nCx. 16 conjuntos\nObs.: (ST) - IPI 9,75\n" for i in range(5)) + "11,90\n"
+    prods = [{"codigo": f"LV10{i:02d}", "preco": 9.75, "paginaOrigem": 1, "nome": "Copo"} for i in range(5)]
+    tpl = {"CODE": r"(LV\d{4})", "PRECO": r"(\d{1,3},\d{2})"}
+    assert "IPI" in (ge._template_desalinhado([pagina], tpl, prods) or "")
+    certos = [dict(p, preco=11.9) for p in prods]
+    assert ge._template_desalinhado([pagina], tpl, certos) is None

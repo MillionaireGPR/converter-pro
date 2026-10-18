@@ -2149,6 +2149,25 @@ Validação sem API sobre a conversão de 15/10: preços da lista 38/48, caixas
 outros 14 catálogos: só a VAESO muda (cor fora do nome, pedido do Josef).
 Testes: `test_rodada_1610.py`, `esgotado-ai-first.test.ts`.
 
+### 14.49 Levivan e EM BREVE (18/10/2026, v297)
+
+Teste 11: Levivan com 21 preços errados (vários 9,75), nomes "Obs.: (ST)…"/NCM,
+EM BREVE saindo com preço e códigos em 2 linhas. Causa: o template sintetizado
+tinha PRECO solto `(\d{1,3},\d{2})`, que pegava o "IPI 9,75" do bloco; e neste
+catálogo o preço fica longe do código no texto (só a posição liga os dois).
+
+- `_template_desalinhado`: preço igual ao IPI impresso no próprio bloco em ≥20%
+  (mín. 3) → template recusado, vai para o text-chunked (que lê com coordenada).
+  Templates do servidor: só a Levivan dispara (9/33).
+- Validação com IA real (6 chamadas): text-chunked + pós-processamento acerta
+  23/23 preços da lista (LV1001/1002/1073 com DE 19,00 e POR 11,90 como preço
+  promocional, que o site exporta), sem duplicados, nomes e caixa certos.
+- EM BREVE não sai, mesmo com preço (critério do Josef): `mapAiProductsToBrutos`
+  pula `emBreve: true`. Hoje só afetava Neo (32, já tratados pela regra de selos)
+  e ART FRAME (12). Testes golden da DAGIA atualizados (DXPD51-55 fora do lote).
+- Pendente: LV1020 (selo EM BREVE + R$ 13,50) a IA não marca; o selo da Levivan
+  fica na foto e a regra de "código mais perto" não serve (testado).
+
 ## 15. Conversão em paralelo — fila de jobs (27/08/2026)
 
 **Mudança de modelo de estado da tela `/conversao`**: de um catálogo por

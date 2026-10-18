@@ -56,8 +56,7 @@
 
 **Teste 11 (16/10/2026)** — laudo em `ENVIO-GABRIEL-TESTE11` (zip no Drive). Feito: DUTE sem planilha; BM36 (575 sumidos, PROM50%, AGUARDANDO, 439890); Goal 16 sumidos; Neo ESGOTADO, preço/caixa do pacote,
 ***CORES*** só com mais de uma cor (+ VAESO cor no nome).
-Falta: Neo preços de layout (págs. 23, 24, 54), nomes por bolinha/vizinho, fotos (págs. 33, 41, 74, 85, 90, 91); Levivan
-(EM BREVE, preços, nomes, duplicados); Dagia/Petrin/BM36 marcador de promoção;
+Falta: Neo preços de layout (págs. 23, 24, 54), nomes por bolinha/vizinho, fotos (págs. 33, 41, 74, 85, 90, 91); Levivan LV1020 (EM BREVE com preço, IA não marca); Dagia/Petrin/BM36 marcador de promoção;
 Folia nomes + JRF-50.0451; VAESO ***PROMOCAO*** sobrando (PHA4501-4); FORTAL JDG-60*90, 5085, JZ-2516; GIRA TP2135/GU0144/TP1792;
 Tuka 11-18336-22, 88H-24046-32, VTK-66-4231-80U.
 
@@ -85,6 +84,8 @@ medindo com A/B sem API sobre os jobs do Teste 9 já gravados no servidor.
 
 ## Diário
 
+- **18/10/2026 (v297)** — Levivan: template recusado quando o preço é o IPI do bloco → text-chunked
+  (23/23 preços da lista). EM BREVE não sai (todos os fornecedores). guide.md §14.49.
 - **18/10/2026 (v296 — segurança, 0 alertas)** — React Router 7.18.4, Tailwind 4.3.3 (ferramenta oficial;
   compatibilidade visual no `index.css`: alturas de linha, paleta v3, label/space-y, cabeçalho de card),
   tailwind-merge 3.7.0 (o 2 tirava o fundo do card com degradê; a Nunê ainda está no 2.6 — conferir lá), sem `@tailwindcss/typography`/`autoprefixer`; Vite fica 6.4.4.

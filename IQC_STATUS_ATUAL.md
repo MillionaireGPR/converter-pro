@@ -5,6 +5,11 @@
 
 ---
 
+## ✅ ENTREGUE em 18/10 — Levivan e EM BREVE (v297)
+
+- Levivan: preços (o 9,75 era o IPI), nomes, caixa e duplicados — 23/23 da lista do Teste 11.
+- EM BREVE não sai mais na planilha, mesmo com preço (todos os fornecedores). Pendente: LV1020.
+
 ## ✅ ENTREGUE em 18/10 — Atualização de segurança (v296)
 
 - 0 alertas de dependência: React Router 7, Tailwind 4 (sem mudança visual, comprovado por medição
