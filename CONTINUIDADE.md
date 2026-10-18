@@ -85,6 +85,12 @@ medindo com A/B sem API sobre os jobs do Teste 9 já gravados no servidor.
 
 ## Diário
 
+- **18/10/2026 (v296 — segurança, 0 alertas)** — React Router 7.18.4, Tailwind 4.3.3 (ferramenta oficial;
+  compatibilidade visual no `index.css`: alturas de linha, paleta v3, label/space-y, cabeçalho de card),
+  tailwind-merge 3.7.0 (o 2 tirava o fundo do card com degradê; a Nunê ainda está no 2.6 — conferir lá), sem `@tailwindcss/typography`/`autoprefixer`; Vite fica 6.4.4.
+  `npm audit` 0; Dependabot 4 → 0 após o merge; `pip-audit` 0 (requirements e produção). Medição de caixas
+  v3×v4 em 12 telas × desktop/celular: 0 diferenças; prints: iguais (Descontos ≤2/255 num degradê).
+  Versão anterior servida na porta 8083 a partir do build da main (sem worktree, por falta de disco).
 - **17/10/2026** — v295: selo da versão, aviso de atualização e Central de novidades (✨) no topo.
   Regra no CLAUDE.md: toda entrega sobe `VERSAO` + entrada em `src/data/novidades.ts`.
 - **16/10/2026 (noite 2)** — Neo: ESGOTADO 162/162 pela tarja em texto; preço do pacote 38/48;

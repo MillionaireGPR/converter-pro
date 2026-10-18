@@ -235,7 +235,7 @@ npx supabase gen types typescript --project-id <id> --schema public > src/integr
 
 - **Tipos Supabase**: `src/integrations/supabase/types.ts`
 - **Utilitários**: `src/lib/utils.ts`
-- **Config Tailwind**: `tailwind.config.ts`
+- **Config Tailwind**: Tailwind 4 — tema no bloco `@theme` de `src/index.css` (sem `tailwind.config.ts` desde 18/10/2026)
 - **Guia de negócio**: `guide.md` (raiz do projeto)
 
 ---

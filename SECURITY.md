@@ -277,7 +277,7 @@ class SecurityUtils {
   InfinitePay.
 
 
-## 7. Dependências (13/10/2026)
+## 7. Dependências (13/10/2026, atualizada 18/10/2026)
 
 84 alertas do Dependabot, todos em bibliotecas JavaScript (o backend Python
 não tinha alerta). Corrigidos no PR de segurança:
@@ -296,3 +296,19 @@ Ficam abertos, de propósito: **react-router** (open redirect — a correção s
 existe na v7, que exige migrar o app; os links do app são internos),
 **braces** e **postcss-selector-parser** (ferramentas de build do tailwind 3,
 não vão para o navegador). Revisar quando migrar tailwind 4 / react-router 7.
+
+**18/10/2026 (v296) — 0 alertas.** Os 4 restantes fechados:
+- **react-router-dom 6.30 → 7.18.4** (react-router médio ×2). O app usa só a API
+  de rotas no navegador (sem SSR), nenhuma mudança de código.
+- **Tailwind 3.4 → 4.3.3** (`@tailwindcss/upgrade`, PostCSS `@tailwindcss/postcss`;
+  `tailwind.config.ts` virou `@theme` no `src/index.css`): saem `braces` (alto) e
+  `postcss-selector-parser` (médio). Removidos `@tailwindcss/typography` (sem
+  `prose`) e `autoprefixer`. Compatibilidade visual no `index.css` (alturas de
+  linha do v3, paleta do v3 nas famílias usadas, margem depois de `<label>` e do
+  cabeçalho de card em linha; degradês em sRGB). `tailwind-merge` 2 → 3.7.0: o 2
+  não conhece as classes do v4 e descartava o fundo do card (`bg-linear-to-r` × `bg-card`).
+- **Vite fica em 6.4.4** de propósito: sem alerta, e o 7 traria o
+  `@vitejs/plugin-react-swc` 4 com o `@swc/core` 1.16, que não carrega no Windows.
+- **Motor Python:** `pip-audit` sem vulnerabilidade, tanto no `requirements.txt`
+  quanto nos 72 pacotes instalados no container de produção (Python 3.11).
+- Versões escolhidas com ≥2 semanas de publicação (`npm view <pacote> time`).

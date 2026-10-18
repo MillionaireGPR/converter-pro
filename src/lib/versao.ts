@@ -11,4 +11,4 @@
  * subir este número e escrever a entrada em `src/data/novidades.ts` (o teste
  * quebra se esquecer).
  */
-export const VERSAO = "295";
+export const VERSAO = "296";

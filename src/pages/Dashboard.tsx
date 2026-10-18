@@ -35,13 +35,13 @@ export default function Dashboard() {
           <h1 className="text-3xl font-extrabold text-foreground tracking-tight">Dashboard</h1>
           <p className="text-sm text-muted-foreground mt-1">Visão geral das operações de conversão comercial</p>
         </div>
-        <Button className="gradient-primary text-primary-foreground font-semibold shadow-sm" onClick={() => navigate('/conversao')}>
+        <Button className="gradient-primary text-primary-foreground font-semibold shadow-xs" onClick={() => navigate('/conversao')}>
           <FileUp className="h-4 w-4 mr-2" /> Novo Upload
         </Button>
       </div>
 
       {/* Mini Tutorial - Passo a Passo */}
-      <Card className="shadow-card border-l-4 border-l-primary bg-gradient-to-r from-primary/5 to-transparent">
+      <Card className="shadow-card border-l-4 border-l-primary bg-linear-to-r/srgb from-primary/5 to-transparent">
         <CardHeader className="pb-2">
           <div className="flex items-center gap-2">
             <Lightbulb className="h-5 w-5 text-primary" />
@@ -52,7 +52,7 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Passo 1 */}
             <div className="flex items-start gap-3 p-3 rounded-lg bg-card hover:bg-muted/30 transition-colors">
-              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+              <div className="shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
                 <span className="text-sm font-bold text-primary">1</span>
               </div>
               <div className="flex-1 min-w-0">
@@ -68,7 +68,7 @@ export default function Dashboard() {
 
             {/* Passo 2 */}
             <div className="flex items-start gap-3 p-3 rounded-lg bg-card hover:bg-muted/30 transition-colors">
-              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+              <div className="shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
                 <span className="text-sm font-bold text-primary">2</span>
               </div>
               <div className="flex-1 min-w-0">
@@ -84,7 +84,7 @@ export default function Dashboard() {
 
             {/* Passo 3 */}
             <div className="flex items-start gap-3 p-3 rounded-lg bg-card hover:bg-muted/30 transition-colors">
-              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+              <div className="shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
                 <span className="text-sm font-bold text-primary">3</span>
               </div>
               <div className="flex-1 min-w-0">
@@ -100,7 +100,7 @@ export default function Dashboard() {
 
             {/* Passo 4 */}
             <div className="flex items-start gap-3 p-3 rounded-lg bg-card hover:bg-muted/30 transition-colors">
-              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+              <div className="shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
                 <span className="text-sm font-bold text-primary">4</span>
               </div>
               <div className="flex-1 min-w-0">

@@ -28,6 +28,16 @@ export interface Novidade {
 /** Da mais nova para a mais antiga. */
 export const NOVIDADES: Novidade[] = [
   {
+    versao: 296,
+    data: "2026-10-18",
+    itens: [
+      {
+        tipo: "ajustado",
+        texto: "Atualização de segurança da base do sistema. Nada muda no uso: telas, conversões e planilhas continuam iguais.",
+      },
+    ],
+  },
+  {
     versao: 295,
     data: "2026-10-17",
     itens: [

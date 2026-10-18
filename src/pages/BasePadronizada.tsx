@@ -307,7 +307,7 @@ export default function BasePadronizada() {
           <Button variant="outline" size="sm" onClick={handleValidar} disabled={!selecionados.length} className="gap-1.5">
             <CheckCircle className="h-3.5 w-3.5" /> Validar
           </Button>
-          <Button size="sm" className="gradient-success text-primary-foreground font-semibold shadow-sm gap-1.5" onClick={handleExportar} disabled={!selecionados.length}>
+          <Button size="sm" className="gradient-success text-primary-foreground font-semibold shadow-xs gap-1.5" onClick={handleExportar} disabled={!selecionados.length}>
             <Download className="h-3.5 w-3.5" /> Exportar Mercos
           </Button>
         </div>
@@ -416,7 +416,7 @@ export default function BasePadronizada() {
                   </TableHeader>
                   <TableBody>
                     {produtosPaginados.map(p => (
-                      <TableRow key={p.id} className={cn("group", selecionados.includes(p.id) && "bg-primary/[0.03]")}>
+                      <TableRow key={p.id} className={cn("group", selecionados.includes(p.id) && "bg-primary/3")}>
                         <TableCell className="pl-5">
                           <Checkbox checked={selecionados.includes(p.id)} onCheckedChange={() => setSelecionados(prev => prev.includes(p.id) ? prev.filter(x => x !== p.id) : [...prev, p.id])} />
                         </TableCell>
