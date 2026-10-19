@@ -1,7 +1,45 @@
 # Instruções para Claude (e qualquer agente assistente)
 
+> **Infraestrutura (onde roda cada parte): seção 0 logo abaixo — referência única.** Leia antes de afirmar qualquer coisa sobre servidor, banco, deploy ou modelo.
 > **Continuidade entre contas:** leia também `CONTINUIDADE.md` e atualize-o ao fim de cada bloco de trabalho relevante, commitando junto.
 > **Pasta oficial:** `C:\Users\Gabriel Pantoni\Desktop\Projetos LOVABLE e GITHUB\Converter-Pro-Merged`. A cópia em `OneDrive\Desktop\...` não tem git (OneDrive corrompe o `.git`): nunca use. Confira com `git log --oneline -1`.
+
+---
+
+## 0. ONDE RODA CADA PARTE (atualizado em 2026-10-19 — conferido na fonte)
+
+> Referência única de infraestrutura. Se outro documento ou memória disser diferente, este vale, e o outro deve ser corrigido. Mudou servidor, deploy, banco ou modelo? Atualize esta tabela no mesmo commit, com a data.
+
+| Parte | Onde roda | Como publica | Como conferir |
+|---|---|---|---|
+| **Backend principal (motor de conversão)** | **Integrator** — VPS `23.80.89.90` (painel iContainer), domínio `conversor-vps.metodoiqc.com.br` (DNS direto pro IP, sem Cloudflare). Container Docker `converter-pro-backend` (compose `infra/integrator/compose.yaml`, porta `127.0.0.1:28081`), atrás do nginx do painel (container `ic-nginx-*`). TLS Let's Encrypt renovado pelo `certbot.timer` + hook `renewal-hooks/deploy/converter-pro-renew-tls` (= `infra/integrator/renew-tls.sh`). | **Cópia de arquivos, não git:** `/opt/converter-pro/repo` só tem `backend/` e `infra/`. `scp` dos `.py` alterados → `sed -i 's/\r$//'` → `docker compose -f infra/integrator/compose.yaml up -d --build` (o primeiro setup usa `infra/integrator/deploy.sh`). Chave ssh: `~/.ssh/converter_pro_integrator_ed25519`, usuário root. Reinício: `restart: unless-stopped` + healthcheck a cada 30s. | `curl https://conversor-vps.metodoiqc.com.br/health` → `"status":"healthy"`. `docker ps` mostra `(healthy)`. **Versão no ar:** o `version` do `/health` está parado em `v52` e NÃO acompanha as entregas — para saber se o servidor está com o `main`, compare o md5 dos `.py` (ignorando `\r`) entre o local e `/app/` no container. Em 19/10: idêntico ao `main` (v297). |
+| **Backend reserva (Render)** | `converter-pro-image-extractor.onrender.com` (`render.yaml`, plano free no arquivo). **SUSPENSO**: `/health` responde 503 "This service has been suspended" (visto em 06/10 e 18/10). **Hoje não existe reserva funcionando.** | Auto-deploy do GitHub pelo `render.yaml` (quando ativo). | `curl …onrender.com/health`. Motivo da suspensão e plano: **não confirmado** (só no painel do Render). |
+| **Última instância (servidor do Wesley)** | `conversor-api.metodoiqc.com.br` (Cloudflare Tunnel). **Fora do ar**: 530 / erro 1033 (túnel desconectado). Legado. | Não publica mais. | `curl …/health`. |
+| **Escolha do servidor (failover)** | No navegador: `src/core/backendResolver.ts` testa `/health` na ordem PRIMARY → FALLBACK → FALLBACK_2 e fixa um por sessão. | Variáveis da Vercel (embutidas no build). | Bundle de produção contém Integrator → Render → Wesley nessa ordem. |
+| **Frontend** | Vercel, projeto `iqcp/converter-pro`, `https://centraldeconversao.vercel.app`. | Automático a cada merge na `main` (`vercel.json`: `npm run build` → `dist`). | `https://centraldeconversao.vercel.app/build-version.json` muda a cada build; selo da versão (`src/lib/versao.ts`) no canto da tela. |
+| **Banco + login + arquivos** | Supabase, projeto `xjznoddaifyxlfbivmau`. Tabelas usadas: `standardized_products`, `suppliers`, `export_history` (frontend), `image_extraction_jobs`, `image_extraction_results`, `app_assinatura`, `app_assinatura_pagamentos` (backend); RPCs `app_login`, `app_assinatura_status/confirmar/liberar_manual`. Bucket `source-files` (ZIPs de imagens; limpeza de antigos em `storage.py`). | Migrations em `supabase/migrations/` aplicadas à mão. | URL do projeto no bundle publicado. Tabelas/bucket: grep `.from(` / `table(` no código. |
+| **Fila de conversões** | Dentro do processo do backend: semáforo, `MAX_CONCURRENT_JOBS=1` no Integrator. Status de cada job em disco: `/opt/converter-pro/data/temp/<job>/status.json` (montado em `/app/temp`). Limpeza: `converter-pro-cleanup.timer` (systemd, diário). Sem Redis/fila externa. | Junto com o backend. | `GET /admin/jobs` (token) ou listar `data/temp` no servidor. |
+| **IA** | **Só Gemini** (Google). `gemini-2.5-flash` padrão; se falhar, `gemini-2.0-flash` e por último `gemini-2.5-pro` (`backend/image_extractor/gemini_extractor.py:55-57`). Análise de fornecedor novo: `gemini-2.5-flash` (`supplier_analyzer.py:90`). Chave `GEMINI_API_KEY` só no backend. | Junto com o backend. | `grep -n "gemini-" backend/image_extractor/*.py`. Conta/teto de gasto no Google: **não confirmado** aqui. |
+| **Assinatura (billing)** | InfinitePay, código em `backend/image_extractor/billing.py` + `src/core/billing/`. **DESLIGADA** em produção. Asaas: não existe no código. | Junto com o backend. | `curl https://conversor-vps.metodoiqc.com.br/billing/status` → `"estado":"desligada"`. "Checkout externo" na conta InfinitePay: **não confirmado**. |
+| **Código** | GitHub `MillionaireGPR/converter-pro`, branch de produção `main` (protegida; merge só com CI verde). | PR → merge. Frontend publica sozinho; backend exige o passo do Integrator acima. | `git log --oneline -1` = número da versão (`git rev-list --count HEAD`). |
+| **Legado ainda no repositório/no ar** | Render (suspenso), servidor do Wesley (fora), `VITE_BACKEND_URL` (variável do túnel antigo, não existe mais na Vercel), `railway.json`/`railway.toml`/`Procfile`, `supabase/config.toml` (aponta pro projeto `iydjwcvbizrakzvcsrzs`, não o de produção — sobra do Lovable), `supabase/functions/` (`link-images`, `process-pdf` — se ainda estão publicadas: **não confirmado**). | — | — |
+
+**Problema conhecido (18/10):** o job "🔥 Smoke test em produção" do GitHub Actions (`scripts/smoke-test.sh`) testa o Render e falha em todo push na `main` desde 05/10 por causa da suspensão. Os outros 3 jobs passam. Não é regressão do código.
+
+**Variáveis de ambiente (só os nomes):**
+- **Vercel — Production:** `VITE_BACKEND_URL_PRIMARY` (Integrator), `VITE_BACKEND_URL_FALLBACK` (Render), `VITE_BACKEND_URL_FALLBACK_2` (Wesley), `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`. **Preview/Development:** só as duas do Supabase → a prévia da Vercel usa `http://localhost:8000` e não converte catálogo.
+- **Integrator** (`/opt/converter-pro/config/backend.env`, chmod 600; modelo em `infra/integrator/backend.env.example`): `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_TOKEN`, `MAX_CONCURRENT_JOBS`, `AI_PICKER_DISABLED`. O compose acrescenta `PORT`, `ADMIN_TOKEN_FILE`, `SERVER_ID=integrator`, `TMPDIR`. O código também lê (opcionais) `BILLING_APP_URL`, `BILLING_PUBLIC_URL`, `STORAGE_RETENTION_DAYS`.
+- **Render:** pelo `render.yaml`, `PYTHON_VERSION`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`; o resto do painel: **não confirmado**.
+- **Local:** `.env` (`VITE_SUPABASE_*`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY`, `VITE_BACKEND_URL`), `.env.local` (criado pela Vercel CLI). Ambos fora do git.
+
+**Rodar localmente:**
+```bash
+npm install && npm run dev                      # frontend em http://localhost:8080 (start-all.bat sobe frontend + backend no Windows)
+cd backend/image_extractor && pip install -r requirements.txt && uvicorn main:app --port 8000   # backend
+npm run verify                                  # portão local (invariantes + tsc + testes)
+cd backend/image_extractor && python -m pytest -q   # testes do backend
+npx vercel env ls                               # nomes das variáveis da Vercel
+```
 
 ---
 
@@ -275,7 +313,7 @@ topo de `src/data/novidades.ts` (mesmo número, linguagem de quem usa, com "Como
 - **Número** = `git rev-list --count HEAD` + 1 (o commit que sobe a versão). Manual de propósito:
   a Vercel clona raso. A antiga sequência v36–v54 é do motor (`SERVICE_VERSION`, parada em v52).
 - **Entrega em duas partes:** o aviso de atualização vale para a tela (Vercel). Mudança só no
-  motor de conversão (servidor Integrator / Render de reserva) também é entrega: ganha versão e
+  motor de conversão (servidor Integrator — seção 0) também é entrega: ganha versão e
   entrada na Central, mesmo sem mudar a tela (o selo sobe no próximo deploy da Vercel do mesmo merge).
 - **Como funciona:** `vite.config.ts` grava `dist/build-version.json` e embute o mesmo id
   (`__APP_BUILD__`); `AtualizacaoDisponivel.tsx` compara a cada 3 min e ao voltar à aba;
@@ -338,11 +376,12 @@ Ler seção "Como debugar produção" em `ARCHITECTURE.md`.
 
 Comandos rápidos:
 ```bash
-# Health do backend PRIMÁRIO (Integrator). O Render virou 2ª instância em 09/2026.
+# Health do backend PRIMÁRIO (Integrator). Render (reserva) está SUSPENSO — ver seção 0.
 curl https://conversor-vps.metodoiqc.com.br/health
 
-# Smoke test completo (7 checks) — ajuste a versão esperada à atual em /health (hoje v52)
-bash scripts/smoke-test.sh --expect-version v52-supplier-rules-column-mapping
+# Smoke test (7 checks). O script mira o Render por padrão (suspenso → falha);
+# aponte para o Integrator. O "version" do /health está parado em v52 (ver seção 0).
+RENDER_URL=https://conversor-vps.metodoiqc.com.br bash scripts/smoke-test.sh
 ```
 
 ## 📞 Padrão de commits
@@ -384,8 +423,9 @@ O Gabriel toca 4-5 projetos em paralelo e o contexto desta sessão é caro
 
 1. Consulte `ARCHITECTURE.md` → "Como debugar produção em caso de fogo"
 2. Cheque `/health` para versão atual
-3. Veja os logs do Integrator (`docker logs converter-pro-backend`) e, se o
-   failover tiver caído pro Render, o dashboard dele para OOM/restarts
+3. Veja os logs do Integrator (`docker logs converter-pro-backend`). Hoje não há
+   reserva funcionando (Render suspenso, Wesley fora — seção 0): se o Integrator
+   cair, o cliente fica parado até ele voltar
 4. Console do navegador (anônimo) para padrões `[GeminiRepair]` / `[Engine]`
 5. **Não faça rollback automático** — investigue antes; pode ser ambiente, não código
 
@@ -397,7 +437,7 @@ O Gabriel toca 4-5 projetos em paralelo e o contexto desta sessão é caro
 - **Caso de uso crítico**: catálogos PDF → planilhas Mercos/JAWEB
 - **Fornecedores em produção**: NIX HOUSE, FOLIA, GIRA, BM36, FREECOM, DAGIA, CLINK, MOMENT, FLASH, NeoFestas, LilaHome, Petrin, Levivan, GoalKids
 - **Prazo**: ASAP (entrega em curso)
-- **Restrição**: zero/baixo custo — Render Starter $7/mês, Gemini Flash ~$0.05/catálogo
+- **Restrição**: zero/baixo custo — servidor Integrator (VPS própria) + Gemini Flash ~$0.05/catálogo (seção 0)
 
 A confiança do cliente já foi afetada por demora. Cada regressão piora isso.
 **Velocidade ≠ pressa.** Validar localmente antes de pushar economiza muito tempo.

@@ -1,12 +1,14 @@
 # Converter-Pro - Guia de Arquitetura e Estrutura
 
+> Infraestrutura: `CLAUDE.md` seção 0 (referência única). Trechos deste guia que falam de Render, servidor do Wesley ou túnel Cloudflare como produção são histórico.
+
 ## 1. Visão Geral
 **Objetivo do Projeto:** O "Converter-Pro" (Central de Conversão) é uma ferramenta voltada para automação de conversão de catálogos, produtos e pedidos. O sistema importa bases de dados estruturadas, aplica regras de negócio (descontos, limpeza, mapeamentos) e exporta versões formatadas (como o padrão Mercos, planilhas para ERPs, etc.).
 
 **Stack Tecnológica Principal:**
 - **Frontend / Framework:** React 18, Vite, TypeScript.
-- **Roteamento:** React Router DOM (v6+).
-- **Estilização e UI:** Tailwind CSS, shadcn/ui e Radix UI (usando `lucide-react` para ícones).
+- **Roteamento:** React Router DOM 7.
+- **Estilização e UI:** Tailwind CSS 4, shadcn/ui e Radix UI (usando `lucide-react` para ícones).
 - **Gerenciamento de Estado e Cache:** TanStack React Query (`@tanstack/react-query`) em conjunto com Context API (`AppContext.tsx`).
 - **Formulários e Validação:** `react-hook-form` com `zod` e `@hookform/resolvers`.
 - **Backend as a Service / DB:** Supabase (`@supabase/supabase-js`).
@@ -15,10 +17,11 @@
   extrator PRIMÁRIO — lê o PDF inteiro e escolhe a imagem do produto. O
   regex de 14 parsers manuais virou FALLBACK automático (nunca removido).
   Ver `## 14` abaixo e `ARCHITECTURE.md` (invariantes IV-01 a IV-23).
-- **Backend Python (FastAPI):** roda em dois ambientes simultâneos — servidor
-  próprio (via Cloudflare Tunnel nomeado/fixo, `conversor-api.metodoiqc.com.br`)
-  como primário e Render Starter como reserva, com failover automático no
-  cliente. Ver `## 14.3`.
+- **Backend Python (FastAPI):** roda no servidor **Integrator**
+  (`conversor-vps.metodoiqc.com.br`, Docker). O failover do navegador ainda
+  lista Render e o servidor do Wesley, mas em 10/2026 os dois estão fora do ar
+  (Render suspenso). Detalhes e como conferir: `CLAUDE.md` seção 0. Histórico
+  da migração: `## 14.3`.
 
 ---
 
@@ -217,14 +220,13 @@ Substituição completa da estratégia de image matching por detecção visual d
 ### 11.1 Workflow de Integração Contínua
 Todo código passa por validação automática antes de merge:
 
-**Jobs do CI/CD:**
-1. **Análise de Impacto**: Detecta modificação em arquivos críticos
-2. **Lint e Types**: ESLint + TypeScript sem erros
-3. **Testes Unitários**: Cobertura mínima 70%
-4. **Testes de Regressão**: Fluxos críticos testados quando arquivos sensíveis são modificados
-5. **Build**: Garante que compilação funciona
-6. **Segurança**: Scan de vulnerabilidades e secrets
-7. **Deploy**: Automático para produção (apenas main)
+**Jobs reais do CI** (`.github/workflows/regression-locks.yml`, conferido em 19/10/2026):
+1. **Testes de Invariantes (IV-01 a IV-13)**: suíte `vitest` completa
+2. **Invariantes do backend (Python)**: greps dos IVs no código do backend
+3. **Build do frontend**
+4. **Smoke test em produção** (só em push na `main`): roda `scripts/smoke-test.sh`, que hoje mira o Render suspenso e falha — ver `CLAUDE.md` seção 0
+
+Deploy: a Vercel publica o frontend sozinha no merge da `main`; o backend é publicado à mão no Integrator.
 
 ### 11.2 Arquivos Críticos Protegidos
 Modificações nestes arquivos disparam revisão obrigatória dupla:
@@ -237,10 +239,8 @@ Modificações nestes arquivos disparam revisão obrigatória dupla:
 - `src/integrations/supabase/types.ts` - Tipagens do banco
 
 ### 11.3 Regras de Branch
-- `main`: Produção - Protegida, apenas via PR aprovado
-- `develop`: Integração - Branch padrão para desenvolvimento
-- `feature/*`: Novas funcionalidades
-- `fix/*`: Correções
+- `main`: Produção - Protegida, merge só via PR com os checks do CI verdes
+- Não existe branch `develop`: os PRs saem direto de `feat/*`, `fix/*`, `docs/*`, `chore/*` para a `main`
 - **NUNCA commitar diretamente na main**
 
 ### 11.4 Pull Request Obrigatório
@@ -280,9 +280,10 @@ npx tsc --noEmit
 ### Documentação:
 - Arquitetura: `guide.md` (este arquivo)
 - Segurança: `SECURITY.md`
+- Infraestrutura: `CLAUDE.md` seção 0
 - Regras de IA: `.windsurf/rules.md`
 - Protocolo: `DEVELOPMENT_PROTOCOL.md`
-- CI/CD: `.github/workflows/ci-cd.yml`
+- CI/CD: `.github/workflows/regression-locks.yml` (o job de smoke test em produção mira o Render e falha enquanto ele estiver suspenso — `CLAUDE.md` seção 0)
 
 ---
 

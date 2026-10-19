@@ -42,10 +42,13 @@
 
 ## Configurações em andamento (só nomes, nunca valores)
 
+> **Referência única de infraestrutura: `CLAUDE.md` seção 0** (conferida na fonte em 19/10/2026). Esta lista é só o resumo.
+
 - **Backend primário:** VPS Integrator (`conversor-vps.metodoiqc.com.br`), deploy por `scp` + `docker compose`
   (passo a passo em `infra/integrator/README.md` e no `CLAUDE.md`). Chave SSH local: `~/.ssh/converter_pro_integrator_ed25519`.
-- **Render (reserva, `VITE_BACKEND_URL_FALLBACK`):** em 06/10 responde "Service Suspended". O failover
-  para ele não funciona enquanto estiver assim.
+- **Render (reserva, `VITE_BACKEND_URL_FALLBACK`):** suspenso (503 "Service Suspended" em 06/10 e 18/10); o servidor
+  do Wesley (`_FALLBACK_2`) também está fora (Cloudflare 1033). **Hoje não há reserva funcionando.** O smoke test
+  do CI mira o Render e falha em todo push na `main` desde 05/10.
 - **Gemini:** `GEMINI_API_KEY` no `.env` local e no servidor. Teste que chama a API = custo: só com aval.
 - **Banco:** `SUPABASE_DB_URL` em `.env.local` (nunca imprimir).
 - **Billing:** tabelas `app_assinatura*` em produção, estado `desligada`. Para ligar: checklist em `guide.md #17`.
@@ -64,7 +67,8 @@ Tuka 11-18336-22, 88H-24046-32, VTK-66-4231-80U.
 - Josef: reconverter GIRA (4), Goal, Tuka, FORTAL, Lila, Neo, DUTE, DAGIA, FOLIA (2) e BM36 e conferir.
 - Josef: como separar BM36 × World Classic (o código 439890 não tem prefixo).
 - Gabriel: ativar "Checkout externo" na InfinitePay, preencher a InfiniteTag no painel e ligar a assinatura.
-- Gabriel: decidir o Render (reativar como reserva ou tirar do failover).
+- Gabriel: decidir o Render (reativar como reserva ou tirar do failover) — painel do Render mostra o motivo da suspensão.
+  Enquanto isso, ajustar o smoke test do CI para o Integrator (mudança de script, fora da tarefa de docs).
 - Gabriel: decidir a pasta solta `_IQC_STATUS_UPDATE_MICHELE_CONVERSOR_PR73/` (pacote de status antigo
   do PR #73, 6 arquivos .md). `scripts/server-ops/` (token Cloudflare + cópia de DNS) agora fica
   inteiro ignorado pelo git; nada foi apagado.
@@ -84,6 +88,9 @@ medindo com A/B sem API sobre os jobs do Teste 9 já gravados no servidor.
 
 ## Diário
 
+- **19/10/2026 (docs, sem versão nova)** — Mapa de infraestrutura no topo do `CLAUDE.md` (seção 0), conferido no
+  servidor, na Vercel e no bundle publicado. README e PROJECT_SUMMARY reescritos (antigos em `docs/historico/`);
+  ARCHITECTURE/guide/.env.example corrigidos (Render como produção, branch `develop`, `ci-cd.yml` inexistentes).
 - **18/10/2026 (v297)** — Levivan: template recusado quando o preço é o IPI do bloco → text-chunked
   (23/23 preços da lista). EM BREVE não sai (todos os fornecedores). guide.md §14.49.
 - **18/10/2026 (v296 — segurança, 0 alertas)** — React Router 7.18.4, Tailwind 4.3.3 (ferramenta oficial;

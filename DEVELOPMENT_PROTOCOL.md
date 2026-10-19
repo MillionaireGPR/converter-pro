@@ -1,5 +1,7 @@
 # 📋 PROTOCOLO DE DESENVOLVIMENTO SEGURO
 
+> Infraestrutura: `CLAUDE.md` seção 0 (referência única).
+
 > **LEIA ANTES DE QUALQUER ALTERAÇÃO NO CÓDIGO**
 
 ---

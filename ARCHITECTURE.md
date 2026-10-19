@@ -1,11 +1,13 @@
 # 🔒 ARQUITETURA — INVARIANTES INTOCÁVEIS
 
+> Infraestrutura: `CLAUDE.md` seção 0 (referência única). Onde este documento citar "Render" como servidor de produção, é histórico: o backend roda no Integrator e o Render (reserva) está suspenso desde 10/2026.
+
 > **Este documento é a fonte da verdade sobre o que NÃO pode mudar no sistema.**
 > Antes de modificar qualquer arquivo listado aqui, leia a seção correspondente.
 > Cada invariante foi descoberto na dura — quebrou produção, custou tempo do cliente.
 
 **Data da consolidação**: 27/05/2026 (base) · 09/06/2026 (pivô AI-first, IV-15 a IV-20)
-**Versão estável**: Render `v26-center-badge`
+**Versão estável (histórico, 05/2026)**: Render `v26-center-badge`. Hoje: versão = `src/lib/versao.ts`; servidor = Integrator (`CLAUDE.md` seção 0)
 **Validação base**: NIX HOUSE 285 produtos, 91 preços em 58.8s, R$ 0,65, 0 erros.
 **Validação AI-first**: DAGIA 28/28 produtos (códigos/preços/qty caixa/EM BREVE = 100%) + imagens corretas (caixas dos kits, foto dos copos, mugs/xícaras nos produtos certos), aprovado pelo cliente em 09/06/2026.
 
@@ -26,7 +28,7 @@
 └─────────────────────────────────────────────────────────────────────┘
                             ↓ async (POST + polling)
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Render Starter 512MB (FastAPI)                                     │
+│  Backend FastAPI — Integrator, Docker 5GB (era Render 512MB)        │
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │  /repair_prices_ai (POST) → jobId + BackgroundTask            │  │
 │  │  /repair_prices_ai_status/{job_id} (GET) → polling            │  │
@@ -204,7 +206,7 @@ filtro: area >= 20000 pixels
 
 ### IV-20 — AI Picker: whitelist DAGIA + kill-switch `AI_PICKER_DISABLED`
 **Arquivos**: `src/core/images/imageExtractionApi.ts` (`AI_PICKER_SUPPLIERS`), `main.py`
-**Por que existe**: controlar custo e blast-radius. AI Picker roda só para fornecedores na whitelist (`['DAGIA']` hoje) ou via `useAiPicker=true`. `AI_PICKER_DISABLED=1` no Render desliga sem rollback de código (segurança operacional).
+**Por que existe**: controlar custo e blast-radius. AI Picker roda só para fornecedores na whitelist (`['DAGIA']` hoje) ou via `useAiPicker=true`. `AI_PICKER_DISABLED=1` no servidor (`backend.env` do Integrator) desliga sem rollback de código (segurança operacional).
 **Travado por**: `src/core/images/image-extraction-contract.test.ts`
 
 ### IV-21 — Fila/limite de concorrência de jobs pesados (trava anti-OOM)
@@ -253,7 +255,7 @@ Qualquer regressão nesses números é sinal de alerta.
 5. **Rode `npx tsc --noEmit`.** Zero erros.
 6. **Abra PR.** O CI valida tudo de novo.
 7. **NUNCA bypassa o CI** com `--no-verify` ou desativando workflows.
-8. **Após merge**, monitore `/health` no Render até a nova versão aparecer.
+8. **Após merge**, publique o backend no Integrator (passo a passo em `CLAUDE.md` seção 0) e confira `/health` + md5 dos arquivos no container (o `version` do `/health` está parado em v52).
 9. **Se for fix urgente em produção** que toca IV-NN, marcar no PR claramente e adicionar teste de regressão DENTRO do PR.
 
 ---
@@ -262,11 +264,11 @@ Qualquer regressão nesses números é sinal de alerta.
 
 ### Sintoma: usuário relata erros depois de upload
 
-1. **Abra `/health` do Render**: confirme versão esperada.
+1. **Abra `/health` do Integrator**: confirme que está `healthy`.
    ```
-   curl https://converter-pro-image-extractor.onrender.com/health
+   curl https://conversor-vps.metodoiqc.com.br/health
    ```
-2. **Cheque Render Dashboard**: procure por "Instance failed: Ran out of memory" ou "Service recovered".
+2. **Logs do container**: `docker logs --tail 200 converter-pro-backend` no Integrator (OOM, reinícios, traceback).
 3. **Console do navegador (anônimo)**: procure por padrão de logs:
    - `[GeminiRepair]` → `/repair_prices_ai`
    - `[ImageExtractionApi]` → `/process`
@@ -277,9 +279,8 @@ Qualquer regressão nesses números é sinal de alerta.
 
 ### Sintoma: deploy não atualiza
 
-1. Aguarde 2-3min (Render rebuild + warm-up).
-2. Force redeploy via Render Dashboard se necessário.
-3. Confirmação: `/health` retorna `SERVICE_VERSION` novo.
+1. O backend NÃO publica sozinho no merge: copie os arquivos e rode o `docker compose up -d --build` no Integrator (`CLAUDE.md` seção 0).
+2. Confirmação: md5 dos `.py` em `/app/` no container igual ao `main` (o `SERVICE_VERSION` do `/health` não é atualizado desde v52).
 
 ---
 

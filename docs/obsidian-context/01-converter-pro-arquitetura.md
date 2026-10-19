@@ -1,5 +1,7 @@
 # Converter-Pro - Arquitetura Completa
 
+> Infraestrutura: `CLAUDE.md` seção 0 (referência única).
+
 > **Use este documento quando precisar de detalhes técnicos profundos**
 
 ---
@@ -12,7 +14,7 @@
 - Conversão de produtos (Catálogos → Mercos)
 - Conversão de pedidos (Mercos → ERP)
 - Gestão de descontos por catálogo
-- Upload e processamento de XLSX local (sem servidor)
+- Excel lido no navegador; PDF vai ao motor de conversão (backend no Integrator)
 
 ---
 
@@ -21,12 +23,13 @@
 | Camada | Tecnologia | Uso |
 |--------|-----------|-----|
 | Framework | React 18 + Vite | SPA rápida |
-| Roteamento | React Router v6 | Navegação SPA |
-| UI | Tailwind + shadcn/ui + Radix | Componentes estilizados |
+| Roteamento | React Router 7 | Navegação SPA |
+| UI | Tailwind 4 + shadcn/ui + Radix | Componentes estilizados |
 | Estado Servidor | React Query (TanStack) | Fetch/mutações |
 | Estado Local | Context API | Estado global |
 | Formulários | React Hook Form + Zod | Validação tipada |
-| Backend | Supabase | Auth + PostgreSQL |
+| Banco | Supabase | Login (RPC `app_login`) + PostgreSQL + Storage |
+| Motor de conversão | FastAPI + Gemini (servidor Integrator) | Leitura de catálogos PDF e fotos — ver `CLAUDE.md` seção 0 |
 | Arquivos | XLSX + jsPDF | Leitura/escrita |
 | Datas | date-fns | Manipulação de datas |
 

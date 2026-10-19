@@ -1,5 +1,7 @@
 # 🛡️ FRAMEWORK DE CIBERSEGURANÇA PARA PROJETOS WEB
 
+> Infraestrutura: `CLAUDE.md` seção 0 (referência única).
+
 > **SECURITY-FIRST DEVELOPMENT FRAMEWORK**
 > 
 > Aplica-se a: React, Vue, Angular, Next.js, Node.js, Python, PHP, ou qualquer stack web.
