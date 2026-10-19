@@ -1,9 +1,17 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 13/10/2026
+**Atualizado em:** 19/10/2026
+
+> Infraestrutura: `CLAUDE.md` seção 0 (referência única). Trechos abaixo sobre Render como reserva ativa são históricos.
 
 ---
+
+## 📍 19/10 — Mapa de infraestrutura (`CLAUDE.md` seção 0)
+
+- Backend em produção: só o Integrator. Render (reserva) **suspenso** e servidor do Wesley fora: **sem reserva funcionando**.
+- Smoke test do CI falha desde 05/10 por mirar o Render. Docs corrigidos; versões antigas em `docs/historico/`.
+- Pendente (Gabriel): ver no painel do Render o motivo da suspensão e decidir reativar ou tirar do failover.
 
 ## ✅ ENTREGUE em 18/10 — Levivan e EM BREVE (v297)
 
