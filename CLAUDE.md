@@ -439,7 +439,7 @@ O Gabriel toca 4-5 projetos em paralelo e o contexto desta sessão é caro
 - **Prazo**: ASAP (entrega em curso)
 - **Restrição**: zero/baixo custo — servidor Integrator (VPS própria) + Gemini Flash ~$0.05/catálogo (seção 0)
 
-A confiança do cliente já foi afetada por demora. Cada regressão piora isso.
+Cada regressão custa retrabalho de conferência para a equipe da Nunes.
 **Velocidade ≠ pressa.** Validar localmente antes de pushar economiza muito tempo.
 
 ---

@@ -64,6 +64,7 @@ Folia nomes + JRF-50.0451; VAESO ***PROMOCAO*** sobrando (PHA4501-4); FORTAL JDG
 Tuka 11-18336-22, 88H-24046-32, VTK-66-4231-80U.
 
 **Esperando o Gabriel / Josef**
+- Gabriel: liberar o repositório para o Josef e definir assinatura única × migração das contas (guia: `docs/IMPLANTACAO.md` §7).
 - Josef: reconverter GIRA (4), Goal, Tuka, FORTAL, Lila, Neo, DUTE, DAGIA, FOLIA (2) e BM36 e conferir.
 - Josef: como separar BM36 × World Classic (o código 439890 não tem prefixo).
 - Gabriel: ativar "Checkout externo" na InfinitePay, preencher a InfiniteTag no painel e ligar a assinatura.
@@ -88,6 +89,9 @@ medindo com A/B sem API sobre os jobs do Teste 9 já gravados no servidor.
 
 ## Diário
 
+- **23/10/2026 (docs)** — Encerramento: o sistema é da Nunes (contrato); o código vai para o Josef com o guia
+  `docs/IMPLANTACAO.md`. Revisão do repositório: nenhum segredo ativo no histórico (só chaves anon do Supabase).
+  Docs de deploy do Render/Railway movidos para `docs/historico/`. Proposta: assinatura única ou migração das contas.
 - **19/10/2026 (docs, sem versão nova)** — Mapa de infraestrutura no topo do `CLAUDE.md` (seção 0), conferido no
   servidor, na Vercel e no bundle publicado. README e PROJECT_SUMMARY reescritos (antigos em `docs/historico/`);
   ARCHITECTURE/guide/.env.example corrigidos (Render como produção, branch `develop`, `ci-cd.yml` inexistentes).

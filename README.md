@@ -13,6 +13,7 @@ em planilhas prontas para Mercos/ERP, com preço, caixa, promoção e foto de ca
 
 | Documento | Para quê |
 |---|---|
+| `docs/IMPLANTACAO.md` | **Guia de implantação para a equipe:** uso, conferência, custos, como mudar e migrar |
 | `CLAUDE.md` | Regras de trabalho e **seção 0 (infraestrutura)** |
 | `CONTINUIDADE.md` | Onde paramos / próximos passos |
 | `ARCHITECTURE.md` | Invariantes IV-01..IV-23 que não podem quebrar |
