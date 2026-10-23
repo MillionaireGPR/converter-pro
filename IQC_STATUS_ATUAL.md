@@ -1,11 +1,16 @@
 # IQC_STATUS_ATUAL.md — MICHELE_CONVERSOR
 
 **Projeto:** MICHELE_CONVERSOR (Converter-Pro / Nunes Representações)
-**Atualizado em:** 19/10/2026
+**Atualizado em:** 23/10/2026
 
 > Infraestrutura: `CLAUDE.md` seção 0 (referência única). Trechos abaixo sobre Render como reserva ativa são históricos.
 
 ---
+
+## 📍 23/10 — Encerramento: código para a Nunes
+
+- Contrato: o sistema é da Nunes. Josef recebe o repositório + `docs/IMPLANTACAO.md` (uso, conferência, custos, como mudar, migração).
+- Revisão: nenhum segredo ativo no histórico. Decisão pendente: assinatura única (Gabriel opera as plataformas) × migração das contas.
 
 ## 📍 19/10 — Mapa de infraestrutura (`CLAUDE.md` seção 0)
 
