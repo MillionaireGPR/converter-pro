@@ -78,23 +78,28 @@ Achou erro? Anote o fornecedor, a página e o código, e corrija a mão na Base 
 |---|---|---|
 | Site (tela) | Vercel, `centraldeconversao.vercel.app` | Publica sozinho quando o código entra na `main` |
 | Motor de conversão | Servidor Integrator (VPS com Docker), `conversor-vps.metodoiqc.com.br` | Atualizado à mão a cada entrega (seção 6) |
-| Servidor reserva | **Nenhum funcionando hoje.** O Render está suspenso e o servidor antigo está desligado | Se o Integrator cair, a conversão de PDF para até ele voltar |
+| Servidor reserva | **Nenhum funcionando hoje.** O Render (opcional) está suspenso | Se o Integrator cair, a conversão de PDF para até ele voltar |
 | Banco de dados, login e arquivos | Supabase | Produtos, fornecedores, histórico, usuários |
 | Inteligência artificial | Google Gemini (`gemini-2.5-flash`, com plano B em `2.0-flash` e `2.5-pro`) | É o único custo que varia: depende de quantos catálogos são convertidos |
 | Código | GitHub | Branch `main` = o que está no ar |
 
 O detalhe técnico (endereços, comandos, nomes de variáveis) está no `CLAUDE.md`, seção 0. Senhas e chaves **nunca** ficam no código: ficam no painel de cada plataforma e no arquivo de configuração do servidor.
 
-## 5. Custos mensais (estimativa de 10/2026)
+## 5. Custos mensais (confirmados em 23/10/2026)
 
-| Plataforma | Para quê | Custo aproximado |
+| Plataforma | Para quê | Custo |
 |---|---|---|
-| Google Gemini | Leitura dos catálogos com IA | ~R$ 100–150 por mês no uso atual (varia com o volume) |
-| Integrator (VPS) | Motor de conversão | ~R$ 40–50 por mês |
-| Supabase | Banco, login, arquivos | plano a confirmar |
-| Vercel | Site | plano a confirmar |
+| Google Gemini | Leitura dos catálogos com IA | ~R$ 100–150 por mês (varia com o volume de catálogos) |
+| Integrator (VPS) | Motor de conversão | R$ 34,90 por mês |
+| Supabase | Banco, login, arquivos | gratuito |
+| Vercel | Site | gratuito |
 | GitHub | Código | gratuito |
+| Render (opcional) | Servidor reserva, se quiserem manter | hoje suspenso; reativar só se a Nunes quiser reserva |
 | Domínio | Endereço do motor de conversão | hoje usa um domínio do Gabriel (`metodoiqc.com.br`) |
+
+**Total hoje: ~R$ 135–185 por mês**, quase tudo do Gemini.
+
+O Google pede que a conta de faturamento do Gemini seja **pré-paga**. Mantenha saldo e um teto de gasto mensal, senão a IA para de responder.
 
 ## 6. Como mudar o sistema com segurança
 
