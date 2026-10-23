@@ -101,6 +101,26 @@ O detalhe técnico (endereços, comandos, nomes de variáveis) está no `CLAUDE.
 
 O Google pede que a conta de faturamento do Gemini seja **pré-paga**. Mantenha saldo e um teto de gasto mensal, senão a IA para de responder.
 
+### Pontos de atenção se as contas forem para a Nunes
+
+- **Vercel:** o plano gratuito (Hobby) é para uso pessoal e não comercial, pelos termos da Vercel. Uma empresa normalmente precisa do plano Pro (~US$ 20 por mês).
+- **Supabase:** o plano gratuito pausa o projeto depois de alguns dias sem uso e não inclui backup automático. Também tem limite de espaço para banco e arquivos.
+- **Gemini:** faturamento pré-pago. Alguém precisa acompanhar o saldo e o teto de gasto, senão a conversão de PDF para.
+- **Servidor:** atualizações de segurança, renovação do certificado, limpeza de disco e reinício quando cair ficam por conta de quem administra.
+
+### Assinatura de operação (opção mantida pelo Gabriel): R$ 249 por mês
+
+Uma cobrança única no lugar das plataformas separadas. Inclui:
+
+- todas as plataformas acima, inclusive a variação de uso do Gemini até o uso normal da equipe;
+- monitoramento do servidor e retomada quando cair;
+- atualizações de segurança;
+- backups e certificado;
+- correções de erro e ajustes quando um fornecedor muda o layout do catálogo, com versão nova e nota na Central de novidades;
+- revisão e publicação das mudanças que a equipe fizer no código.
+
+O código continua sendo da Nunes, nos dois formatos.
+
 ## 6. Como mudar o sistema com segurança
 
 O conversor tem uma bateria de testes automáticos que trava o que já funciona: são 503 testes do site, 174 do motor de conversão e verificações de pontos que não podem quebrar (`ARCHITECTURE.md`). Toda mudança segue este caminho:
